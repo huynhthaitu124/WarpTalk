@@ -2490,6 +2490,10 @@ name = "warptalk-tts"
 version = "0.1.0"
 
 [[package]]
+name = "warptalk-web"
+version = "0.1.0"
+
+[[package]]
 name = "warptalk-worker"
 version = "0.1.0"
 

@@ -51,6 +51,7 @@ warptalk-contracts = { path = "crates/shared/contracts" }
 warptalk-bus = { path = "crates/shared/bus" }
 warptalk-db = { path = "crates/shared/db" }
 warptalk-storage = { path = "crates/shared/storage" }
+warptalk-web = { path = "crates/shared/web" }
 warptalk-identity = { path = "crates/modules/identity" }
 warptalk-workspace = { path = "crates/modules/workspace" }
 warptalk-room = { path = "crates/modules/room" }

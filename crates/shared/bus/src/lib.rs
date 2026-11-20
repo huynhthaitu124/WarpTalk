@@ -4,10 +4,10 @@
 mod consumer;
 mod error;
 mod kv;
-mod pubsub;
 mod publisher;
+mod pubsub;
 
-pub use consumer::{run_consumer, ConsumerConfig, HandlerError, StreamHandler, StreamMessage};
+pub use consumer::{ConsumerConfig, HandlerError, StreamHandler, StreamMessage, run_consumer};
 pub use error::BusError;
 pub use kv::{claim_once, release_lease, renew_lease, try_acquire_lease};
 pub use publisher::{xadd, xadd_json};
