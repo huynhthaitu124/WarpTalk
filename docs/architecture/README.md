@@ -328,3 +328,12 @@ Có thể làm song song bước 4–5 với 2–3 nếu dùng room giả (đọ
 | Q3 | Bản gốc TTS synth theo listener hay theo (speaker, lang)? (D5) | Chi phí Cartesia, thiết kế egress |
 | Q4 | OI-01 hash mật khẩu, OI-03 đơn vị billing, RV-01 `segment_id` trong `usage_records` | Migration `identity`, `billing` |
 | Q5 | Tài liệu đọc từ code cho Auth, Workspace, Billing, Notification, Assistant? | Độ chính xác khi viết lại các module này |
+
+### 8.1 Mặc định tạm thời (đã áp dụng để không chặn tiến độ, có thể đổi)
+
+| ID | Mặc định |
+|---|---|
+| Q1 | WebSocket JSON protocol riêng (`{ "type": "...", "data": {...} }`); client sẽ cần adapter. Đổi sang SignalR-compatible nếu giữ client cũ |
+| Q2 | Giữ nguyên tên stream/key/channel Redis của bản gốc (trong `warptalk-contracts`) |
+| Q3 | Synth theo (speaker, target_lang, voice_mode), fan-out cho listener |
+| Q4 | PBKDF2-HMAC-SHA512, 100 000 vòng, salt 16 byte (NFR-SC-02); billing dùng credit, per-second, tối thiểu 1 credit; `usage_records` có `segment_id` |

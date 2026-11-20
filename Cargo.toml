@@ -17,6 +17,48 @@ license = "UNLICENSED"
 # Third-party versions are pinned here once and referenced with `{ workspace = true }`
 # from member crates. Added as each crate gets real code.
 [workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
+redis = { version = "0.32", features = ["tokio-comp", "streams", "connection-manager"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false, features = ["http-listener"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+jsonwebtoken = "9"
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures = "0.3"
+
+# internal crates
+warptalk-kernel = { path = "crates/shared/kernel" }
+warptalk-config = { path = "crates/shared/config" }
+warptalk-telemetry = { path = "crates/shared/telemetry" }
+warptalk-contracts = { path = "crates/shared/contracts" }
+warptalk-bus = { path = "crates/shared/bus" }
+warptalk-db = { path = "crates/shared/db" }
+warptalk-storage = { path = "crates/shared/storage" }
+warptalk-identity = { path = "crates/modules/identity" }
+warptalk-workspace = { path = "crates/modules/workspace" }
+warptalk-room = { path = "crates/modules/room" }
+warptalk-meeting = { path = "crates/modules/meeting" }
+warptalk-transcript = { path = "crates/modules/transcript" }
+warptalk-assistant = { path = "crates/modules/assistant" }
+warptalk-billing = { path = "crates/modules/billing" }
+warptalk-notification = { path = "crates/modules/notification" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
