@@ -1,1 +1,3 @@
-//! Adapters: repositories (sqlx), Redis publishers/consumers, provider clients.
+//! Adapters: repositories (sqlx).
+
+pub mod pg_repo;
