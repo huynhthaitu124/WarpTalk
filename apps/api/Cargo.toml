@@ -7,4 +7,31 @@ publish = false
 [lints]
 workspace = true
 
+[lib]
+name = "warptalk_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "warptalk-api"
+path = "src/main.rs"
+
 [dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+warptalk-kernel = { workspace = true }
+warptalk-config = { workspace = true }
+warptalk-telemetry = { workspace = true }
+warptalk-db = { workspace = true }
+warptalk-web = { workspace = true }
+warptalk-identity = { workspace = true }
+warptalk-workspace = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+uuid = { workspace = true }

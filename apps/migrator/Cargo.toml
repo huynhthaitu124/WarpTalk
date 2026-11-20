@@ -14,3 +14,5 @@ tracing = { workspace = true }
 warptalk-config = { workspace = true }
 warptalk-telemetry = { workspace = true }
 warptalk-db = { workspace = true }
+warptalk-identity = { workspace = true }
+warptalk-workspace = { workspace = true }

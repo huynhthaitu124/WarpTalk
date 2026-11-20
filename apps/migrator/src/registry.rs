@@ -5,5 +5,9 @@ use warptalk_db::ModuleMigrations;
 /// Business modules append their `MIGRATIONS` const here in dependency order
 /// (identity, workspace, room, meeting, transcript, assistant, billing, notification).
 pub fn registry() -> Vec<ModuleMigrations> {
-    vec![warptalk_db::OUTBOX_MIGRATIONS]
+    vec![
+        warptalk_db::OUTBOX_MIGRATIONS,
+        warptalk_identity::MIGRATIONS,
+        warptalk_workspace::MIGRATIONS,
+    ]
 }

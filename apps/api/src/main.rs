@@ -1,5 +1,83 @@
 //! Business plane: REST API, WebSocket hub, webhooks, scheduled jobs. Composition root that wires all modules.
 
-fn main() {
-    println!("warptalk-api: not implemented yet");
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use anyhow::{Context, bail};
+use warptalk_config::{
+    DatabaseConfig, HttpConfig, JwtConfig, LogFormat as ConfigLogFormat, TelemetryConfig,
+};
+use warptalk_identity::LogMailer;
+use warptalk_telemetry::LogFormat as TelemetryLogFormat;
+use warptalk_web::JwtKeys;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let telemetry = TelemetryConfig::from_env().context("loading telemetry config")?;
+    let db = DatabaseConfig::from_env().context("loading database config")?;
+    let jwt_cfg = JwtConfig::from_env().context("loading jwt config")?;
+    let http = HttpConfig::from_env().context("loading http config")?;
+
+    let format = match telemetry.log_format {
+        ConfigLogFormat::Pretty => TelemetryLogFormat::Pretty,
+        ConfigLogFormat::Json => TelemetryLogFormat::Json,
+    };
+    warptalk_telemetry::init_tracing("api", format, &telemetry.log_filter)
+        .context("initialising tracing")?;
+    let metrics_bind = telemetry
+        .metrics_bind
+        .as_deref()
+        .map(str::parse::<SocketAddr>)
+        .transpose()
+        .context("parsing METRICS_BIND")?;
+    warptalk_telemetry::init_metrics(metrics_bind).context("initialising metrics")?;
+
+    let pool = warptalk_db::connect(&db.url, db.max_connections)
+        .await
+        .context("connecting to PostgreSQL")?;
+
+    let migrated: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = 'identity')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(false);
+    if !migrated {
+        bail!(
+            "database is not migrated (no 'identity' migrations found): run warptalk-migrator first"
+        );
+    }
+
+    let jwt = JwtKeys::from_config(&jwt_cfg);
+    let app =
+        warptalk_api::build_router(pool, jwt, &jwt_cfg, &http.cors_origins, Arc::new(LogMailer));
+
+    let listener = tokio::net::TcpListener::bind(&http.bind)
+        .await
+        .with_context(|| format!("binding {}", http.bind))?;
+    tracing::info!(bind = %http.bind, "api listening");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("serving http")?;
+    tracing::info!("api stopped");
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! { _ = ctrl_c => {}, _ = term => {} }
 }

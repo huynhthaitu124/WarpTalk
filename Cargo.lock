@@ -2445,6 +2445,25 @@ dependencies = [
 [[package]]
 name = "warptalk-api"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+ "warptalk-config",
+ "warptalk-db",
+ "warptalk-identity",
+ "warptalk-kernel",
+ "warptalk-telemetry",
+ "warptalk-web",
+ "warptalk-workspace",
+]
 
 [[package]]
 name = "warptalk-assistant"
@@ -2577,7 +2596,9 @@ dependencies = [
  "tracing",
  "warptalk-config",
  "warptalk-db",
+ "warptalk-identity",
  "warptalk-telemetry",
+ "warptalk-workspace",
 ]
 
 [[package]]
