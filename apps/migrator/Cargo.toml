@@ -16,3 +16,4 @@ warptalk-telemetry = { workspace = true }
 warptalk-db = { workspace = true }
 warptalk-identity = { workspace = true }
 warptalk-workspace = { workspace = true }
+warptalk-room = { workspace = true }

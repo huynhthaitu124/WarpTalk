@@ -21,7 +21,7 @@ Quy trình: orchestrator giao từng crate cho agent model nhỏ (haiku: việc 
 
 ## Backlog (theo thứ tự)
 
-1. Wire `room` vào `api` (đang làm)
+1. ~~Wire `room` vào `api`~~ xong
 2. `meeting`: LiveKit token, webhook (cần `providers/livekit`)
 3. **Pipeline vertical slice** (chờ tài liệu luồng dịch + latency): ingress VAD → STT → MT, caption only
 4. `transcript` consumer trong `apps/worker`

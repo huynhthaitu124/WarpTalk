@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use warptalk_config::{
-    DatabaseConfig, HttpConfig, JwtConfig, LogFormat as ConfigLogFormat, TelemetryConfig,
+    DatabaseConfig, HttpConfig, JwtConfig, LogFormat as ConfigLogFormat, RedisConfig,
+    TelemetryConfig,
 };
 use warptalk_identity::LogMailer;
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
@@ -17,6 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let db = DatabaseConfig::from_env().context("loading database config")?;
     let jwt_cfg = JwtConfig::from_env().context("loading jwt config")?;
     let http = HttpConfig::from_env().context("loading http config")?;
+    let redis_cfg = RedisConfig::from_env().context("loading redis config")?;
 
     let format = match telemetry.log_format {
         ConfigLogFormat::Pretty => TelemetryLogFormat::Pretty,
@@ -48,9 +50,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let redis = warptalk_bus::connect(&redis_cfg.url)
+        .await
+        .context("connecting to Redis")?;
+
     let jwt = JwtKeys::from_config(&jwt_cfg);
-    let app =
-        warptalk_api::build_router(pool, jwt, &jwt_cfg, &http.cors_origins, Arc::new(LogMailer));
+    let app = warptalk_api::build_router(
+        pool,
+        jwt,
+        &jwt_cfg,
+        &http.cors_origins,
+        Arc::new(LogMailer),
+        Some(redis),
+    );
 
     let listener = tokio::net::TcpListener::bind(&http.bind)
         .await

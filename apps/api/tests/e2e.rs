@@ -66,6 +66,7 @@ async fn full_flow() {
             warptalk_db::OUTBOX_MIGRATIONS,
             warptalk_identity::MIGRATIONS,
             warptalk_workspace::MIGRATIONS,
+            warptalk_room::MIGRATIONS,
         ],
     )
     .await
@@ -79,8 +80,14 @@ async fn full_flow() {
         refresh_ttl_seconds: 2_592_000,
     };
     let mailer = Arc::new(CaptureMailer::default());
-    let app =
-        warptalk_api::build_router(pool, JwtKeys::from_config(&cfg), &cfg, &[], mailer.clone());
+    let app = warptalk_api::build_router(
+        pool,
+        JwtKeys::from_config(&cfg),
+        &cfg,
+        &[],
+        mailer.clone(),
+        None,
+    );
 
     let (s, _) = call(&app, "GET", "/health", None, None).await;
     assert_eq!(s, StatusCode::OK);
@@ -168,6 +175,52 @@ async fn full_flow() {
         .unwrap();
     assert_eq!(owner["email"], email.as_str());
     assert_eq!(owner["fullName"], "E2E Owner");
+
+    let (s, b) = call(
+        &app,
+        "POST",
+        "/api/v1/translation-rooms",
+        Some(json!({
+            "workspaceId": ws_id,
+            "title": "E2E Room",
+            "sourceLanguage": "vi",
+            "targetLanguages": ["en"]
+        })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let room_id = b["id"].as_str().unwrap().to_owned();
+
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/translation-rooms/{room_id}/start"),
+        None,
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+
+    let (s, b) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/translation-rooms/{room_id}/audio-routes"),
+        None,
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/translation-rooms/{room_id}/end"),
+        None,
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
 
     let (s, b) = call(
         &app,

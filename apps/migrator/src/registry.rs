@@ -9,5 +9,6 @@ pub fn registry() -> Vec<ModuleMigrations> {
         warptalk_db::OUTBOX_MIGRATIONS,
         warptalk_identity::MIGRATIONS,
         warptalk_workspace::MIGRATIONS,
+        warptalk_room::MIGRATIONS,
     ]
 }

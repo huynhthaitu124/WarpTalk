@@ -30,6 +30,9 @@ warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-identity = { workspace = true }
 warptalk-workspace = { workspace = true }
+warptalk-room = { workspace = true }
+warptalk-bus = { workspace = true }
+redis = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
