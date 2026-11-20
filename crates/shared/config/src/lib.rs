@@ -116,7 +116,7 @@ impl fmt::Debug for DatabaseConfig {
 }
 
 /// Redis connection and stream retention settings.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RedisConfig {
     /// `REDIS_URL` (required).
     pub url: String,
@@ -140,6 +140,16 @@ impl RedisConfig {
             stream_maxlen: parse_or_from(&lookup, "REDIS_STREAM_MAXLEN", 200)?,
             stream_ttl_seconds: parse_or_from(&lookup, "REDIS_STREAM_TTL_SECONDS", 3600)?,
         })
+    }
+}
+
+impl fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RedisConfig")
+            .field("url", &REDACTED)
+            .field("stream_maxlen", &self.stream_maxlen)
+            .field("stream_ttl_seconds", &self.stream_ttl_seconds)
+            .finish()
     }
 }
 
@@ -406,6 +416,16 @@ mod tests {
         let dbg = format!("{cfg:?}");
         assert!(!dbg.contains("topsecret"), "password leaked: {dbg}");
         assert!(dbg.contains("***"));
+    }
+
+    #[test]
+    fn redis_debug_redacts_url_password() {
+        let cfg =
+            RedisConfig::from_lookup(env(&[("REDIS_URL", "redis://:topsecret@h:6379")])).unwrap();
+        let dbg = format!("{cfg:?}");
+        assert!(!dbg.contains("topsecret"), "password leaked: {dbg}");
+        assert!(dbg.contains("***"));
+        assert!(dbg.contains("stream_maxlen"));
     }
 
     #[test]
