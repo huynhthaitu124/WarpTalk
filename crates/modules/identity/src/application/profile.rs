@@ -61,11 +61,7 @@ impl ProfileService {
     }
 
     /// Language fields: `None` keeps the current value. Audio devices: `None` clears.
-    pub async fn update_settings(
-        &self,
-        id: UserId,
-        input: SettingsUpdate,
-    ) -> AppResult<Settings> {
+    pub async fn update_settings(&self, id: UserId, input: SettingsUpdate) -> AppResult<Settings> {
         let current = self.get_settings(id).await?;
         let device = |v: Option<String>| -> AppResult<Option<String>> {
             match v.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {

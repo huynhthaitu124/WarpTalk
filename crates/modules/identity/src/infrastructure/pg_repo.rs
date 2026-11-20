@@ -78,7 +78,10 @@ impl IdentityRepository for PgIdentityRepository {
             if let sqlx::Error::Database(db) = &e
                 && db.code().as_deref() == Some("23505")
             {
-                return Err(AppError::conflict("EMAIL_TAKEN", "email is already registered"));
+                return Err(AppError::conflict(
+                    "EMAIL_TAKEN",
+                    "email is already registered",
+                ));
             }
             return Err(map_sqlx_error(e));
         }
@@ -93,12 +96,17 @@ impl IdentityRepository for PgIdentityRepository {
     }
 
     async fn find_auth_by_email(&self, email: &str) -> AppResult<Option<UserAuthRecord>> {
-        let row = sqlx::query(&format!("SELECT {AUTH_COLS} FROM auth.users WHERE email = $1"))
-            .bind(email)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        row.as_ref().map(auth_record).transpose().map_err(map_sqlx_error)
+        let row = sqlx::query(&format!(
+            "SELECT {AUTH_COLS} FROM auth.users WHERE email = $1"
+        ))
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        row.as_ref()
+            .map(auth_record)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 
     async fn find_auth_by_id(&self, id: UserId) -> AppResult<Option<UserAuthRecord>> {
@@ -107,7 +115,10 @@ impl IdentityRepository for PgIdentityRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        row.as_ref().map(auth_record).transpose().map_err(map_sqlx_error)
+        row.as_ref()
+            .map(auth_record)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 
     async fn record_login_failure(
@@ -221,7 +232,8 @@ impl IdentityRepository for PgIdentityRepository {
         let user_id: Uuid = row.try_get("user_id").map_err(map_sqlx_error)?;
         let family_id: Uuid = row.try_get("family_id").map_err(map_sqlx_error)?;
         let expires_at: DateTime<Utc> = row.try_get("expires_at").map_err(map_sqlx_error)?;
-        let revoked_at: Option<DateTime<Utc>> = row.try_get("revoked_at").map_err(map_sqlx_error)?;
+        let revoked_at: Option<DateTime<Utc>> =
+            row.try_get("revoked_at").map_err(map_sqlx_error)?;
 
         if revoked_at.is_some() {
             revoke_family_tx(&mut tx, family_id, now).await?;
@@ -298,12 +310,7 @@ impl IdentityRepository for PgIdentityRepository {
         .map_err(map_sqlx_error)
     }
 
-    async fn update_profile(
-        &self,
-        id: UserId,
-        p: &Profile,
-        now: DateTime<Utc>,
-    ) -> AppResult<()> {
+    async fn update_profile(&self, id: UserId, p: &Profile, now: DateTime<Utc>) -> AppResult<()> {
         sqlx::query(
             "UPDATE auth.users SET full_name = $2, avatar_url = $3, preferred_language = $4,
                     timezone = $5, updated_at = $6, updated_by = $1
@@ -344,12 +351,7 @@ impl IdentityRepository for PgIdentityRepository {
         settings_row(&row).map_err(map_sqlx_error)
     }
 
-    async fn update_settings(
-        &self,
-        id: UserId,
-        s: &Settings,
-        now: DateTime<Utc>,
-    ) -> AppResult<()> {
+    async fn update_settings(&self, id: UserId, s: &Settings, now: DateTime<Utc>) -> AppResult<()> {
         sqlx::query(
             "UPDATE auth.user_settings
                 SET default_audio_input = $2, default_audio_output = $3,
@@ -379,7 +381,10 @@ impl IdentityRepository for PgIdentityRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        row.as_ref().map(summary).transpose().map_err(map_sqlx_error)
+        row.as_ref()
+            .map(summary)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 
     async fn find_summary_by_email(&self, email: &str) -> AppResult<Option<UserSummary>> {
@@ -391,7 +396,10 @@ impl IdentityRepository for PgIdentityRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        row.as_ref().map(summary).transpose().map_err(map_sqlx_error)
+        row.as_ref()
+            .map(summary)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 }
 

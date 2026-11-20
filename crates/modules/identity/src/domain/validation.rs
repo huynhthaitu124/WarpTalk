@@ -11,7 +11,11 @@ pub fn normalize_email(raw: &str) -> Result<String, &'static str> {
                 && !domain.starts_with('.')
                 && !domain.ends_with('.')
         });
-    if ok { Ok(e) } else { Err("invalid email address") }
+    if ok {
+        Ok(e)
+    } else {
+        Err("invalid email address")
+    }
 }
 
 pub fn full_name(raw: &str) -> Result<String, &'static str> {
@@ -30,7 +34,8 @@ pub fn language_tag(raw: &str) -> Result<String, &'static str> {
     let lang_ok = parts
         .next()
         .is_some_and(|l| (2..=3).contains(&l.len()) && l.chars().all(|c| c.is_ascii_alphabetic()));
-    let rest_ok = parts.all(|p| (1..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()));
+    let rest_ok =
+        parts.all(|p| (1..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()));
     if t.len() <= 15 && lang_ok && rest_ok {
         Ok(t.to_owned())
     } else {

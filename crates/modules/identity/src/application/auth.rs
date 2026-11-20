@@ -8,8 +8,7 @@ use warptalk_kernel::{AppError, Clock, UserId};
 use warptalk_web::JwtKeys;
 
 use super::ports::{
-    IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, UserAuthRecord,
-    VerificationMailer,
+    IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, UserAuthRecord, VerificationMailer,
 };
 use super::tokens::{generate_token, hash_token};
 use crate::domain::password::{hash_password, verify_password};
@@ -116,11 +115,10 @@ impl AuthService {
         if ok {
             Ok(())
         } else {
-            Err(AppError::validation(
-                "INVALID_TOKEN",
-                "verification token is invalid or expired",
+            Err(
+                AppError::validation("INVALID_TOKEN", "verification token is invalid or expired")
+                    .into(),
             )
-            .into())
         }
     }
 
@@ -182,25 +180,38 @@ impl AuthService {
         let (user_id, family_id) = match outcome {
             RotateOutcome::Rotated { user_id, family_id } => (user_id, family_id),
             RotateOutcome::Reused => {
-                return Err(IdentityError::unauthorized("REFRESH_TOKEN_REUSED", "refresh token was already used; session revoked"));
+                return Err(IdentityError::unauthorized(
+                    "REFRESH_TOKEN_REUSED",
+                    "refresh token was already used; session revoked",
+                ));
             }
             RotateOutcome::Expired => {
-                return Err(IdentityError::unauthorized("REFRESH_TOKEN_EXPIRED", "refresh token expired"));
+                return Err(IdentityError::unauthorized(
+                    "REFRESH_TOKEN_EXPIRED",
+                    "refresh token expired",
+                ));
             }
             RotateOutcome::Unknown => {
-                return Err(IdentityError::unauthorized("INVALID_REFRESH_TOKEN", "invalid refresh token"));
+                return Err(IdentityError::unauthorized(
+                    "INVALID_REFRESH_TOKEN",
+                    "invalid refresh token",
+                ));
             }
         };
         let rec = self.repo.find_auth_by_id(user_id).await?;
         let Some(rec) = rec else {
             self.repo.revoke_family(family_id, now).await?;
-            return Err(IdentityError::unauthorized("INVALID_REFRESH_TOKEN", "invalid refresh token"));
+            return Err(IdentityError::unauthorized(
+                "INVALID_REFRESH_TOKEN",
+                "invalid refresh token",
+            ));
         };
         if let Some(code) = rec.flags.status(now).refusal_code() {
             self.repo.revoke_family(family_id, now).await?;
             return Err(IdentityError::account_refused(code));
         }
-        self.issue_session(&rec, family_id, now, Some(new_token)).await
+        self.issue_session(&rec, family_id, now, Some(new_token))
+            .await
     }
 
     pub async fn logout(&self, refresh_token: &str) -> Result<()> {
@@ -246,4 +257,3 @@ impl AuthService {
         })
     }
 }
-

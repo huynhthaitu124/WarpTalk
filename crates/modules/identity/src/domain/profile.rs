@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use warptalk_kernel::UserId;
 
 /// Minimal user view exposed to other modules.
@@ -26,6 +25,3 @@ pub struct Settings {
     pub default_speak_language: String,
     pub default_listen_language: String,
 }
-
-/// Opaque family id helper type alias for readability.
-pub type FamilyId = Uuid;

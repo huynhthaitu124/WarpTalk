@@ -48,10 +48,7 @@ pub async fn refresh(
     Ok(Json(s.auth.refresh(&b.refresh_token).await?.into()))
 }
 
-pub async fn logout(
-    State(s): State<HttpState>,
-    Json(b): Json<RefreshRequest>,
-) -> Res<StatusCode> {
+pub async fn logout(State(s): State<HttpState>, Json(b): Json<RefreshRequest>) -> Res<StatusCode> {
     s.auth.logout(&b.refresh_token).await?;
     Ok(StatusCode::NO_CONTENT)
 }

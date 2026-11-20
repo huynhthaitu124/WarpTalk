@@ -42,7 +42,10 @@ pub struct NewRefreshToken {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RotateOutcome {
-    Rotated { user_id: UserId, family_id: Uuid },
+    Rotated {
+        user_id: UserId,
+        family_id: Uuid,
+    },
     /// Token was already rotated/revoked: the whole family has been revoked.
     Reused,
     Expired,
