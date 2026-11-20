@@ -1,6 +1,6 @@
 # 05a - Data Dictionary
 
-Column-level schema for every service database. Generated from the team ERD source `docs/erd/warptalk-erd.dbml` (columns as of service migrations up to 2026-08-13). It is more detailed and more recent than the ER figures in Report 7; where they differ, this file wins and 05-data-model.md gives the narrative.
+Column-level schema for every service database. Generated from `docs/erd/warptalk-erd.dbml` in [WarpTalk-CapstoneProject/warptalk-infrastructure](https://github.com/WarpTalk-CapstoneProject/warptalk-infrastructure/blob/main/docs/erd/warptalk-erd.dbml), branch `main`, last changed in commit `db4955e` (2026-10-02, USD accounting-currency migration). It is more detailed and more recent than the ER figures in Report 7; where they differ, this file wins and 05-data-model.md gives the narrative.
 
 Conventions: schema prefix = owning service database. `pk` primary key, `nn` not null, `uq` unique, `default` default value. References that cross a schema are logical only (no Postgres foreign key); `check-database-boundaries.sh` must fail the build if one is created.
 
