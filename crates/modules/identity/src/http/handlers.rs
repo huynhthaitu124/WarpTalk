@@ -7,14 +7,11 @@ use warptalk_web::AuthUser;
 use super::HttpState;
 use super::dto::*;
 use crate::application::{RegisterCommand, SettingsUpdate};
-use crate::domain::IdentityError;
-
-type Res<T> = Result<T, IdentityError>;
 
 pub async fn register(
     State(s): State<HttpState>,
     Json(b): Json<RegisterRequest>,
-) -> Res<(StatusCode, Json<RegisterResponse>)> {
+) -> AppResult<(StatusCode, Json<RegisterResponse>)> {
     let user_id = s
         .auth
         .register(RegisterCommand {
@@ -29,7 +26,7 @@ pub async fn register(
 pub async fn verify_email(
     State(s): State<HttpState>,
     Json(b): Json<VerifyEmailRequest>,
-) -> Res<StatusCode> {
+) -> AppResult<StatusCode> {
     s.auth.verify_email(&b.token).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -37,18 +34,21 @@ pub async fn verify_email(
 pub async fn login(
     State(s): State<HttpState>,
     Json(b): Json<LoginRequest>,
-) -> Res<Json<AuthResponse>> {
+) -> AppResult<Json<AuthResponse>> {
     Ok(Json(s.auth.login(&b.email, &b.password).await?.into()))
 }
 
 pub async fn refresh(
     State(s): State<HttpState>,
     Json(b): Json<RefreshRequest>,
-) -> Res<Json<AuthResponse>> {
+) -> AppResult<Json<AuthResponse>> {
     Ok(Json(s.auth.refresh(&b.refresh_token).await?.into()))
 }
 
-pub async fn logout(State(s): State<HttpState>, Json(b): Json<RefreshRequest>) -> Res<StatusCode> {
+pub async fn logout(
+    State(s): State<HttpState>,
+    Json(b): Json<RefreshRequest>,
+) -> AppResult<StatusCode> {
     s.auth.logout(&b.refresh_token).await?;
     Ok(StatusCode::NO_CONTENT)
 }

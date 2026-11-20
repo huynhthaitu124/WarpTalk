@@ -20,7 +20,7 @@ use warptalk_kernel::{AppResult, Clock, UserId};
 use warptalk_web::JwtKeys;
 
 pub use application::{IdentityRepository, VerificationMailer};
-pub use domain::{IdentityError, Policy, UserSummary};
+pub use domain::{Policy, UserSummary};
 pub use infrastructure::LogMailer;
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {

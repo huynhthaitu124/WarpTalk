@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use warptalk_kernel::{Page, PageRequest, UserId, WorkspaceId};
+use warptalk_kernel::{Page, UserId, WorkspaceId};
 
 use crate::application::ports::WorkspaceRecord;
 use crate::application::service::MemberView;
@@ -12,22 +12,11 @@ pub struct CreateWorkspaceRequest {
     pub description: Option<String>,
 }
 
+/// Optional `search` of the workspace list. Paging is extracted separately as `PageRequest`
+/// (`#[serde(flatten)]` would buffer `pageSize` as a string and reject it).
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListQuery {
-    pub page: Option<u32>,
-    pub page_size: Option<u32>,
+pub struct WorkspaceSearchQuery {
     pub search: Option<String>,
-}
-
-impl ListQuery {
-    pub fn page_request(&self) -> PageRequest {
-        let d = PageRequest::default();
-        PageRequest {
-            page: self.page.unwrap_or(d.page),
-            page_size: self.page_size.unwrap_or(d.page_size),
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -42,23 +31,13 @@ pub struct TransferRequest {
     pub new_owner_id: UserId,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PageDto<T> {
-    pub items: Vec<T>,
-    pub page: u32,
-    pub page_size: u32,
-    pub total: i64,
-}
-
-impl<T> PageDto<T> {
-    pub fn map<S>(p: Page<S>, f: impl FnMut(S) -> T) -> Self {
-        Self {
-            items: p.items.into_iter().map(f).collect(),
-            page: p.page,
-            page_size: p.page_size,
-            total: p.total,
-        }
+/// Maps the items of a kernel page, keeping the paging metadata.
+pub fn map_page<S, T>(p: Page<S>, f: impl FnMut(S) -> T) -> Page<T> {
+    Page {
+        items: p.items.into_iter().map(f).collect(),
+        page: p.page,
+        page_size: p.page_size,
+        total: p.total,
     }
 }
 

@@ -1,13 +1,13 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use warptalk_kernel::{AppError, AppResult, UserId, WorkspaceId, WorkspaceRole};
+use warptalk_kernel::{AppError, AppResult, Page, PageRequest, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_web::{ApiResult, AuthUser};
 
 use super::AppState;
 use super::dto::{
-    ChangeRoleRequest, CreateWorkspaceRequest, ListQuery, MemberDto, PageDto, TransferRequest,
-    WorkspaceDto,
+    ChangeRoleRequest, CreateWorkspaceRequest, MemberDto, TransferRequest, WorkspaceDto,
+    WorkspaceSearchQuery, map_page,
 };
 use crate::domain::WorkspaceSettings;
 
@@ -26,13 +26,14 @@ pub async fn create(
 pub async fn list(
     State(s): State<AppState>,
     auth: AuthUser,
-    Query(q): Query<ListQuery>,
-) -> ApiResult<PageDto<WorkspaceDto>> {
+    Query(paging): Query<PageRequest>,
+    Query(q): Query<WorkspaceSearchQuery>,
+) -> ApiResult<Page<WorkspaceDto>> {
     let page = s
         .service
-        .list(auth.user_id(), q.search.as_deref(), &q.page_request())
+        .list(auth.user_id(), q.search.as_deref(), &paging)
         .await?;
-    Ok(Json(PageDto::map(page, WorkspaceDto::from)))
+    Ok(Json(map_page(page, WorkspaceDto::from)))
 }
 
 pub async fn get_one(
@@ -75,13 +76,13 @@ pub async fn list_members(
     State(s): State<AppState>,
     auth: AuthUser,
     Path(id): Path<WorkspaceId>,
-    Query(q): Query<ListQuery>,
-) -> ApiResult<PageDto<MemberDto>> {
+    Query(page_req): Query<PageRequest>,
+) -> ApiResult<Page<MemberDto>> {
     let page = s
         .service
-        .list_members(id, auth.user_id(), &q.page_request())
+        .list_members(id, auth.user_id(), &page_req)
         .await?;
-    Ok(Json(PageDto::map(page, MemberDto::from)))
+    Ok(Json(map_page(page, MemberDto::from)))
 }
 
 pub async fn change_role(

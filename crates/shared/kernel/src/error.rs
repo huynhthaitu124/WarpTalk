@@ -20,6 +20,14 @@ pub enum AppError {
     Unavailable(String),
     #[error("internal error: {0}")]
     Internal(String),
+    /// Explicit status and code for cases the fixed variants cannot express
+    /// (e.g. 403 `EMAIL_NOT_VERIFIED`). Statuses >= 500 hide the message like `Internal`.
+    #[error("{message}")]
+    Coded {
+        status: u16,
+        code: String,
+        message: String,
+    },
 }
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -63,6 +71,14 @@ impl AppError {
         Self::Internal(msg.into())
     }
 
+    pub fn coded(status: u16, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Coded {
+            status,
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+
     /// HTTP status code.
     pub fn status_code(&self) -> u16 {
         match self {
@@ -74,6 +90,7 @@ impl AppError {
             Self::RateLimited(_) => 429,
             Self::Unavailable(_) => 503,
             Self::Internal(_) => 500,
+            Self::Coded { status, .. } => *status,
         }
     }
 
@@ -87,6 +104,7 @@ impl AppError {
             Self::RateLimited(_) => "RATE_LIMITED",
             Self::Unavailable(_) => "UNAVAILABLE",
             Self::Internal(_) => "INTERNAL_ERROR",
+            Self::Coded { code, .. } => code,
         }
     }
 
@@ -100,6 +118,8 @@ impl AppError {
             | Self::NotFound(m)
             | Self::RateLimited(m)
             | Self::Unavailable(m) => m,
+            Self::Coded { status, .. } if *status >= 500 => "internal error",
+            Self::Coded { message, .. } => message,
             Self::Internal(_) => "internal error",
         }
     }
@@ -149,6 +169,37 @@ mod tests {
         assert_eq!(body["message"], "internal error");
         let body = AppError::not_found("user 1").body();
         assert_eq!(body["message"], "user 1");
+    }
+
+    #[test]
+    fn coded_carries_status_code_and_message() {
+        let e = AppError::coded(403, "EMAIL_NOT_VERIFIED", "email address is not verified");
+        assert_eq!(e.status_code(), 403);
+        assert_eq!(e.code(), "EMAIL_NOT_VERIFIED");
+        let body = e.body();
+        assert_eq!(body["code"], "EMAIL_NOT_VERIFIED");
+        assert_eq!(body["message"], "email address is not verified");
+        assert_eq!(e.to_string(), "email address is not verified");
+    }
+
+    #[test]
+    fn coded_server_error_hides_message() {
+        let e = AppError::coded(503, "DB_DOWN", "connection to 10.0.0.5 refused");
+        assert_eq!(e.status_code(), 503);
+        assert_eq!(e.body()["message"], "internal error");
+        let e = AppError::coded(500, "BOOM", "secret");
+        assert_eq!(e.body()["code"], "BOOM");
+        assert_eq!(e.body()["message"], "internal error");
+    }
+
+    #[cfg(feature = "axum")]
+    #[test]
+    fn coded_into_response_uses_status() {
+        use axum::response::IntoResponse;
+        let resp = AppError::coded(403, "EMAIL_NOT_VERIFIED", "x").into_response();
+        assert_eq!(resp.status().as_u16(), 403);
+        let resp = AppError::coded(42, "WEIRD", "x").into_response();
+        assert_eq!(resp.status().as_u16(), 500);
     }
 
     #[cfg(feature = "axum")]

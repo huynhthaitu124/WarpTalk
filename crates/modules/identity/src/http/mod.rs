@@ -7,12 +7,10 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::FromRef;
-use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use warptalk_web::JwtKeys;
 
 use crate::application::{AuthService, ProfileService};
-use crate::domain::IdentityError;
 
 #[derive(Clone)]
 pub(crate) struct HttpState {
@@ -24,27 +22,6 @@ pub(crate) struct HttpState {
 impl FromRef<HttpState> for JwtKeys {
     fn from_ref(s: &HttpState) -> JwtKeys {
         s.jwt.clone()
-    }
-}
-
-impl IntoResponse for IdentityError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::App(e) => e.into_response(),
-            Self::Coded {
-                status,
-                code,
-                message,
-            } => {
-                let status = axum::http::StatusCode::from_u16(status)
-                    .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-                (
-                    status,
-                    axum::Json(serde_json::json!({ "code": code, "message": message })),
-                )
-                    .into_response()
-            }
-        }
     }
 }
 

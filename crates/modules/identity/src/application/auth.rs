@@ -12,9 +12,24 @@ use super::ports::{
 };
 use super::tokens::{generate_token, hash_token};
 use crate::domain::password::{hash_password, verify_password};
-use crate::domain::{IdentityError, Policy, validation};
+use crate::domain::{Policy, validation};
 
-type Result<T> = std::result::Result<T, IdentityError>;
+type Result<T> = std::result::Result<T, AppError>;
+
+/// 401 with the generic credentials message (never reveals which part was wrong).
+fn invalid_credentials() -> AppError {
+    AppError::coded(401, "INVALID_CREDENTIALS", "invalid email or password")
+}
+
+/// 403 for a refused account status (BR-01).
+fn account_refused(code: &str) -> AppError {
+    let message = match code {
+        "EMAIL_NOT_VERIFIED" => "email address is not verified",
+        "ACCOUNT_LOCKED" => "account is temporarily locked",
+        _ => "account is disabled",
+    };
+    AppError::coded(403, code, message)
+}
 
 #[derive(Debug, Clone)]
 pub struct RegisterCommand {
@@ -45,7 +60,7 @@ pub struct AuthService {
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|e| AppError::internal(format!("blocking task failed: {e}")).into())
+        .map_err(|e| AppError::internal(format!("blocking task failed: {e}")))
 }
 
 impl AuthService {
@@ -78,11 +93,13 @@ impl AuthService {
                     "password must be at least {} characters",
                     self.policy.min_password_len
                 ),
-            )
-            .into());
+            ));
         }
         if cmd.password.len() > 256 {
-            return Err(AppError::validation("VALIDATION_ERROR", "password too long").into());
+            return Err(AppError::validation(
+                "VALIDATION_ERROR",
+                "password too long",
+            ));
         }
         let password = cmd.password;
         let password_hash = blocking(move || hash_password(&password)).await?;
@@ -115,10 +132,10 @@ impl AuthService {
         if ok {
             Ok(())
         } else {
-            Err(
-                AppError::validation("INVALID_TOKEN", "verification token is invalid or expired")
-                    .into(),
-            )
+            Err(AppError::validation(
+                "INVALID_TOKEN",
+                "verification token is invalid or expired",
+            ))
         }
     }
 
@@ -133,7 +150,7 @@ impl AuthService {
             && !r.flags.deleted
             && r.flags.is_locked_at(now)
         {
-            return Err(IdentityError::account_refused("ACCOUNT_LOCKED"));
+            return Err(account_refused("ACCOUNT_LOCKED"));
         }
 
         let stored = rec
@@ -145,7 +162,7 @@ impl AuthService {
         let verified = blocking(move || verify_password(&pw, &stored)).await? && known;
 
         let Some(rec) = rec else {
-            return Err(IdentityError::invalid_credentials());
+            return Err(invalid_credentials());
         };
         if !verified {
             self.repo
@@ -156,10 +173,10 @@ impl AuthService {
                     now + self.policy.lockout,
                 )
                 .await?;
-            return Err(IdentityError::invalid_credentials());
+            return Err(invalid_credentials());
         }
         if let Some(code) = rec.flags.status(now).refusal_code() {
-            return Err(IdentityError::account_refused(code));
+            return Err(account_refused(code));
         }
         self.repo.record_login_success(rec.id, now).await?;
         self.issue_session(&rec, Uuid::now_v7(), now, None).await
@@ -180,19 +197,22 @@ impl AuthService {
         let (user_id, family_id) = match outcome {
             RotateOutcome::Rotated { user_id, family_id } => (user_id, family_id),
             RotateOutcome::Reused => {
-                return Err(IdentityError::unauthorized(
+                return Err(AppError::coded(
+                    401,
                     "REFRESH_TOKEN_REUSED",
                     "refresh token was already used; session revoked",
                 ));
             }
             RotateOutcome::Expired => {
-                return Err(IdentityError::unauthorized(
+                return Err(AppError::coded(
+                    401,
                     "REFRESH_TOKEN_EXPIRED",
                     "refresh token expired",
                 ));
             }
             RotateOutcome::Unknown => {
-                return Err(IdentityError::unauthorized(
+                return Err(AppError::coded(
+                    401,
                     "INVALID_REFRESH_TOKEN",
                     "invalid refresh token",
                 ));
@@ -201,14 +221,15 @@ impl AuthService {
         let rec = self.repo.find_auth_by_id(user_id).await?;
         let Some(rec) = rec else {
             self.repo.revoke_family(family_id, now).await?;
-            return Err(IdentityError::unauthorized(
+            return Err(AppError::coded(
+                401,
                 "INVALID_REFRESH_TOKEN",
                 "invalid refresh token",
             ));
         };
         if let Some(code) = rec.flags.status(now).refusal_code() {
             self.repo.revoke_family(family_id, now).await?;
-            return Err(IdentityError::account_refused(code));
+            return Err(account_refused(code));
         }
         self.issue_session(&rec, family_id, now, Some(new_token))
             .await
