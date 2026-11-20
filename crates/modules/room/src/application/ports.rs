@@ -225,7 +225,7 @@ impl Caller {
 pub struct JoinInput {
     pub room: RoomId,
     pub user: UserId,
-    pub display_name: String,
+    pub display_name: Option<String>,
     pub speak_language: String,
     pub listen_language: String,
     pub now: DateTime<Utc>,
@@ -255,8 +255,11 @@ pub trait RoomRepo: Send + Sync {
     async fn find_by_code(&self, code: &str) -> AppResult<Option<RoomRecord>>;
     async fn has_participant(&self, room: RoomId, user: UserId) -> AppResult<bool>;
     async fn participants(&self, room: RoomId) -> AppResult<Vec<ParticipantRecord>>;
-    async fn routes_snapshot(&self, room: RoomId, now: DateTime<Utc>)
-    -> AppResult<AudioRoutesSnapshot>;
+    async fn routes_snapshot(
+        &self,
+        room: RoomId,
+        now: DateTime<Utc>,
+    ) -> AppResult<AudioRoutesSnapshot>;
 
     async fn lifecycle(
         &self,

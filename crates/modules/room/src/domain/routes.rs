@@ -73,7 +73,10 @@ pub fn plan_routes(participants: &[RouteSpeaker], existing: &[ExistingRoute]) ->
     let mut plan = RoutePlan::default();
     for e in existing {
         match wanted.get(&(e.source, e.target)) {
-            Some(w) if w.source_language == e.source_language && w.target_language == e.target_language => {
+            Some(w)
+                if w.source_language == e.source_language
+                    && w.target_language == e.target_language =>
+            {
                 if w.voice_clone != e.voice_clone {
                     plan.set_clone.push((e.id, w.voice_clone));
                 }
@@ -111,7 +114,12 @@ mod tests {
         // a->b, c->b, b->a, b->c ; a<->c same language
         assert_eq!(plan.add.len(), 4);
         assert!(plan.add.iter().all(|r| r.source != r.target));
-        assert!(!plan.add.iter().any(|r| r.source == a.id && r.target == c.id));
+        assert!(
+            !plan
+                .add
+                .iter()
+                .any(|r| r.source == a.id && r.target == c.id)
+        );
     }
 
     #[test]
@@ -133,7 +141,7 @@ mod tests {
             .collect();
         assert!(plan_routes(&[a.clone(), b.clone()], &existing).is_empty());
         // b departs: everything removed
-        let p = plan_routes(&[a.clone()], &existing);
+        let p = plan_routes(std::slice::from_ref(&a), &existing);
         assert_eq!(p.remove.len(), 2);
         assert!(p.add.is_empty());
         // b now listens in vi: a->b disappears, b->a language unchanged

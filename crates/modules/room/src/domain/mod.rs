@@ -129,9 +129,18 @@ mod tests {
         assert_eq!(join_status(None, false, true), Ok(Waiting));
         assert_eq!(join_status(None, false, false), Ok(Connected));
         assert_eq!(join_status(None, true, true), Ok(Connected));
-        assert_eq!(join_status(Some(Kicked), false, false), Err(DomainError::Kicked));
-        assert_eq!(join_status(Some(Kicked), true, false), Err(DomainError::Kicked));
-        assert_eq!(join_status(Some(Rejected), false, false), Err(DomainError::Rejected));
+        assert_eq!(
+            join_status(Some(Kicked), false, false),
+            Err(DomainError::Kicked)
+        );
+        assert_eq!(
+            join_status(Some(Kicked), true, false),
+            Err(DomainError::Kicked)
+        );
+        assert_eq!(
+            join_status(Some(Rejected), false, false),
+            Err(DomainError::Rejected)
+        );
         assert_eq!(join_status(Some(Disconnected), false, true), Ok(Connected));
         assert_eq!(join_status(Some(Left), false, true), Ok(Connected));
         assert_eq!(join_status(Some(Invited), false, true), Ok(Waiting));
@@ -159,7 +168,15 @@ mod tests {
 
     #[test]
     fn status_roundtrip() {
-        for s in [Invited, Waiting, Connected, Disconnected, Left, Kicked, Rejected] {
+        for s in [
+            Invited,
+            Waiting,
+            Connected,
+            Disconnected,
+            Left,
+            Kicked,
+            Rejected,
+        ] {
             assert_eq!(ParticipantStatus::parse(s.as_str()), Some(s));
         }
     }

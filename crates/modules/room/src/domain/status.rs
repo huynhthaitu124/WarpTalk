@@ -71,7 +71,10 @@ pub enum DomainError {
     #[error("This room has already ended or has been cancelled.")]
     RoomClosed,
     #[error("Action {action:?} is not allowed while the room is {from:?}.")]
-    InvalidTransition { from: RoomStatus, action: RoomAction },
+    InvalidTransition {
+        from: RoomStatus,
+        action: RoomAction,
+    },
     #[error("You have been permanently removed from this room and cannot rejoin.")]
     Kicked,
     #[error("The host declined your request to join this meeting.")]
@@ -133,7 +136,9 @@ mod tests {
                 S::InProgress | S::Paused | S::Waiting | S::Open | S::Ended
             )
             .then_some(S::Ended),
-            A::Cancel => matches!(from, S::Scheduled | S::Waiting | S::Open).then_some(S::Cancelled),
+            A::Cancel => {
+                matches!(from, S::Scheduled | S::Waiting | S::Open).then_some(S::Cancelled)
+            }
             A::Expire => matches!(from, S::Scheduled | S::Waiting | S::Open).then_some(S::Expired),
         }
     }
@@ -162,7 +167,10 @@ mod tests {
         }
         assert_eq!(
             transition(S::Paused, A::Start),
-            Err(DomainError::InvalidTransition { from: S::Paused, action: A::Start })
+            Err(DomainError::InvalidTransition {
+                from: S::Paused,
+                action: A::Start
+            })
         );
     }
 
