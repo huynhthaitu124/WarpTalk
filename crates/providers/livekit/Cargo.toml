@@ -1,0 +1,10 @@
+[package]
+name = "warptalk-livekit"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
