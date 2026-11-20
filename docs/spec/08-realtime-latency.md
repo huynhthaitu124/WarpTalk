@@ -1,218 +1,299 @@
-# 08 - Real-time Latency Design (speech -> translation -> dub)
+# 08 - Real-time Translation Pipeline and Sub-2s Latency
 
-Source repo: https://github.com/WarpTalk-CapstoneProject/warptalk-ai, commit `d0db9b9` (shallow clone). No backend code was needed for this document.
-Paths are relative to that repo; `config.py` means `shared/config.py`. Line numbers refer to that commit. Normative words follow RFC 2119. Measurements quoted here are those recorded in source comments (dated by the authors); they are not re-measured by this spec. Env names assume the class prefix shown in section 8. No secrets or hostnames are reproduced.
-
-## 1. Pipeline and budget
-
-```
-LiveKit audio -> livekit_ingress_worker (VAD, gates, chunking)
-   |-- audio:frames (live 96 ms windows, flash mode) -------+
-   '-- audio:chunks (closed utterance)                      v
-                                              stt_worker (OpenAI Realtime STT)
-        stt:speculative (pub/sub hint) -> translation warm-up    |
-        stt:results (early sentences, then remainder) <----------'
-   -> translation_worker (Realtime first sentence, HTTP chat for the rest)
-   -> translate:results -> tts_worker (Cartesia, streamed to LiveKit) -> tts:results / LiveKit track
-```
-
-Streams: `audio:chunks`, `audio:frames` (`shared/schemas.py:125`), `stt:results`, `translate:results`, `tts:results`; each is published to both `<stream>:{meetingId}` and the global `<stream>` (`shared/base_worker.py:818-842`). Workers are independent consumer groups on Redis Streams.
-
-Budget and targets, where the source defines them:
-
-| Source | Target or figure |
-|---|---|
-| `.agents/resources/ai_pipeline_architecture.md:3-10` | Design target about 1.5 s to first output (STT 0.5 s, translate 0.4 s, TTS 0.6 s) on 2 s chunks. Legacy design note; the shipped chunking is 6 s max (section 2). |
-| `.agents/resources/implementation_plan.md:15-24` | Older budget (about 1.5 s) written for Whisper/XTTS/NLLB, not the deployed providers. Treat as obsolete. |
-| `tools/probe_translate_ttfb.py` docstring | Working goal "< 2.5 s" end to end ("whether translation can be hidden"). |
-| Measured, STT (`config.py:432-470`) | commit -> completed p50 774 ms with streaming model and paced audio, versus 1651 ms baseline (human Vietnamese recording, n=3, 2026-08-20). |
-| Measured, translation (`config.py:604-612`) | Realtime mini warm 655-919 ms; chat model warm median about 0.8 s. |
-| Measured, TTS (`config.py:775-790`) | First audio 0.669 s cold vs 0.180 s with a warm connection (end to end 0.721 s -> 0.251 s). |
-| Metric `tts_first_audio` | What the listener hears; `tts_synthesis` includes playout under streaming and MUST NOT be read as wait time (`tts_worker/worker.py:2685-2711`). |
-
-No hard SLO is enforced in code; targets are guidance. Flow control relies on stream lag and stage histograms (section 9).
-
-## 2. Ingress: chunking, VAD, endpointing, gates
-
-All in `livekit_ingress_worker/worker.py` with settings on `WorkerSettings` (`config.py:98-410`).
-
-**Chunk cap.** `chunk_duration_ms` default 6000 is a hard cap for uninterrupted speech; ordinary turns flush on VAD silence (`config.py:168-172`). Platform setting `meetings.chunk_duration_ms` (range 2000-15000) exists (`shared/platform_settings.py:121`).
-
-**VAD hysteresis and padding.** Silero per 32 ms frame. Entry `vad_threshold` 0.35, exit `vad_release_threshold` 0.20 (clamped to entry), `vad_pre_speech_ms` 384 prepended from the ring buffer (no latency cost), `vad_min_speech_ms` 288 (`config.py:198-247`).
-
-**Adaptive hangover ladder** ("the more a speaker has said, the readier to cut", `config.py:283-334`):
-
-| Speech so far | Hangover | Knob |
+| Repo | Commit | Scope read |
 |---|---|---|
-| >= 4000 ms (`vad_seek_boundary_after_ms`) | 250 ms | `vad_seek_hangover_ms` |
-| 1500-4000 ms | 576 ms | `vad_silence_hangover_ms` |
-| < 1500 ms (`vad_short_turn_speech_ms`) | 864 ms | `vad_short_turn_hangover_ms` |
+| `warptalk-ai` | `d0db9b9` (2026-10-04), full history, blobless clone, 420 commits | whole latency path; `git log` searched for latency work |
+| `warptalk-backend` | `c51b39b` (depth 1, sparse) | `gateway/.../Services/AiResultConsumerService.cs`, `MeetingCaptionMetrics.cs` only |
+| `warptalk-web` | `e1dd35d` (depth 1, sparse) | `src/lib/{meeting,audio,realtime}`, `src/components/rooms/live`, `src/hooks` only |
 
-Trailing silence beyond the base hangover is trimmed before publish, so a longer decision window adds no audio. Boundary seeking has about 1.6 s (4000-5616 ms) to find a pause before the cap cuts blindly, because pre-speech padding counts toward the cap.
+Paths are relative to the named repo; `config.py` is `shared/config.py`; line numbers refer to the commits above. Normative words follow RFC 2119. Figures come from source comments, docstrings and commit messages (the authors' own measurements, not re-measured here). A figure marked "(inferred)" is this spec's estimate, not found in code. No secrets, hostnames or URLs are reproduced; env names assume the prefixes in section 8.
 
-**Gates** (applied to the closed chunk, in `_publish_speech_chunk`, `worker.py:2637`; not to live frames):
+**Headline.** A two-second deadline is stated in comments for the live transcript (`livekit_ingress_worker/audio_archive.py:4`, `retranscribe_worker/batch_transcriber.py:5`), but no code constant, alert or SLO enforces it, and the measured dub lag in the authors' own probe is about 2.7 s (section 3). This spec states the budget the architecture can meet, which depends on early-sentence publishing, speculative translation and warm connections, and which the single-short-sentence path does not meet.
 
-| Gate | Module | Default | Behaviour |
+## 1. End-to-end flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Mic as Speaker client (web)
+  participant LK as LiveKit SFU
+  participant ING as livekit_ingress_worker
+  participant STT as stt_worker (Realtime STT)
+  participant TR as translation_worker
+  participant TTS as tts_worker (Cartesia)
+  participant GW as Gateway (SignalR)
+  participant L as Listener client (web)
+
+  Mic->>LK: mic track (WebRTC)
+  LK->>ING: AudioStream 16 kHz mono (native resample)
+  ING->>ING: VAD, hangover ladder, pre-speech pad
+  ING-)STT: audio:frames (96 ms windows, ungated) [flash mode]
+  STT-)GW: pub/sub stt:interim (live words, 150 ms throttle)
+  GW-)L: TranscriptInterimReceived (caption preview)
+  STT-)TR: pub/sub stt:speculative (finished delta sentence)
+  TR->>TR: speculative translate, cache 15 s
+  ING-)STT: audio:chunks (closed turn, gated)
+  STT-)TR: stt:results (early sentences, then remainder)
+  STT-)GW: stt:results (same stream, own group)
+  GW-)L: TranscriptSegmentReceived (original caption)
+  TR->>TR: sentence 0 single call (Realtime), rest one batch call
+  TR-)TTS: translate:results (one entry per sentence per target language)
+  TR-)GW: translate:results (own group)
+  GW-)L: TranslationTextReceived (translated caption)
+  TTS->>TTS: cache, voice select or clone, Cartesia slot
+  TTS->>LK: bot publishes PCM 20 ms frames as chunks arrive
+  TTS-)GW: tts:results (WAV bytes, also cached; web has no handler found)
+  LK->>L: ai-interpreter-{lang}-{speaker} track
+  L->>L: raw mic unsubscribed while dub present, play dub
+```
+
+Hop table (each stream is published to both `<stream>:{meetingId}` and the global `<stream>`, `shared/base_worker.py:818-842`; workers are independent consumer groups):
+
+| Hop | Transport | Producer to consumer | Source |
 |---|---|---|---|
-| Absolute energy floor | `_ENERGY_FLOOR_RMS` (`worker.py:420`) | RMS 0.02, always on | Drops noise that tripped VAD; scaled by sqrt(speech/total samples) so padding does not tighten it (`worker.py:2688`) |
-| `speech_level_floor` | `livekit_ingress_worker/speech_level_floor.py` | `ingress_energy_relative_ratio` 0.4 (0 disables), baseline min 3 chunks, window 8 | Only LOWERS the floor for a speaker whose own median speech level is quiet; rescues quiet mics (`config.py:355-357`) |
-| `near_field_gate` | `livekit_ingress_worker/near_field_gate.py` | `near_field_gate_enabled` false; relative floor 0.35, min baseline chunks 2, EMA alpha 0.3 | Rejects chunks whose peak is under 35 % of the track's own near-field peak. Off by default: it dropped valid middle chunks in production (`config.py:336-346`) |
-| `far_side_gate` | `livekit_ingress_worker/far_side_gate.py` | `far_side_gate_enabled` false | Meet-bridge only: zeroes 32 ms frames of the stand-in feed explained by a real participant's own track, delayed 150-1200 ms. Unsure means keep. Off pending a real bridged recording; synthetic eval removes only about 20 % of duplicate frames (`config.py:358-405`) |
+| 1 | LiveKit track | web mic to ingress bot (`AudioStream(sample_rate=16000, num_channels=1)`) | commit `510abb0`, `livekit_ingress_worker/worker.py` |
+| 2a | Redis stream `audio:frames` (maxlen 2000, ephemeral) | ingress to STT, 96 ms windows while speaking | `worker.py:2606-2636` |
+| 2b | Redis stream `audio:chunks` | ingress to STT, closed utterance (also feeds voice clone sampling in tts_worker) | `worker.py:2823` |
+| 3a | pub/sub `stt:interim` | STT to gateway, live words, never stored or billed | `stt_worker/worker.py:359-381`, `stt_worker/model.py:97` |
+| 3b | pub/sub `stt:speculative` | STT to translation, prefetch hint | `translation_worker/worker.py:256-278` |
+| 4 | stream `stt:results` | STT to translation, gateway, transcript service, assistant (separate groups) | `stt_worker/worker.py:1425-1456` |
+| 5 | stream `translate:results` | translation to tts_worker, gateway, billing, transcript | `translation_worker/worker.py:1003-1016` |
+| 6 | LiveKit track `tts-audio`, identity `ai-interpreter-{lang}-{speakerId}` (`-voice-{id8}-` variant for a listener-picked voice) | tts_worker bot to listeners | `tts_worker/livekit_publisher.py:616-670`, `warptalk-web src/lib/meeting/interpreter-track.ts:28-33` |
+| 7 | stream `tts:results` | tts_worker to gateway (`TranslatedAudioReceived`, base64 WAV) | `AiResultConsumerService.cs:1069-1114` |
+| T | pub/sub `translationRoom:telemetry`, hashes `warptalk:latency:{stage}` | every worker, stage ages | section 7 |
 
-The STT text dedupe `far_side_dedupe_*` is the second layer for the same duplicate (`config.py:533-549`, `stt_worker/far_side_dedupe.py`).
+Two parallel lanes leave `translate:results`: the text-caption lane (gateway to `TranslationTextReceived`, about the polling interval of 25 ms) and the dub lane (tts_worker to a LiveKit track). A caption never waits for TTS. In `warptalk-web` no handler for `TranslatedAudioReceived` was found in the directories read; the dub is heard only through the LiveKit track (not verified for the rest of the web repo).
 
-## 3. STT: streaming, partials, commit, second pass
+## 2. Stage behaviour that sets the budget
 
-- **Flash mode (stream while speaking).** `stt_streaming_enabled` default true (`config.py:135`). The ingress publishes 96 ms windows to `audio:frames` (`STT_FRAME_STREAM_MAXLEN` 2000) via `publish_ephemeral`, without energy or near-field gating, so the worst case of failure is the old latency, never a lost sentence (`worker.py:2606-2636`). Per-room override Redis key `translationRoom:{id}:flash_mode`, read at speech onset and held for the whole utterance (`_flash_mode_enabled`, `worker.py:2515`); platform default `meetings.flash_mode_default` (`platform_settings.py:120`).
-- **Model pairing.** `STTSettings.model` default `gpt-live-transcribe` MUST be used only with flash mode on: given a closed chunk in one go it measured 4733 ms, 2.9x worse than baseline. Turning flash mode off requires reverting both (`config.py:432-476`).
-- **Commit semantics.** `input_audio_buffer.commit()` consumes the buffer, so rolling commits yield disjoint slices, not a growing hypothesis (`tools/probe_commit_semantics.py`); 1 s slices hallucinated across languages (`tools/probe_chunk_context.py`). Hence the design commits at the VAD turn end and does not use rolling partial hypotheses.
-- **Early (mid-chunk) sentences.** `on_early_segment=publish_early` publishes each sentence the model finishes before the turn closes. They are final and append-only (`exclude_emitted_from_final=True`; the completed event carries only the remainder) and pass the full `_filter_segments`. Measured first sentence 1649 ms (vi, 15 s clip) and 1176 ms (en, 18.5 s) versus whole chunk about 5.7 s. Trade-off: deltas carry no logprob, so they publish with `STT_UNKNOWN_CONFIDENCE` (-1.0) and the confidence gate cannot fire (`stt_worker/worker.py:1425-1456`, `config.py:445-455`).
-- **Speculative hint.** `on_speculative_segment=publish_speculative` publishes a complete delta sentence on pub/sub `stt:speculative` (ephemeral, never shown). The two callbacks are mutually exclusive, and the early path replaced the speculative cache in flash mode (`stt_worker/worker.py:1240-1275, 1450-1456`).
-- **Warm sockets.** `realtime_pool_size` default 4 warm WebSockets avoid the 1-2 s handshake on a speaker's first utterance (`config.py:512-514`).
-- **Concurrency.** Cross-speaker parallel dispatch with a per-speaker lock (same-speaker commits MUST NOT interleave); `_MAX_IN_FLIGHT` 32; ack tied to handler success (`stt_worker/worker.py:301, 858-905`).
-- **Clean prepass.** Deterministic disfluency prepass on every final segment, about 1-5 ms, kill switch `stt_clean_prepass_enabled` (`config.py:167`). Prosody measurement is about 3 ms CPU per second of audio, run as a parallel task (`stt_worker/worker.py:1240`, `config.py:523`).
-- **Second pass (post-meeting, not real time).** `retranscribe_worker` re-transcribes archived per-speaker files with a batch endpoint and a stronger model, off the latency path; it merges by sort on the meeting clock and refuses spans flagged `transcriptPaused` (`retranscribe_worker/batch_transcriber.py`, `merge.py`, `stt_worker/second_pass.py`; README "Transcript recording pause"). Requires `audio_archive_enabled` (default false).
+### 2.1 Ingress (`livekit_ingress_worker/worker.py`, settings `config.py:98-410`)
 
-## 4. Translation: first-token and ordering
+- `chunk_duration_ms` 6000 is a safety cap; turns normally close on VAD silence (`config.py:168-172`). Silero per 32 ms frame; entry 0.35, exit 0.20; `vad_pre_speech_ms` 384 prepended at no latency cost; `vad_min_speech_ms` 288.
+- Adaptive hangover (`config.py:283-334`): speech so far under 1500 ms waits 864 ms; 1500-4000 ms waits 576 ms; 4000 ms or more waits 250 ms. Trailing silence beyond the base is trimmed before publish.
+- Gates on the closed chunk (`_publish_speech_chunk`, `worker.py:2637`): absolute RMS floor 0.02 (always on), `speech_level_floor` (relative 0.4), `near_field_gate` (off), `far_side_gate` (off). Live frames in flash mode skip the gates, so a gate bug cannot lose a sentence (`worker.py:2606-2636`).
+- Chunk `timestamp_ms` is stamped at the end of the chunk and is carried unchanged through STT, translation and TTS messages (`translation_worker/worker.py:957`). Every stage age in section 7 therefore counts from the end of the turn, after the hangover.
 
-- **Realtime for the first sentence.** The persistent Realtime text path (`realtime_model` default `gpt-realtime-2.1-mini`, effort `minimal`, `realtime_max_output_tokens` 128, pool 4, timeout 2.0 s) carries the first sentence of each utterance; the chat model (`model` default `gpt-5.4-nano`) is the correctness fallback and carries the rest via `translate_batch`, one call for N sentences, falling back to concurrent per-sentence calls (`config.py:603-648`, `translation_worker/translator.py:515, 763`, `worker.py` fallback log `openai_realtime_translation_failed_using_chat_fallback` at `translator.py:695`).
-- **Why timeout 2.0 s and 128 tokens.** A premature HTTP fallback turned a rare 1.2 s response into a 5-19 s cliff; 64 tokens intermittently ended `incomplete` (`config.py:640-647`). Effort above minimal broke or slowed the path with no repair gain (`tools/probe_realtime_effort.py`).
-- **Warm-up.** `OpenAITranslator.warm_up` sends one tiny request at startup; a cold first request measured above 3 s (`translator.py:375-392`). The Realtime pool is pre-connected the same way (`_ensure_realtime_pool`, `translator.py:448`).
-- **Speculative prefetch.** `TranslationWorker` subscribes to `stt:speculative` and translates delta sentences ahead, keyed by normalized text, TTL `_SPECULATIVE_TTL_SECONDS` 15 s, per-call `_SPECULATIVE_TIMEOUT_SECONDS` 1.5 s, one-slot semaphore (`translation_worker/worker.py:193-223, 262-360`). Output is cached only; durable publish happens only for the validated STT segment.
-- **Concurrency and order.** `_CONCURRENCY_LIMIT` 8 and `_MAX_IN_FLIGHT` 32 so sentence 2 starts while sentence 1 is in flight; a per-speaker `_PublishTurn` event prevents a later line overtaking an earlier one, waiting at most `_PUBLISH_ORDER_WAIT_SECONDS` 10 s (nothing dropped) (`worker.py:140-176, 185-190, 420-480`).
-- **Determinism for cache hits.** `temperature` 0.0 so repeated sentences translate identically and hit the TTS cache (`config.py:649-654`).
-- **Same-language polish.** `_POLISH_TIMEOUT_SECONDS` 1.5 s; past it the raw text ships (`worker.py:198-201`).
-- **Retries.** `_create_with_retry`: 2 retries, 0.5 s base delay doubling (`translator.py:578`). Provider is OpenAI only, no cross-vendor fallback (`config.py:599`).
-- **ASR-repair prompt gating.** The repair clause is sent only when a possible mishearing or meeting context exists, to save tokens (`translator.py:70-110`; `tools/probe_gate_hit_rate.py`).
+### 2.2 STT (`stt_worker/`)
 
-## 5. TTS: first audio, isochrony, catch-up
+- Flash mode streams audio while the person speaks to `gpt-live-transcribe`; the model is only valid with flash mode on (`config.py:432-476`, measured table in section 4).
+- Three outputs per utterance: live words on `stt:interim` (preview, replaced by the final line); early sentences on `stt:results` as the model completes them (append-only, `exclude_emitted_from_final`, confidence `-1.0` unknown); the remainder on commit. `input_audio_buffer.commit()` consumes the buffer, so rolling commits yield disjoint slices and 1 s slices hallucinated, hence commit only at turn end (`tools/probe_commit_semantics.py`, `tools/probe_chunk_context.py`).
+- Second pass is not real time: `retranscribe_worker` re-runs archived per-speaker audio with a batch endpoint (`stt_worker/second_pass.py`, requires `audio_archive_enabled`, default false). It exists precisely because the live path is tuned for the clock and is allowed to be less accurate (`audio_archive.py:3-12`; the live model repaired 0 of 3 hard cases, the full model 3 of 3).
 
-- **Warm Cartesia connections.** `tts_warm_pool_size` 3 pre-dialled WebSockets, refilled in background after each claim; dialing costs p50 427.6 ms versus 0.1 ms to build a context on an open connection (`tts_worker/synthesizer.py:125-195`, `config.py:775-790`).
-- **Stream to LiveKit.** `stream_to_livekit` default true pushes each Cartesia chunk onto the track as it arrives (WT-397) (`config.py:730-739`). `tts_synthesis` therefore includes playout; use `tts_first_audio`.
-- **Concurrency gate.** `cartesia_max_concurrency` 3 (plan limit divided by replicas). An open prosody context holds a vendor slot until `done`, so contexts MUST be ended right after `flush_done`, and a sentence waits only for generation, not playout. Wait time is recorded as `tts_slot_wait` for every sentence (`config.py:791-824`, `tts_worker/worker.py:2695`). Consume dispatch `_MAX_IN_FLIGHT` 32 (`worker.py:705`).
-- **Synthesis cache.** `cache_enabled` true, `cache_ttl_seconds` 3600, key `tts:cache:{sha256}`; a hit costs about 2 ms against about 1 s for a call (`config.py:746-747`, `tts_worker/worker.py:2535, 4602-4617`).
-- **Voice catalog warm.** `voice_catalog_warm_enabled` true, refresh 3600 s against a 6 h TTL (`config.py:757-769`).
-- **Speed.** `speed` default `fast`: a dub must fit the speaker's gap (`config.py:673`).
-- **Isochrony.** `shared/isochrony.py` learns dub/source duration ratio per speaker and language and centres Cartesia speed on it, clamped 0.8-1.25 (`MIN_SPEED_CENTER`, `MAX_SPEED_CENTER`; applied at `tts_worker/worker.py:4499`).
-- **Catch-up.** When the dub lags the speaker by more than `_CATCH_UP_ON_TIME_MS` 1500, speed is multiplied linearly up to 1.25 at `_CATCH_UP_FULL_LAG_MS` 4000 ms of lag (`tts_worker/worker.py:671-683, 4530-4556`).
-- **Prosody continuity.** `prosody_continuity` true keeps one Cartesia context across a speaker's consecutive sentences only when the next is already queued (`config.py:725`).
-- **Retry.** `synthesis_max_retries` 1, backoff 0.5 s, window 10 s; only for moment-bound failures (drop, 5xx, timeout), never 4xx; retry runs inside the per-key lock so order is kept. Exhausted or 4xx go to `translate:results:dead-letter` (`config.py:826-846`).
+### 2.3 Translation (`translation_worker/translator.py`, `worker.py`)
 
-## 6. Queues, backpressure, recovery
+- **Not token-streamed downstream.** `_translate_realtime` collects `response.output_text.delta` into a list and returns only at `response.done` (`translator.py:515-577`). Streaming exists on the wire to the model, but the unit that moves downstream is one sentence. Sentence granularity, not token granularity, is what lets TTS start before the turn ends.
+- **Split of work per STT message** (`worker.py:755-830`): sentence 0 gets its own `translate_with_valence` call so it publishes alone as soon as it returns; sentences 1..N-1 go as one `translate_batch` call started concurrently (numbered-line output, parse mismatch falls back to concurrent per-sentence calls, `translator.py:763-874`). A speculative hit replaces the sentence-0 call with an already-running task (`_take_speculative_translation`, `worker.py:385`).
+- **Realtime first, chat fallback** (`translator.py:626-724`): Realtime pool (4 sockets, effort `minimal`, 128 output tokens, 2.0 s timeout) is tried first; any exception or empty result logs `openai_realtime_translation_failed_using_chat_fallback` and falls through to chat completions with 2 retries, 0.5 s doubling (`translator.py:578-600`).
+- **Context** (`worker.py:570-577`, `translator.py:650-690`): last 3 accepted source utterances (window of 4, `_CONTEXT_SEGMENTS`, `worker.py:192`) plus the durable room title/description (600 characters, Redis key `translationRoom:{id}:meeting_context`, cached per worker, `worker.py:1177`). Translator keeps the last 4 lines. Context is attached only if `_select_relevance_context` finds lexical overlap, otherwise it is dropped to save tokens (`worker.py:110-125`, `_CONTEXT_FREE_SHORT_TURNS`). The prompt also returns a valence marker in the same call (no extra round trip).
+- **What is translated** is `display_text`, the clean line after the deterministic disfluency prepass, not the raw recogniser text (`worker.py:586-600`).
+- **Pool hygiene**: a Realtime socket older than the vendor session cap is retired before hand-out, not after a failed request (production 2026-09-08: four 60-minute expiries within twenty seconds of start, each costing a fallback) (`translator.py:473-501`).
+- **Concurrency**: `_CONCURRENCY_LIMIT` 8, `_MAX_IN_FLIGHT` 32 via `consume_pipelined` (commit `b4c1a97`: a 7.1 s STT commit used to hold every other speaker's message). Per-speaker `_PublishTurn` keeps order (wait at most `_PUBLISH_ORDER_WAIT_SECONDS` 10 s).
+- **Skips before spending** (`worker.py:496-566`): control markers, paused room, translation not started, credits suspended, same-language target (passthrough, optional polish capped at 1.5 s).
+- **Result fields that drive downstream timing**: `timestamp_ms`, `start_ms`, `chunk_index`, `latency_ms` (this sentence's translation time from the start of `_translate_and_publish`, including waiting for batch and for the earlier sentence's publish turn), `pipeline_latency_ms` (now minus chunk end), `is_final_chunk`, `speculative_hit` (`worker.py:1005-1016`).
 
-- Blocking read `block_ms=2000`; `consume_concurrent` with `count` and `concurrency` for opt-in workers; default `concurrency` 1 (`shared/base_worker.py:98-111, 855-890`). Audio and text workers with ordering assumptions MUST keep 1 unless they use their own pipelined consume (stt, translation, tts use `consume_pipelined` with `max_in_flight`).
-- Stale recovery: XAUTOCLAIM after `processing_timeout_seconds` (120) plus `reclaim_margin_seconds` (30); `max_delivery_attempts` 5 then dead letter; heartbeat 10 s with TTL 30 s (`base_worker.py:112-125, 899-1049`).
-- Redis: `max_connections` 50, `socket_timeout` 15 s, `socket_connect_timeout` 5 s, `retry_max_attempts` 5, `retry_base_delay` 0.5 s (`config.py:22-50`).
-- Memory bound: `stream_maxlen` 200 entries per stream (a `tts:results` entry is about 113 KB of WAV) and `stream_ttl_seconds` 3600 refreshed on publish, because nothing deletes room streams otherwise (`config.py:41-79`).
-- A suggestion or assistant worker reads `stt:results` in its own group and MUST NOT delay captions (see 09).
+### 2.4 TTS (`tts_worker/worker.py`, `synthesizer.py`, `prosody_context.py`, `livekit_publisher.py`)
 
-## 7. Provider timeouts and fallbacks
+Per message `process` (`worker.py:1788-1940`) does, in order: skip if room `PAUSED`; skip if source language equals target (never dub a listener into the speaker's own language); skip if route is `TEXT_ONLY_MODE` or a text-only Meet-bridge route (still emits the `final_chunk_processed` event); resolve voice variants (shared default or clone track plus one per listener-picked voice); compute catch-up lag; synthesize each variant.
 
-| Stage | Timeout | Fallback | Reference |
-|---|---|---|---|
-| STT realtime | Pool of warm sockets; discard floor `min_avg_logprob` -0.7 (per-language overrides) | Closed chunk on `audio:chunks` still carries the whole turn if streaming fails | `config.py:486-502`, `worker.py:2606` |
-| Translation realtime | 2.0 s | HTTP chat model | `config.py:642` |
-| Translation speculative / polish | 1.5 s / 1.5 s | Discard speculation; ship raw text | `translation_worker/worker.py:197-201` |
-| TTS | Cartesia SDK retries plus one worker retry within 10 s | Bytes fallback; dead letter on terminal failure | `config.py:844-846` |
-| Suggestion LLM | 8 s, 0 retries | Silence | `config.py:1022` |
-| Provider call stats | Every OpenAI and Cartesia call timed to response headers | n/a | `shared/provider_calls.py:1-30` |
+- **Voice**: default catalog voice per speaker persona; clone via a ladder of growing buffers (3, 8, 45 s, config default; commit `743edc3` mentions 3, 8, 20, 45) instead of waiting for 20 s; a voice-less speaker's first dub waits at most `voice_clone_first_wait_ms` 2500 ms counted from clone start, then goes out in the catalog voice (`worker.py:813-838`, `config.py:692-695`). Far-speaker (Meet-side) clone is consent-gated (`far_speaker_clone.py`, not analysed).
+- **Cache first** (`worker.py:2530-2577`): key includes text, voice id and mode, generation config (speed, prosody) and sample rate; hit publishes cached WAV (about 2 ms); an empty or header-only WAV is never cached or replayed (WT-874).
+- **Synthesis** (`_synthesize_sentence`, `worker.py:1563`): with `prosody_continuity` a Cartesia context is reused for the speaker's next sentence only when it is already queued; each push uses `flush=True` and reads until the matching `flush_done` (`prosody_context.py:197-250`). Per-sentence timeout 6.0 s (`SENTENCE_TIMEOUT_SECONDS`), idle context expiry 4.0 s (server retires idle contexts at about 4.7-5.2 s). An open context holds a vendor slot even when idle: leaving 3 open moved TTFB from about 0.7 s to about 4.0 s (`prosody_context.py:42-52`).
+- **First audio**: each Cartesia chunk is fed to a `TrackStream` the instant it arrives (`on_pcm`, WT-397); the stream holds back one 20 ms frame plus an 8 ms fade (`livekit_publisher.py:203`, `_FADE_MS` 76), so the added first-audio cost is about 20 ms. Frames are 20 ms; `AudioSource` queue 1000 ms (look-ahead buffer, not added delay).
+- **Bot lifecycle**: one LiveKit participant per (meeting, speaker, language, voice). A cold bot costs `room.connect` plus 0.2 s settle (`_PUBLISH_SETTLE_S`); under CPU throttle it measured 4.5-17.6 s. Fixes: the join starts when the stream starts, beside Cartesia generation (`TrackStream.start`, commit `1c7ba09`); idle timeout 600 s (`LiveKitSettings.tts_bot_idle_timeout_s`, the 60 s constant is only the fallback, `livekit_publisher.py:56-59`); bots released at once when the room pauses or ends (commit `743edc3`).
+- **Ordering and lag**: per (meeting, speaker, language) lock keeps order. `_catch_up_lag_ms` (`worker.py:4502`) is the larger of out-of-order gap (a sentence that belongs before one already spoken) and translation overrun beyond `_CATCH_UP_ON_TIME_MS` 1500 ms; speed multiplier ramps linearly to 1.25x at 4000 ms (`_with_catch_up`, `worker.py:4536`). A late line is spoken in full, only faster. Catch-up is part of the cache key.
+- **Isochrony** (`shared/isochrony.py`): learned dub/source duration ratio per speaker and language centres the speed within 0.8-1.25, applied at `worker.py:4499`.
 
-## 8. Configuration knobs
+### 2.5 Playback (client, `warptalk-web`)
 
-Env prefixes: `WorkerSettings` none (field name uppercased), `STTSettings` `STT_`, `TranslationSettings` `TRANSLATION_`, `TTSSettings` `TTS_`, `RedisSettings` `REDIS_` (`config.py`). Values are code defaults; deployments may override.
+- **Track selection** (`components/rooms/live/filtered-room-audio.tsx`, replaces the default room audio renderer): the listener is subscribed only to the interpreter track for their listen language (and preferred voice) and unsubscribed with `setSubscribed(false)` from the others, so the SFU stops sending them. `onlySubscribed: false` lets the component see tracks it is not receiving.
+- **"Ducking" of the original is mute, not gain**: a speaker whose language differs from the listener's has their raw mic unsubscribed only once a dub track for that speaker exists (`filtered-room-audio.tsx:42-56`). The bot is created by the first synthesized chunk, so the first sentence of a turn from a new speaker plays the original; after the bot exists the original stays muted across idle reconnects via `dubbedHistory` (WT-874, `:164-212`). No cross-fade, no gain duck.
+- **Gain ducking exists only for the Meet bridge echo path**: the microphone copy sent to Meet is ducked to `MEET_AUDIO_DUCK_GAIN` 0.15 while the far side is speaking (`src/lib/meeting/meet-audio-track.ts:86-144`). Unrelated to dub playout.
+- **Jitter buffer, playout delay, target latency**: no setting found in `lib/meeting`, `lib/audio`, `components/rooms/live` or `hooks`; the client uses LiveKit/WebRTC defaults (the buffer size is therefore inferred, see 3.1).
+- **Captions**: `TranscriptInterimReceived` sets a live line that expires after `LIVE_LINE_MAX_AGE_MS` (`lib/transcript/live-text`, handler `persistent-meeting-session.tsx:4002-4022`); `TranscriptSegmentReceived` (`:3978`) replaces it; `TranslationTextReceived` (`:4044`) carries the translated text. `use-audio-playback.ts` and `exclusive-playback.ts` are voice-preview clip players, not part of the live dub path.
 
-| Knob (class) | Default | Effect |
+## 3. Latency budget
+
+### 3.1 Target allocation, speaker to first dub audio, under 2000 ms
+
+Reference point: the moment the first complete sentence of a multi-sentence turn has been spoken (flash mode, early sentence path). Hangover is not on this path because the early sentence publishes before the turn closes. Values marked "(inferred)" are this spec's allocation; the unmarked figures are the authors' measurements.
+
+| # | Stage | Target ms | How achieved | Knobs (default) | Source |
+|---|---|---|---|---|---|
+| 1 | Capture, WebRTC, ingress decode, 96 ms frame window | 150 (inferred) | native 16 kHz delivery, no Python resampling; ungated live frames | `stt_streaming_enabled` true | 96 ms window `worker.py:2606`; `510abb0` |
+| 2 | STT: words to sentence-complete text | 450 (inferred) | streaming model transcribes while audio arrives; early sentence published without waiting for commit; live words trail the speaker by 0-0.6 s; paced commit to completed p50 774 ms is the turn-end path, not this one | `model` `gpt-live-transcribe`; `realtime_pool_size` 4; `on_early_segment` | `bd5d7c2`, `b06b183`, `config.py:432-470` |
+| 3 | Redis hops stt to translation to tts (3 reads, pipelined) | 60 (inferred) | `consume_pipelined`, `block_ms` 2000 returns on data; ack on handler success | `_MAX_IN_FLIGHT` 32 | `base_worker.py:855-890`, `b4c1a97` |
+| 4 | Translation of sentence 0 | 700 | warm Realtime mini, effort `minimal`, 128 tokens; **0 on a speculative hit** | `realtime_model` `gpt-realtime-2.1-mini`; `realtime_timeout_seconds` 2.0; `_SPECULATIVE_TIMEOUT_SECONDS` 1.5 | p50 685 ms `tools/probe_streaming_lag.py:76`; warm range 655-919 ms `config.py:604-612` |
+| 5 | TTS first audio, warm connection | 200 | pre-dialled sockets, streaming to track, cache hit about 2 ms | `tts_warm_pool_size` 3; `stream_to_livekit` true; `cartesia_max_concurrency` 3 | warm p50 180 ms, cold 669 ms `config.py:775-790` |
+| 6 | Bot publish, SFU, client jitter buffer and decode | 150 (inferred) | bot pre-joined; 1 s AudioSource queue is look-ahead; 20 ms frames; client defaults | `tts_bot_idle_timeout_s` 600 | `livekit_publisher.py:31-44` |
+| | **Total** | **1710** | leaves about 290 ms slack, about 0.7 s more with a speculative hit | | |
+
+### 3.2 Paths that exceed the budget
+
+| Path | Added cost | Result |
 |---|---|---|
-| `stt_streaming_enabled` (Worker) | true | Flash mode: stream audio during speech |
-| `chunk_duration_ms` (Worker) | 6000 | Hard cap per chunk; lower is faster but cuts sentences |
-| `vad_threshold` (Worker) | 0.35 | VAD entry bar |
-| `vad_release_threshold` (Worker) | 0.20 | VAD exit bar |
-| `vad_pre_speech_ms` (Worker) | 384 | Onset padding, no latency cost |
-| `vad_silence_hangover_ms` (Worker) | 576 | Standard end-of-turn wait |
-| `vad_min_speech_ms` (Worker) | 288 | Minimum speech to count |
-| `vad_seek_boundary_after_ms` / `vad_seek_hangover_ms` (Worker) | 4000 / 250 | Take earlier pause in long turns |
-| `vad_short_turn_speech_ms` / `vad_short_turn_hangover_ms` (Worker) | 1500 / 864 | Hold short turns open to avoid fragments |
-| `near_field_gate_enabled` (+ `_relative_floor` 0.35, `_min_baseline_chunks` 2, `_baseline_ema_alpha` 0.3) | false | Peak-relative gate |
-| `ingress_energy_relative_ratio` (+ `_baseline_min_chunks` 3, `_baseline_window` 8) | 0.4 | Speaker-relative floor, 0 disables |
-| `far_side_gate_enabled` (+ lag 150-1200 ms, history 4000, lock corr 0.5 / hold 8000, frame corr 0.7, second-voice hold 1500) | false | Meet duplicate suppression |
-| `stt_clean_prepass_enabled` (Worker) | true | Tier-1 disfluency clean |
-| `model` (STT) | `gpt-live-transcribe` | Streaming model, paired with flash mode |
-| `realtime_pool_size` (STT) | 4 | Warm STT sockets |
+| Turn-end path, single short sentence, no early publish (unverified, see section 9) | hangover 864 ms (short turn) or 576 ms, then commit to completed 774 ms p50, then translate 685, TTS 180, plus rows 1, 3, 6 (about 360) | about 2.9 s (inferred sum); consistent with the authors' 2.7 s |
+| Authors' full dub budget | STT lag about 1797 ms (word-rate median, approximate) + translation 685 ms + TTS first audio 180 ms | about 2.7 s dub lag, "a 1000ms dub target is NOT reachable with this cascade" (`tools/probe_streaming_lag.py:74-90`) |
+| Cold TTS connection | 669 ms against 180 ms | row 5 grows by about 490 ms |
+| Cold interpreter bot after idle (before `1c7ba09`) | join 4.5-17.6 s under throttle | dub arrived 17-29 s late in production, 2026-10-03 |
+| Cartesia slot held through playout (before `aa5fb31`) | queue behind another speaker's playout | dubs p50 about 2 s, p90 about 5 s late (worst room p50 8.2 s) |
+
+### 3.3 Targets and evidence found in code, docs and history
+
+| Where | Figure | Status |
+|---|---|---|
+| `livekit_ingress_worker/audio_archive.py:4`, `retranscribe_worker/batch_transcriber.py:5` | "two-second deadline" / "two-second budget" for the live transcript | comment only, not enforced |
+| `tools/probe_streaming_lag.py` `--target-ms` default 1000; `tools/probe_chunk_context.py:150` `CABIN_LAG_TARGET_MS` 1500 | cabin lag goals used to rank probe cells | probe parameters |
+| `tools/probe_translate_ttfb.py:1-9` | "the <2.5s question" | probe goal |
+| `tts_worker/worker.py` `_CATCH_UP_ON_TIME_MS` 1500 | translation overrun budget that triggers faster speech | the only runtime budget constant; applies to translation, not end to end |
+| `.agents/resources/ai_pipeline_architecture.md:3-10` | about 1.5 s: STT 0.5, translate 0.4, TTS 0.6 on 2 s chunks | obsolete design note (Whisper era); shipped chunking differs |
+| Commit `bd5d7c2` (2026-08-20) | time to first dubbed audio about 3292 ms to about 1443 ms on a 15 s human Vietnamese recording; time to first usable transcript 1467 ms to 2 ms after commit | measured once; reference point not stated, not reproduced here |
+| Commit `b06b183` (2026-10-04) | a short sentence reached the caption about 2.5 s after the speaker stopped; with live text words appear at 1.2-1.5 s into speech then every about 200 ms, trailing the speaker by 0-0.6 s | measured |
+| Commit `aa5fb31` (2026-10-01) | production dub lag p50 about 2 s, p90 about 5 s before the slot fix | measured |
+| `config.py:432-470` (`bd5d7c2` table) | `gpt-transcribe` dumped 1651 ms, paced 1003 ms; `gpt-live-transcribe` dumped 4733 ms, paced 774 ms | measured, n=3 |
+
+No metric measures speaker to listener (section 7), so the sub-2 s claim cannot be confirmed from production telemetry.
+
+## 4. Optimization catalog
+
+Format: what; why; where; knobs; trade-off.
+
+1. **Flash mode (stream audio during speech).** Removes the whole-chunk wait before STT starts. Problem: a closed chunk took 1651 ms to complete, and 3292 ms to first dub. `bd5d7c2`; `worker.py:2606-2636`, `config.py:135`. Knobs: `stt_streaming_enabled`, room key `translationRoom:{id}:flash_mode`, platform `meetings.flash_mode_default`. Trade-off: coupled to the model; streaming model on a closed chunk is 2.9x worse (4733 ms), so rollback needs both settings.
+2. **Early sentences.** Publish each sentence the model completes before the turn closes: 1649 ms for a first sentence (vi, 15 s clip), 1176 ms (en, 18.5 s) against about 5.7 s for the whole chunk. `stt_worker/worker.py:1425-1456`. Trade-off: no logprob, confidence `-1.0`, so the confidence gate cannot fire; billing carries `is_early` so an early line is not double charged.
+3. **Boundary seeking.** Past 4000 ms of speech the hangover drops to 250 ms so long turns split at a breath rather than the 6 s cap. `config.py:283-334`. Knobs: `vad_seek_boundary_after_ms` 4000, `vad_seek_hangover_ms` 250. Trade-off: pause-based cuts lose BLEU against fixed windows in the literature cited by `bd5d7c2`; short turns keep a long hangover (about 288 ms extra on one-word replies) to avoid fragments.
+4. **Live text lane.** Words are published as the model emits them, at most every 150 ms per item, sentence ends always sent; one reader per socket drains events to a queue. `stt_worker/model.py:97, 3091-3111`. Why: captions arrived about 2.5 s after the speaker stopped because nothing read the socket until commit. Trade-off: preview only, never stored, billed or translated; masked under the same profanity switch.
+5. **Speculative translation.** Finished delta sentences on `stt:speculative` are translated ahead into a cache keyed by normalised text, 15 s TTL, one-slot semaphore, 1.5 s per call. `translation_worker/worker.py:193-223, 289-400`. Trade-off: if one translation costs more than 1.5 s speculation is decoration (`tools/probe_translate_ttfb.py:3-8`); output is cached, never published unvalidated. In flash mode the early path replaced the speculative cache for STT (`stt_worker/worker.py:1450-1456`).
+6. **Realtime socket for sentence 0, one batch for the rest, concurrently.** Avoids a full round trip per extra sentence. `worker.py:755-830`, `translator.py:763`. Knobs: `realtime_model`, `realtime_reasoning_effort` `minimal`, `realtime_max_output_tokens` 128, `realtime_timeout_seconds` 2.0. Why these values: a premature HTTP fallback turned a rare 1.2 s answer into a 5-19 s cliff; 64 tokens ended `incomplete`; higher effort slowed or broke it (`tools/probe_realtime_effort.py`, `config.py:640-647`). Trade-off: Realtime mini repaired 0 of 3 mishearings, the larger model 3 of 3 at similar latency (`config.py:625-637`).
+7. **Model and socket warm-up.** Startup request to prime DNS, TLS and routing (cold first request above 3 s); Realtime pool primed per slot (`translator.py:375-428`). STT warm pool of 4 sockets, rotated before vendor expiry, refilled by a 60 s task, prepared on `meeting.participant_joined` rather than first unmute (`87a63ff`, `743edc3`). TTS warm pool of 3 Cartesia sockets (dial p50 427.6 ms against 0.1 ms to open a context, `synthesizer.py:125-195`). Trade-off: idle vendor sessions and participant minutes.
+8. **Connection reuse.** Realtime translation sockets are exclusive per request and returned healthy (`translator.py:503`); Cartesia contexts reused only when the next sentence is queued; LiveKit bots kept 600 s so a pause costs no join. Trade-off: a held bot keeps the original muted on web and costs participant minutes.
+9. **Bot join in parallel with generation.** `TrackStream.start` begins the join before the first Cartesia chunk (`1c7ba09`, `livekit_publisher.py:316-325`). Removes 4.5-17.6 s handshake from the first audio under throttle.
+10. **Release the vendor slot at `flush_done`, not at playout.** Since WT-397 a streamed sentence returns only after playout; the slot used to wrap that whole span. `aa5fb31`, `worker.py:1514-1538`. Knob: `cartesia_max_concurrency` 3. Trade-off: the plan limit is divided by replicas; burst waits are visible only in `tts_slot_wait`.
+11. **Pipelined consume.** A finished message frees its slot and the next read happens at once (`b4c1a97` for STT and translation; TTS earlier). Per-speaker order kept by speaker lock, publish ticket and key lock.
+12. **Do not wait on the next turn.** The next turn keeps streaming while the previous one is transcribed (`84f0ed7`); deltas are tracked per item so words of one turn never lead another (`3a63e4d`).
+13. **Cache and determinism.** `temperature` 0.0 so a repeated sentence translates identically and hits `tts:cache:{sha256}` (TTL 3600 s, about 2 ms against about 1 s). Cache key includes speed and prosody, so catch-up or a shouted "okay" never replays a calm render. `worker.py:2530-2577`.
+14. **Native resampling.** `AudioStream(16 kHz mono)` instead of a per-frame Python resampler (`510abb0`): less CPU on the ingress, which had an OOM and throttling history (`743edc3`).
+15. **ASR-repair clause gating.** The repair instruction and glossary are sent only when evidence of a mishearing or meeting context exists, saving prompt tokens on the hot path (`translator.py:70-124`, `tools/probe_gate_hit_rate.py`).
+16. **Catch-up speech.** A dub behind the speaker reads up to 1.25x faster, ramping from 1500 ms to 4000 ms of lag; nothing is dropped. `worker.py:660-683, 4502-4562`, commit `d2e6311`. Trade-off: comprehension ceiling, so the 1.25 cap sits under the 1.5 prosody maximum.
+17. **Isochrony.** Speed centred on each speaker's measured dub-to-source duration ratio, clamped 0.8-1.25, so a dub fits the speaker's gap and does not accumulate backlog. `shared/isochrony.py`, `worker.py:4499`; `speed` default `fast`.
+18. **Far-side gating to avoid wasted STT and TTS.** `far_side_gate` (frames, off by default; removes about 20 % of duplicate frames on a synthetic eval) and `far_side_dedupe_*` (text, on) stop Meet-bridge duplicates from reaching translation and TTS; `text_only_dub_for` skips dub where no cable exists. Off by default for recall. `config.py:358-405, 533-549`.
+19. **Caption lane polling.** The gateway's caption loops poll every 25 ms (was 200 ms, half of which every caption paid on average); `RedisStreamService` cannot block. `AiResultConsumerService.cs:46-55, 1003-1060`.
+20. **Skip before spend.** Control marker, pause, translation-not-started, credits-suspended and same-language checks run before any LLM call or synthesis (`translation_worker/worker.py:496-566`, `tts_worker/worker.py:1788-1860`).
+
+Not found: dedicated first-chunk sizing for TTS (chunking is whatever Cartesia emits, passed through at 20 ms frames), time-to-first-token streaming of translation into TTS, cross-vendor provider fallback, and queue-age shedding (section 5).
+
+## 5. Failure and degradation
+
+| Failure or overrun | Behaviour | Source |
+|---|---|---|
+| STT flash socket fails or streaming empty | closed chunk on `audio:chunks` still carries the whole turn; empty streamed commit on speech of 0.8 s or more is retried with the chunk's audio | `worker.py:2606`, commit `743edc3` |
+| STT low confidence (non-early) | discard under `min_avg_logprob` -0.7 | `config.py:486-502` |
+| Realtime translation error, empty or over 2.0 s | chat completions model, 2 retries (0.5 s doubling) | `translator.py:626-724, 578` |
+| Batch parse mismatch | concurrent per-sentence calls | `translator.py:763-874` |
+| Speculative translation over 1.5 s or unclaimed 15 s | abandoned, translated on demand | `translation_worker/worker.py:193-223` |
+| Same-language polish over 1.5 s | raw text ships | `worker.py:198-201` |
+| Earlier sentence's publish late | later sentence waits up to 10 s, then proceeds, nothing dropped | `worker.py:151` |
+| Translation slow beyond 1500 ms or out of order | dub spoken faster, up to 1.25x; never dropped | `tts_worker/worker.py:4502-4562` |
+| Cartesia context stalls | 6.0 s per-sentence timeout, context retired; fall back to one-shot synthesis, ending the context first so it never holds two slots | `prosody_context.py:86`, `worker.py:1563` |
+| Cartesia transient failure (drop, 5xx, timeout) | one retry, 0.5 s backoff, within 10 s, inside the key lock so order holds; 4xx or exhausted goes to `translate:results:dead-letter` | `config.py:826-846` |
+| Voice clone not ready | first dub waits at most 2500 ms from clone start, then catalog voice | `worker.py:813-838` |
+| Room `PAUSED` | no translation, no TTS | `tts_worker/worker.py:1795` |
+| `TEXT_ONLY_MODE`, text-only Meet-bridge route | captions only, TTS skipped, `final_chunk_processed` still emitted | `worker.py:1858-1880` |
+| Credits suspended | translation stops before the LLM call, so no TTS | `translation_worker/worker.py:546` |
+| LiveKit bot cannot publish | one evict-and-resume retry per slice, then the sentence is marked broken (no per-chunk reconnects); fallback to non-streaming publish | `livekit_publisher.py:331-385` |
+| Dub not yet on the wire | web plays the original rather than silence | `filtered-room-audio.tsx:50-56` |
+| Redelivery after a crash (reclaimed message at least `processing_timeout_seconds` + margin old, 150 s) | if a later sentence of the same speaker is already dubbed, the stale one is dead-lettered as `superseded` instead of spoken; restart clears the map so it is spoken | `worker.py:1023-1046` |
+| Stuck pending | gateway acks entries pending over 5 minutes undelivered | `AiResultConsumerService.cs:110, 309` |
+| Poison message | `max_delivery_attempts` 5 then dead letter; heartbeat 10 s, TTL 30 s | `base_worker.py:112-125, 899-1049` |
+
+Budget exceeded: there is no hard deadline path that skips TTS or drops a late dub. The only adaptive responses are faster speech (catch-up), supersession of a reclaimed stale line, and the captions lane, which is independent of TTS and so continues if dubbing is late or fails. **Backpressure and queue-age shedding:** per-stage `_MAX_IN_FLIGHT` 32 bounds concurrency; `block_ms` 2000; `stream_maxlen` 200 per stream (a `tts:results` entry is about 113 KB) and `stream_ttl_seconds` 3600 bound memory (entries can be trimmed under load, which is lossy); `audio:frames` is capped at 2000 and ephemeral. No code drops a message because it is too old. A deep TTS backlog is therefore caught up with speed (max 1.25x), not shed.
+
+## 6. Capacity and configuration knobs
+
+Env prefixes: `WorkerSettings` none (field name uppercased), `STTSettings` `STT_`, `TranslationSettings` `TRANSLATION_`, `TTSSettings` `TTS_`, `RedisSettings` `REDIS_`, LiveKit settings under their own prefix. Values are code defaults at `d0db9b9`; deployments override.
+
+| Knob (class) | Default | Effect on latency |
+|---|---|---|
+| `stt_streaming_enabled` (Worker) | true | Flash mode |
+| `chunk_duration_ms` (Worker; platform `meetings.chunk_duration_ms` 2000-15000) | 6000 | Hard cap; lower cuts sentences |
+| `vad_threshold` / `vad_release_threshold` / `vad_pre_speech_ms` / `vad_min_speech_ms` | 0.35 / 0.20 / 384 / 288 | Detection, no hangover cost |
+| `vad_silence_hangover_ms` / `vad_seek_hangover_ms` / `vad_short_turn_hangover_ms` | 576 / 250 / 864 | End-of-turn wait ladder |
+| `vad_seek_boundary_after_ms` / `vad_short_turn_speech_ms` | 4000 / 1500 | Ladder thresholds |
+| `near_field_gate_enabled` / `far_side_gate_enabled` | false / false | Recall over precision |
+| `ingress_energy_relative_ratio` | 0.4 | Quiet-mic rescue |
+| `model` (STT) / `realtime_pool_size` | `gpt-live-transcribe` / 4 | Streaming model, warm sockets |
 | `min_avg_logprob` (STT) | -0.7 | Discard floor |
-| `noise_reduction` (STT) | `off` | Extra denoise hurt close-mic speech |
-| `prosody_enabled` (STT, TTS) | true | About 3 ms/s CPU; field optional downstream |
-| `far_side_dedupe_enabled` (+ window 15000 ms, lag 150-2000 ms, ratio 0.8) (STT) | true | Text-level duplicate drop |
-| `model` / `realtime_model` (Translation) | `gpt-5.4-nano` / `gpt-realtime-2.1-mini` | Fallback and first-sentence models |
-| `realtime_reasoning_effort` / `realtime_max_output_tokens` / `realtime_timeout_seconds` / `realtime_pool_size` (Translation) | `minimal` / 128 / 2.0 / 4 | Latency-critical first sentence |
-| `max_tokens` / `temperature` (Translation) | 512 / 0.0 | Output cap; determinism for TTS cache |
-| `model` / `speed` / `sample_rate` (TTS) | `sonic-3.5` / `fast` / 44100 | Voice model and pace |
-| `stream_to_livekit` (TTS) | true | Chunk-by-chunk playout |
-| `tts_warm_pool_size` (TTS) | 3 | Warm Cartesia sockets |
-| `cartesia_max_concurrency` (TTS) | 3 | In-flight generations |
-| `cache_enabled` / `cache_ttl_seconds` (TTS) | true / 3600 | Synthesis cache |
-| `prosody_continuity` (TTS) | true | Context across sentences |
-| `synthesis_max_retries` / `_backoff_seconds` / `_retry_window_seconds` (TTS) | 1 / 0.5 / 10.0 | Bounded retry |
-| `voice_clone_ladder_seconds` / `voice_clone_first_wait_ms` (TTS) | (3, 8, 45) / 2500 | Progressive clone, bounded wait |
+| `far_side_dedupe_enabled` (STT) | true | Drops duplicates |
+| `model` / `realtime_model` (Translation) | `gpt-5.4-nano` / `gpt-realtime-2.1-mini` | Fallback / first-sentence |
+| `realtime_reasoning_effort` / `realtime_max_output_tokens` / `realtime_timeout_seconds` / `realtime_pool_size` | `minimal` / 128 / 2.0 / 4 | First-sentence latency |
+| `max_tokens` / `temperature` (Translation) | 512 / 0.0 | Output cap, cache determinism |
+| `model` / `speed` / `sample_rate` (TTS) | `sonic-3.5` / `fast` / 44100 | Voice and pace |
+| `stream_to_livekit` / `prosody_continuity` / `cache_enabled` / `cache_ttl_seconds` (TTS) | true / true / true / 3600 | Streaming, context reuse, cache |
+| `tts_warm_pool_size` / `cartesia_max_concurrency` | 3 / 3 | Warm sockets, vendor slots |
+| `synthesis_max_retries` / `_backoff_seconds` / `_retry_window_seconds` | 1 / 0.5 / 10.0 | Bounded retry |
+| `voice_clone_ladder_seconds` / `voice_clone_first_wait_ms` | (3, 8, 45) / 2500 | Clone ladder, bounded wait |
+| `tts_bot_idle_timeout_s` (LiveKit settings) | 600 | Bot reuse |
 | `stream_maxlen` / `stream_ttl_seconds` (Redis) | 200 / 3600 | Memory bound |
-| `socket_timeout` / `max_connections` (Redis) | 15.0 / 50 | Connection tolerance |
-| `meetings.flash_mode_default`, `meetings.chunk_duration_ms` (platform settings) | true, 6000 (2000-15000) | Live-tunable, per `platform_settings.py:120-121` |
+| Constants (not env) | `_CATCH_UP_ON_TIME_MS` 1500, `_CATCH_UP_FULL_LAG_MS` 4000, `_CATCH_UP_MAX_SPEED` 1.25, `_SPECULATIVE_TIMEOUT_SECONDS` 1.5, `_SPECULATIVE_TTL_SECONDS` 15, `_POLISH_TIMEOUT_SECONDS` 1.5, `_PUBLISH_ORDER_WAIT_SECONDS` 10, `SENTENCE_TIMEOUT_SECONDS` 6.0, `CONTEXT_IDLE_EXPIRY_SECONDS` 4.0, `_LIVE_TEXT_MIN_INTERVAL_S` 0.15, `AUDIO_SOURCE_QUEUE_MS` 1000, `CaptionPollDelay` 25 ms | Fixed in code |
 
-Other settings that are not latency knobs (voice cloning thresholds, far-speaker hints, orphan voice sweep) were not analysed.
+## 7. Observability
 
-## 9. Metrics emitted
+**Worker histograms** (Redis hash `warptalk:latency:{stage}` written by `record_latency`, scraped by `metrics_exporter` as Prometheus text on `METRICS_PORT` 9108, buckets 250, 500, 1000, 2000, 3000, 5000, 8000, 12000, 20000 ms; `shared/redis_client.py:36-37, 418-461`):
 
-From `metrics_exporter/metrics.py` (Prometheus text on `METRICS_PORT`, default 9108):
-
-| Metric | Type | Source |
+| Metric | Measures | Source |
 |---|---|---|
-| `redis_stream_group_lag`, `redis_stream_group_messages_pending`, `redis_stream_group_consumers` | gauge | `XINFO GROUPS` per stream and group, every scrape |
-| `redis_stream_groups`, `redis_stream_length` (dead-letter streams) | gauge | same |
-| `redis_keys_count` | gauge | worker heartbeat keys |
-| `warptalk_stage_latency_ms` | histogram, buckets 250, 500, 1000, 2000, 3000, 5000, 8000, 12000, 20000 ms | `warptalk:latency:{stage}` written by `record_latency` (`shared/redis_client.py:36-37, 439-461`) |
-| `warptalk_stage_messages_total{stage,outcome}` | counter, outcomes ok, error, timeout, vendor_error, dead_letter | `warptalk:outcome:{stage}` hash (`redis_client.py:46`) |
-| `warptalk_billing_unbilled_events_total` | counter | billing (not latency) |
+| `warptalk_stage_latency_ms{stage="stt"}` | now minus chunk end, observed when STT starts the chunk (`stt_worker/worker.py:1201-1202`) | `publish_telemetry` |
+| `{stage="translation"}` | now minus chunk end, observed at `process` entry (`translation_worker/worker.py:562-564`) | `publish_telemetry` |
+| `{stage="tts"}` | now minus chunk end, observed at `process` entry (`tts_worker/worker.py:1801-1803`) | `publish_telemetry` |
+| `{stage="tts_first_audio"}` | first Cartesia attempt start to first sample on the track; what a listener waits on after TTS starts (`worker.py:2583-2711`) | `record_latency` |
+| `{stage="tts_synthesis"}` | worker busy time, includes playout under streaming; MUST NOT be read as wait | `worker.py:2685-2690` |
+| `{stage="tts_slot_wait"}` | time waiting for a Cartesia slot, zeros included so count equals sentence count | `worker.py:2695` |
+| `warptalk_stage_messages_total{stage,outcome}` | ok, error, timeout, vendor_error, dead_letter | `redis_client.py:46` |
+| `redis_stream_group_lag`, `_messages_pending`, `_consumers`, `redis_stream_length` (dead-letter) | per stream and group from `XINFO GROUPS` | `metrics_exporter/metrics.py` |
+| `warptalk:provider_calls:{date}` hashes | every OpenAI and Cartesia call timed to headers (TTFA for Cartesia) | `shared/provider_calls.py` |
+| `translationRoom:telemetry` pub/sub | live payload `{roomId, workerType, latencyMs}` | `redis_client.py:418-437` |
 
-Stages recorded by name include `tts_synthesis`, `tts_slot_wait`, `tts_first_audio` (`tts_worker/worker.py:2690-2711`) and per-worker stage latency via `publish_telemetry` (`redis_client.py:418-437`, also published on `translationRoom:telemetry`). Per-vendor outcome and latency hashes `warptalk:provider_calls:{date}` feed the admin Providers page (`shared/provider_calls.py`). Per-room stream series are off by default (`METRICS_EXPORT_PER_ROOM_STREAMS`). Auto-scaling thresholds in `.agents/resources/ai_pipeline_architecture.md` (STT lag > 100, TTS lag > 50) are design notes; no autoscaler config was found in this repo.
+Because the chunk timestamp is carried unchanged, the three stage values are cumulative ages since the end of the turn, not per-stage durations: the per-stage cost is the difference between consecutive stages. `tts` is the age at which TTS starts; adding `tts_first_audio` gives about the end-of-turn to first-sample figure on the worker side, excluding the VAD hangover, bot publish and client playout. Translation also writes `latency_ms` and `pipeline_latency_ms` into each `translate:results` entry (persisted to `translation_contents.latency_ms`).
 
-## 10. Probe tools (`tools/`, docstrings only)
+**Gateway** (`MeetingCaptionMetrics.cs`, meter `warptalk-gateway`): `meeting.captions.delivered{kind=transcript|translation|audio}`, `meeting.captions_started`, `meeting.time_to_first_caption` (first join to first caption, seconds, per meeting). Best effort, so a metric cannot delay a caption.
+
+**Not instrumented**: speaker to listener latency, client playout delay, VAD hangover, and the web's own caption render time. No alert rules or dashboards for these were found in the three repos; `.agents/resources/ai_pipeline_architecture.md` autoscaling thresholds (STT lag over 100, TTS lag over 50) are a design note with no config behind them.
+
+**Probe tools** (`warptalk-ai/tools/`, run by hand against live vendors, docstring summaries):
 
 | Tool | Measures |
 |---|---|
-| `probe_streaming_lag.py` | How far behind a live speaker each STT provider runs when audio is paced in real time |
-| `probe_commit_semantics.py` | Whether Realtime `commit()` consumes the buffer or grows it (rolling-commit viability) |
-| `probe_chunk_context.py` | Whether caching prior sentences as context rescues chunked transcription |
-| `probe_energy_floor.py` | What the 0.02 RMS ingress floor actually rejects |
-| `probe_translate_ttfb.py` | Warmed translation latency on the production path; whether speculative translation can hide it |
-| `probe_realtime_effort.py` | Realtime reasoning-effort sweep against mishearing repair and latency |
-| `probe_latency_ab.py` | 2x2 prompt x model latency A/B (repair prompt and full vs mini model) |
-| `probe_tts_first_audio.py` | Time to first sample of a dubbed sentence, cold vs warm connection |
-| `probe_world_roundtrip.py` | Whether reshaping Cartesia pitch after synthesis costs more than it buys |
-| `probe_gate_hit_rate.py` | How often the ASR-repair evidence gate stays shut in real meetings |
-| `probe_gate_safety.py` | Whether dropping the repair instruction without evidence is safe |
-| `probe_gate_wiring.py` | The real prompt `translate()` sends once the repair clause is gated |
-| `probe_guardian_vs_prod.py` | Effect of the repair ("guardian") prompt on production models |
-| `probe_hard_case_fluency.py` | Whether the repair prompt turns a visible error into a fluent wrong sentence |
-| `probe_which_part_repairs.py` / `probe_context_only_repair.py` | Which half of the repair mechanism does the work, and whether the instruction is redundant |
-| `replay_livekit_chunk.py` | Replays a retained chunk through a real LiveKit track for full-path latency |
+| `probe_streaming_lag.py` | STT lag behind a paced live speaker per provider; prints the full dub budget against `--target-ms` |
+| `probe_commit_semantics.py` | whether Realtime `commit()` consumes or grows the buffer |
+| `probe_chunk_context.py` | whether prior sentences as context rescue chunked STT; ranks cells against a 1500 ms cabin budget |
+| `probe_translate_ttfb.py` | warmed translation p50/p95/max on the production path; count over the 1.5 s speculative budget |
+| `probe_realtime_effort.py` | Realtime reasoning-effort sweep against repair and latency |
+| `probe_latency_ab.py` | paired, interleaved 2x2 prompt by model latency A/B |
+| `probe_tts_first_audio.py` | cold versus warm time to first sample, taken at the same `on_pcm` tee that feeds LiveKit |
+| `probe_energy_floor.py` | what the 0.02 RMS floor rejects |
+| `probe_world_roundtrip.py` | cost of reshaping pitch after synthesis |
+| `probe_gate_hit_rate.py`, `probe_gate_safety.py`, `probe_gate_wiring.py` | repair-clause gate: hit rate, safety, real prompt sent |
+| `probe_guardian_vs_prod.py`, `probe_hard_case_fluency.py`, `probe_which_part_repairs.py`, `probe_context_only_repair.py` | repair prompt quality and which half does the work |
+| `replay_livekit_chunk.py` | replays a retained chunk through a real LiveKit track for full-path latency |
+| `tests/test_e2e_latency.py` | translation plus TTS first-byte only, no Redis, no LiveKit |
 
-## 11. Known trade-offs
+## 8. Known trade-offs
 
-- Flash mode and the streaming STT model are one decision; either alone regresses (section 3).
-- Early sentences gain seconds but give up the logprob gate; foreign-script leaks measured 0 of 6, which is evidence, not a guarantee.
-- Longer hangover for short turns costs about 288 ms on genuine one-word replies to reduce fragments.
-- 6 s cap and boundary seeking can still cut a speaker who never pauses; raising the cap delays everyone who does not pause.
-- Lower `vad_release_threshold` may hold turns open in noisy rooms until the cap; the value is unmeasured on this product's audio (`config.py:222-241`).
-- Near-field and far-side gates are off by default for recall; the 0.02 floor is the only always-on gate.
-- Realtime first sentence is fast but cannot repair mishearings; the larger model repairs (3 of 3 versus 0 of 3) at similar latency (`config.py:625-637`). Switching model is a deploy decision.
-- Realtime timeout of 2.0 s trades tail latency for avoiding the HTTP-fallback cliff.
-- Streaming TTS makes `tts_synthesis` include playout; dashboards MUST use `tts_first_audio`.
-- Cartesia concurrency 3 means a burst queues at the vendor; only `tts_slot_wait` makes it visible.
-- Isochrony and catch-up raise speech rate up to 1.25x, bounded to stay intelligible.
+- Flash mode and the streaming STT model are one decision (section 4, item 1).
+- Early sentences gain seconds and give up the logprob gate; foreign-script leaks measured 0 of 6 is evidence, not a guarantee.
+- The 6 s cap with boundary seeking can still cut a speaker who never pauses.
+- Realtime first sentence is fast and cannot repair mishearings; switching model is a deploy decision.
+- Realtime timeout 2.0 s trades tail latency for avoiding the HTTP-fallback cliff.
+- Catch-up and isochrony raise speech rate up to 1.25x; bounded for intelligibility.
+- Idle-held bots, warm sockets and the 4-socket pools spend vendor sessions and participant minutes to buy first-sentence latency.
 - `stream_maxlen` 200 trades replay depth for Redis memory.
 
-## 12. Not determined
+## 9. Open questions
 
-- Production values of env overrides and platform settings.
-- Current deployed autoscaling and concurrency (replica counts).
-- Any enforced end-to-end SLO; only design targets and probe goals were found.
-- `translator.py` details beyond entry points (not read in full), and `tts_worker` internals beyond cited ranges.
+1. **Single short sentence.** Does `on_early_segment` fire for a one-sentence turn before commit, or does that sentence wait for hangover (576-864 ms) plus commit to completed? The answer decides whether short turns meet 2 s (section 3.2). Needs a trace of one short utterance through `stt:results` entry ids.
+2. **Reference point of the 1443 ms figure** in commit `bd5d7c2` (speech start, turn end or chunk end) and whether it included flash mode early sentences.
+3. **Client playout delay.** No jitter buffer or playout delay setting was found in the web directories read; actual WebRTC buffering on the listener (row 6) is inferred. The rest of `warptalk-web` and any LiveKit server-side config were not read.
+4. **Backend side of dub routing.** Room route states (`AUDIO_ROUTING_ACTIVE`, `PAUSED`, `TEXT_ONLY_MODE`) are consumed in tts_worker but their producer (translation-room service) was not read; how fast a route change propagates is unknown.
+5. **Is the `tts:results` audio payload still used?** The gateway forwards it as `TranslatedAudioReceived`, but no web handler was found; if unused, base64 WAV of about 113 KB per sentence is pure overhead on the gateway and Redis.
+6. **Production overrides** of env and platform settings (`chunk_duration_ms`, `flash_mode_default`, pool sizes, replica counts, Cartesia concurrency per replica) and any deployed alerting or autoscaling.
+7. **Current p50/p95 in production** after the October fixes (`aa5fb31`, `1c7ba09`, `743edc3`); the last recorded production figure is p50 about 2 s, p90 about 5 s, before them.
+8. **Cartesia concurrency**: `aa5fb31` describes 2 slots per process, config default is 3; which value the plan allows is not determined.
+9. **Out of scope and unread**: voice clone quality thresholds, far-speaker consent flow, orphan voice sweep, the Meet bridge audio path in the backend.

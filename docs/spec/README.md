@@ -17,11 +17,13 @@ Source note: this specification is derived from the Report 7 capstone report, ve
 | [05a-data-dictionary.md](05a-data-dictionary.md) | Column-level schema of all 63 tables (types, constraints, indexes, relationships), generated from the ERD DBML |
 | [06-service-design.md](06-service-design.md) | Per-service responsibilities, APIs, flows, events, state machines |
 | [07-testing-and-release.md](07-testing-and-release.md) | Test strategy, scope, release package, install and user-guide highlights |
-| [08-realtime-latency.md](08-realtime-latency.md) | Real-time speech to translation to dub latency design: chunking, VAD, gates, streaming STT, warm-up, queues, knobs, metrics |
-| [09-ai-suggestion-agent.md](09-ai-suggestion-agent.md) | Inline AI suggestion worker: triggers, two-stage prompts, rate limits, consent, delivery, knobs |
+| [08-realtime-latency.md](08-realtime-latency.md) | Real-time translation pipeline and sub-2s latency: end-to-end flow (Redis streams, LiveKit, captions), latency budget, optimization catalog, degradation, observability, open questions |
+| [09-ai-suggestion-agent.md](09-ai-suggestion-agent.md) | Live meeting assistant: inconsistency (correction/fact) and follow-up (action) hints, grounding, action-item paths, consent, rate limits, UI contract, gap analysis |
 | [10-translation-room-service.md](10-translation-room-service.md) | Code-derived spec of the Translation Room service: endpoints, lifecycle, participants, series, audio routes, artifacts, Redis integration, workers, config, migrations, differences vs Report 7 |
 | [11-meeting-service.md](11-meeting-service.md) | Code-derived spec of the Meeting service: join and lobby, host controls, LiveKit recording and webhooks, chat and WarpBot, Google Meet bridge, events, config |
 | [12-transcript-service.md](12-transcript-service.md) | Code-derived spec of the Transcript service: stream ingestion, segments, corrections, finalize, exports, translation backfill, glossaries, far-speaker relabel |
+| [13-voice-clone-and-translation-models.md](13-voice-clone-and-translation-models.md) | Translation models and context, TTS and voice clone: enrollment, consent, carry-over, voice selection, prosody, revocation, knobs |
+| [14-workspace-knowledge-and-rag.md](14-workspace-knowledge-and-rag.md) | Code-derived spec of workspace knowledge and RAG: sources, ingestion (Redis streams), access control, retrieval and citations, knowledge facts, consumers, config, gaps |
 | [99-open-issues.md](99-open-issues.md) | Contradictions, gaps, review feedback |
 
 ## Scope
