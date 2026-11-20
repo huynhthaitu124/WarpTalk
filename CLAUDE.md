@@ -25,3 +25,16 @@ Local services for integration tests: Postgres `postgres://postgres@localhost:54
 
 ## Report format (keep it short)
 List: files created/changed, public API added (signatures only), tests run with pass/fail counts, any deviation or blocker. Do not paste file contents.
+
+## Module public surface (every `crates/modules/*`)
+```rust
+pub const MIGRATIONS: warptalk_db::ModuleMigrations;          // module name = schema owner, e.g. "identity"
+pub struct <Name>Module { /* Arc'd services */ }
+impl <Name>Module {
+    pub fn new(deps: <Name>Deps) -> Self;                      // Deps = struct of pool, JwtKeys, Arc<dyn Clock>, Arc<dyn Port>...
+    pub fn router(&self) -> axum::Router;                      // state already applied; paths relative, api mounts under /api/v1
+}
+```
+- No cross-schema foreign keys (ids from other modules are plain uuid columns).
+- Auth: handlers take `warptalk_web::AuthUser`; module state implements `FromRef` for `JwtKeys`.
+- Integration tests build the router and call it with `tower::ServiceExt::oneshot` against the local Postgres; each test uses fresh random emails/names so tests can run repeatedly.
