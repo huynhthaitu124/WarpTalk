@@ -12,7 +12,7 @@ Read `docs/architecture/README.md` §3–4 once for the big picture. Spec lives 
 - SQL: use runtime `sqlx::query` / `query_as` (NOT the `query!` macros: no DB at compile time). Always qualify schema (`auth.users`). Every tenant query filters by `workspace_id`.
 - Migrations: `crates/modules/<m>/migrations/NNNN_name.sql`, forward-only, first file creates the schema (`CREATE SCHEMA IF NOT EXISTS ...`). Column names/types follow `05a`.
 - Async traits used as `Arc<dyn Trait>`: `#[async_trait]`.
-- No `unwrap()`/`expect()` outside tests. No secrets in code; config comes from env via `warptalk-config`.
+- No `unwrap()`/`expect()` outside tests (test modules: `#[allow(clippy::unwrap_used)]`). No secrets in code; config comes from env via `warptalk-config`.
 - IDs: `uuid` v7 for new rows. Time: `chrono::DateTime<Utc>`.
 
 ## Verify before reporting done
