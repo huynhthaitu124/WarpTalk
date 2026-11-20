@@ -1,6 +1,6 @@
 # 05 - Data Model
 
-Source: Report 7, SDD IV.2 (Database Design, Table 22 and Table 23) plus entity fields named in the detailed-design class specifications. The report presents column-level detail only as ER diagrams (Figures 44-53), which are not available as text; this file therefore lists entities, purpose and key fields known from the text. Column-level DDL MUST be taken from the migration scripts (see 99-open-issues.md).
+Source: Report 7, SDD IV.2 (Database Design, Table 22 and Table 23) plus entity fields named in the detailed-design class specifications. This file gives the narrative view (purpose and key fields). Column-level detail (types, constraints, indexes, relationships) is in [05a-data-dictionary.md](05a-data-dictionary.md), generated from the team ERD source, which is authoritative where the two differ.
 
 ## 1. Principles
 

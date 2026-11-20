@@ -14,6 +14,7 @@ Source note: this specification is derived from the Report 7 capstone report, ve
 | [03-business-rules-and-messages.md](03-business-rules-and-messages.md) | BR-01..BR-100 and MSG01..MSG126 |
 | [04-architecture.md](04-architecture.md) | Components, communication, pipeline, integrations, deployment, tech stack |
 | [05-data-model.md](05-data-model.md) | 63 tables by service, relationships, Qdrant, storage |
+| [05a-data-dictionary.md](05a-data-dictionary.md) | Column-level schema of all 63 tables (types, constraints, indexes, relationships), generated from the ERD DBML |
 | [06-service-design.md](06-service-design.md) | Per-service responsibilities, APIs, flows, events, state machines |
 | [07-testing-and-release.md](07-testing-and-release.md) | Test strategy, scope, release package, install and user-guide highlights |
 | [99-open-issues.md](99-open-issues.md) | Contradictions, gaps, review feedback |

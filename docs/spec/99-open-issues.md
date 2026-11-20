@@ -21,7 +21,7 @@ Items are grouped by type. "Source" names the origin; resolve by confirming agai
 
 | ID | Gap | Impact |
 |---|---|---|
-| GP-01 | Column-level database design exists only as ER images; a combined db dump was too large to read in this pass | 05-data-model.md lists tables and known fields only; DDL MUST be taken from migrations |
+| GP-01 | Column-level database design exists only as ER images in Report 7 | Resolved: 05a-data-dictionary.md generated from the ERD DBML (migrations to 2026-08-13). Report 7 table counts and some table names may lag that source |
 | GP-02 | Sequence diagrams are images | Behaviour in 06-service-design.md is derived from class tables, FR flows and BRs |
 | GP-03 | Test results (unit, integration, system, UAT) are figures only | No pass/fail counts, defect numbers or coverage values are available |
 | GP-04 | Full per-test-case lists are in external spreadsheets | Not summarized beyond scope and strategy |
@@ -49,6 +49,6 @@ Source: review-meeting analysis notes (transcript quality poor; terms marked unc
 ## 4. Recommended follow-ups
 
 1. Reconcile OI-01, OI-02, OI-03, OI-04 and OI-08 against code before baselining this spec.
-2. Generate column-level tables from migrations and replace 05-data-model.md section 2 detail.
+2. ~~Generate column-level tables~~ done in 05a-data-dictionary.md; regenerate it when the DBML changes.
 3. Decide whether load targets stay normative or become informative until staging load tests run.
 4. Record test results in text (counts, coverage) so acceptance can be traced.
