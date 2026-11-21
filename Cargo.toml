@@ -40,10 +40,16 @@ hmac = "0.12"
 sha2 = "0.10"
 rand = "0.8"
 base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures = "0.3"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 url = "2"
+aes-gcm = "0.10"
+zeroize = "1"
+secrecy = "0.10"
+bytes = "1"
+eventsource-stream = "0.2"
+wiremock = "0.6"
 
 # internal crates
 warptalk-kernel = { path = "crates/shared/kernel" }
@@ -64,6 +70,7 @@ warptalk-pipeline-runtime = { path = "crates/pipeline/runtime" }
 warptalk-livekit = { path = "crates/providers/livekit" }
 warptalk-openai = { path = "crates/providers/openai" }
 warptalk-cartesia = { path = "crates/providers/cartesia" }
+warptalk-llm = { path = "crates/providers/llm" }
 warptalk-qdrant = { path = "crates/providers/qdrant" }
 warptalk-identity = { path = "crates/modules/identity" }
 warptalk-workspace = { path = "crates/modules/workspace" }

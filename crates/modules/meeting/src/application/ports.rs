@@ -187,8 +187,12 @@ pub trait MeetingRepo: Send + Sync {
     ) -> AppResult<()>;
     /// Mark ACTIVE (not for FINISHED rooms); clears a webhook-recorded close.
     async fn activate(&self, id: MeetingRoomId, now: DateTime<Utc>) -> AppResult<()>;
-    async fn claim_host(&self, id: MeetingRoomId, host: UserId, now: DateTime<Utc>)
-    -> AppResult<()>;
+    async fn claim_host(
+        &self,
+        id: MeetingRoomId,
+        host: UserId,
+        now: DateTime<Utc>,
+    ) -> AppResult<()>;
     async fn upsert_participant(&self, p: NewParticipant<'_>) -> AppResult<()>;
     /// Conditional FINISHED transition: `true` only for the single winner.
     async fn try_mark_finished(&self, id: MeetingRoomId, at: DateTime<Utc>) -> AppResult<bool>;
