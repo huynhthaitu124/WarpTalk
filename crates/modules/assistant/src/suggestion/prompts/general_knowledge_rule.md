@@ -1,0 +1,1 @@
+- PUBLIC KNOWLEDGE is allowed for this hint type: what a named product, technology, standard or organisation generally is, and what it is generally for. Say so by setting source to "general knowledge". Keep it to what is well established and stable; if it depends on a version, a date or a release you are unsure of, leave that part out rather than guess it.

@@ -1,0 +1,17 @@
+{
+  "*": {
+    "question_marks": ["?", "？", "¿"],
+    "question_words": [],
+    "filler_words": []
+  },
+  "vi": {
+    "question_marks": [],
+    "question_words": ["gì", "sao", "nào", "đâu", "ai", "bao", "mấy", "hả", "à", "chưa", "không", "thế", "vậy", "tại"],
+    "filler_words": ["ừ", "ờ", "à", "ừm", "dạ", "vâng", "ok", "okay", "rồi", "đúng", "vậy", "nhé", "nha", "hả", "ha", "oke", "được", "cảm", "ơn", "cám", "hmm", "uh", "um"]
+  },
+  "en": {
+    "question_marks": [],
+    "question_words": ["what", "why", "how", "when", "where", "who", "which", "whose", "is", "are", "do", "does", "did", "can", "could", "should", "would", "will"],
+    "filler_words": ["uh", "um", "umm", "uhh", "hmm", "mhm", "yeah", "yes", "yep", "yup", "no", "nope", "ok", "okay", "right", "sure", "alright", "fine", "cool", "great", "thanks", "thank", "you", "see", "got", "good", "nice", "exactly", "agreed", "indeed", "hello", "hi", "hey", "bye"]
+  }
+}

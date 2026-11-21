@@ -1,0 +1,73 @@
+[
+  {
+    "id": "clarification",
+    "description": "clarification: a question was asked that the transcript does not already answer. It counts whether or not it ends in a question mark - the recogniser drops the mark on short utterances.",
+    "contract": "State the question that was asked and left unanswered, as close to the asker's own words as the transcript allows. The hint is useless if the reader cannot tell which question it means.",
+    "retrieval": "never",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 120,
+    "allow_general_knowledge": false,
+    "actions": []
+  },
+  {
+    "id": "term",
+    "description": "term: jargon, an acronym, a brand, a product name or a technical term is used that this meeting has not defined, and a participant could plausibly not know it. This fires on a term being USED as much as on one being asked about.",
+    "contract": "Name the exact term, brand or acronym as it was spoken, then define it in one clause. Prefer how it is used in THIS meeting when the transcript or the reference sources show that - a generic gloss of a term the team uses differently is worse than nothing. When neither defines it, give the widely accepted meaning and set source to \"general knowledge\". This is the common case, not the exception: the category fires precisely because the meeting has not defined the term.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 120,
+    "allow_general_knowledge": true,
+    "actions": []
+  },
+  {
+    "id": "correction",
+    "description": "correction: the segment states something that is wrong. Either it contradicts something said earlier in the transcript (or a reference source) - including numbers, dates, names and decisions that changed - OR it misstates a widely established fact about a named product, technology, standard, organisation, place or date. Use a HIGH bar for the second kind: only when the correct fact is well established and not a matter of opinion, preference, or something this team may simply be doing differently on purpose.",
+    "contract": "State both sides. For a contradiction inside the meeting: what was just said, and the earlier statement it contradicts - a contradiction the reader has to go and find for themselves is not a hint. For a contradiction with a reference source: what was said and what the source says. For a claim that is wrong about the wider world: what was said, what is actually the case, and one clause on why it matters here. Correct the FACT, never the person, and never turn a preference or an unusual-but-valid choice into an error.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "warning",
+    "ttl_seconds": 180,
+    "allow_general_knowledge": true,
+    "actions": []
+  },
+  {
+    "id": "fact",
+    "description": "fact: a figure, name or reference is discussed that the workspace's own documents cover.",
+    "contract": "Quote the figure or reference from the supplied reference sources, with enough of its source to be checkable. Never produce this category from memory - if the sources do not contain it, return an empty content string.",
+    "retrieval": "required",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 120,
+    "allow_general_knowledge": false,
+    "actions": []
+  },
+  {
+    "id": "action_item",
+    "description": "action_item: a commitment, plan or promise is stated that is missing an owner, a date, or both.",
+    "contract": "State the commitment, then name precisely what is missing from it - an owner, a deadline, or both. Do not invent either one.",
+    "retrieval": "never",
+    "kind": "follow_up",
+    "severity": "info",
+    "ttl_seconds": 300,
+    "wire_name": "action",
+    "allow_general_knowledge": false,
+    "actions": [
+      { "kind": "create_action_item", "label": "Create task" }
+    ]
+  },
+  {
+    "id": "follow_up",
+    "description": "follow_up: someone agrees to get back, check, send or follow up on something later (a promise to revisit), whether or not an owner or a date was named.",
+    "contract": "State what was promised to be followed up, and who is to do it and by when only if the transcript says so. Do not invent either one.",
+    "retrieval": "never",
+    "kind": "follow_up",
+    "severity": "info",
+    "ttl_seconds": 300,
+    "allow_general_knowledge": false,
+    "actions": [
+      { "kind": "create_action_item", "label": "Create task" }
+    ]
+  }
+]
