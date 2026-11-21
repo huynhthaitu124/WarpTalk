@@ -138,6 +138,9 @@ pub struct ChunkPayload {
     pub fact_category: Option<FactCategory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    /// Supporting quote of a fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
     /// Content chunks a fact was derived from.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_chunk_ids: Vec<Uuid>,
@@ -200,6 +203,21 @@ impl ChunkPayload {
 
     pub fn from_value(v: &Value) -> Result<Self, PayloadError> {
         serde_json::from_value(v.clone()).map_err(|e| PayloadError(e.to_string()))
+    }
+
+    /// Title, headings and text: what lexical scoring and embedding see.
+    pub fn searchable_text(&self) -> String {
+        let mut s = String::new();
+        if let Some(t) = &self.title {
+            s.push_str(t);
+            s.push('\n');
+        }
+        if !self.heading_path.is_empty() {
+            s.push_str(&self.heading_path.join(" > "));
+            s.push('\n');
+        }
+        s.push_str(&self.text);
+        s
     }
 
     pub fn citation(&self) -> Citation {
@@ -311,6 +329,7 @@ mod tests {
             fact: None,
             fact_category: None,
             confidence: None,
+            quote: None,
             source_chunk_ids: vec![],
         }
     }

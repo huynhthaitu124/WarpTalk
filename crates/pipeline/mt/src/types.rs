@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use uuid::Uuid;
-use warptalk_contracts::TranslateResult;
+use warptalk_contracts::events::TranslateResult;
 use warptalk_kernel::RoomId;
 use warptalk_pipeline_runtime::Stamps;
 

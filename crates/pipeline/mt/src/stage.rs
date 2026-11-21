@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
-use warptalk_contracts::is_control_marker;
+use warptalk_contracts::events::is_control_marker;
 use warptalk_pipeline_runtime::SttSegment;
 use warptalk_telemetry::{Outcome, record_stage_latency, record_stage_outcome};
 

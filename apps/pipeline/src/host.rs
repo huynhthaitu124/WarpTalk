@@ -18,7 +18,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
-use warptalk_bus::{BusError, release_lease, renew_lease, subscribe, try_acquire_lease};
+use warptalk_bus::{BusError, release_lease, renew_lease, try_acquire_lease};
 use warptalk_contracts::channels::{self, TRANSLATION_ROOM_COMMANDS};
 use warptalk_contracts::events::{AudioRoutesSnapshot, RoomCommand};
 use warptalk_contracts::keys;
@@ -199,8 +199,8 @@ impl PipelineHost {
                 break;
             }
             let channels = [inner.cfg.commands_channel.clone()];
-            let mut cmds: EventStream = match subscribe(&inner.deps.redis_url, &channels).await {
-                Ok(s) => Box::pin(s),
+            let mut cmds: EventStream = match open_pubsub(&inner.deps.redis_url, &channels).await {
+                Ok(s) => s,
                 Err(e) => {
                     warn!(error = %e, "subscribing to room commands failed, retrying");
                     tokio::select! {
@@ -335,9 +335,7 @@ impl Inner {
     /// Lease already held.
     async fn start_owned(self: Arc<Self>, room: RoomId) -> Result<StartOutcome, HostError> {
         // Subscribe before reading the snapshot so no update falls in between.
-        let events: EventStream = Box::pin(
-            subscribe(&self.deps.redis_url, &[channels::room_events(room)]).await?,
-        );
+        let events = open_pubsub(&self.deps.redis_url, &[channels::room_events(room)]).await?;
         let view = self.read_view(room).await?.unwrap_or_default();
         if view.ended {
             return Ok(StartOutcome::Inactive);
@@ -409,8 +407,8 @@ impl Inner {
                     }
                     if events.is_none() {
                         // The pub/sub connection dropped; resubscribe and catch up from the key.
-                        if let Ok(s) = subscribe(&self.deps.redis_url, &[channels::room_events(room)]).await {
-                            events = Some(Box::pin(s));
+                        if let Ok(s) = open_pubsub(&self.deps.redis_url, &[channels::room_events(room)]).await {
+                            events = Some(s);
                             if let Ok(Some(v)) = self.read_view(room).await {
                                 if v.ended { break "room_ended"; }
                                 worker.set_routes(v);
@@ -487,6 +485,21 @@ impl Inner {
             None => self.read_view(room).await.ok().flatten(),
         }
     }
+}
+
+/// Same as `warptalk_bus::subscribe`, but the stream owns everything (the bus function's
+/// `impl Stream` captures its argument lifetimes under edition 2024, which rules out storing
+/// it in a task).
+async fn open_pubsub(url: &str, channels: &[String]) -> Result<EventStream, BusError> {
+    let client = redis::Client::open(url)?;
+    let mut ps = client.get_async_pubsub().await?;
+    for c in channels {
+        ps.subscribe(c).await?;
+    }
+    Ok(Box::pin(ps.into_on_message().filter_map(|m| async move {
+        let payload: String = m.get_payload().ok()?;
+        Some((m.get_channel_name().to_string(), payload))
+    })))
 }
 
 /// `translationRoom:{uuid}:audio_routes` -> room id.

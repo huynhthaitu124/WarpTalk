@@ -3272,6 +3272,23 @@ dependencies = [
 [[package]]
 name = "warptalk-tts"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "redis",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+ "warptalk-cartesia",
+ "warptalk-contracts",
+ "warptalk-kernel",
+ "warptalk-mt",
+ "warptalk-telemetry",
+]
 
 [[package]]
 name = "warptalk-web"

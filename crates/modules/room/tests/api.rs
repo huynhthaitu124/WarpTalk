@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 use warptalk_config::JwtConfig;
-use warptalk_kernel::{Clock, SystemClock, UserId, WorkspaceId, WorkspaceRole};
+use warptalk_kernel::{Clock, FixedClock, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_room::application::ports::{InMemoryWorkspacePolicy, NoopVoiceConsentDirectory};
 use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_room::{MIGRATIONS, RoomDeps, RoomModule};
@@ -26,6 +26,10 @@ struct Ctx {
 }
 
 async fn ctx() -> Option<Ctx> {
+    ctx_with(Arc::new(SystemClock)).await
+}
+
+async fn ctx_with(clock: Arc<dyn Clock>) -> Option<Ctx> {
     let (Ok(db), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
     else {
         println!("DATABASE_URL / REDIS_URL unset; skipping");
@@ -44,7 +48,6 @@ async fn ctx() -> Option<Ctx> {
     });
     let redis = warptalk_bus::connect(&redis_url).await.unwrap();
     let policy = Arc::new(InMemoryWorkspacePolicy::default());
-    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let module = RoomModule::new(RoomDeps {
         pool: pool.clone(),
         jwt: keys.clone(),
@@ -600,4 +603,441 @@ async fn cancel_and_inactive_workspace() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+// ------------------------------------------------------------------ external bridge (D2)
+
+fn meet_code() -> String {
+    let h = Uuid::new_v4().simple().to_string();
+    let l: Vec<char> = h
+        .chars()
+        .map(|c| (b'a' + (c.to_digit(16).unwrap() as u8)) as char)
+        .collect();
+    let s: String = l.iter().collect();
+    format!("{}-{}-{}", &s[0..3], &s[3..7], &s[7..10])
+}
+
+fn claim_body(ws: WorkspaceId, code: &str) -> Value {
+    json!({"workspaceId": ws, "provider": "google_meet", "meetingUrl": format!("https://meet.google.com/{code}"),
+           "sourceLanguage": "vi", "targetLanguages": ["en"]})
+}
+
+const CLAIM: &str = "/translation-rooms/bridge/claim";
+
+fn bridge_uri(room: &str, tail: &str) -> String {
+    format!("/translation-rooms/{room}/bridge/{tail}")
+}
+
+/// Workspace with `n` members.
+fn members(c: &Ctx, n: usize) -> (WorkspaceId, Vec<UserId>) {
+    let ws = WorkspaceId::new();
+    let users: Vec<UserId> = (0..n).map(|_| UserId::new()).collect();
+    for u in &users {
+        c.policy.set_role(ws, *u, WorkspaceRole::Member);
+    }
+    (ws, users)
+}
+
+#[tokio::test]
+async fn bridge_claim_is_idempotent_per_meeting() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 2);
+    let (a, b) = (u[0], u[1]);
+    let code = meet_code();
+
+    let (st, v) = c
+        .call(Method::POST, CLAIM, a, Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["created"], true);
+    assert_eq!(v["bridgeRole"], "capturer");
+    assert_eq!(v["roomType"], "EXTERNAL_BRIDGE");
+    assert_eq!(v["bridge"]["provider"], "google_meet");
+    assert_eq!(v["bridge"]["meetingCode"], code);
+    assert_eq!(v["bridge"]["capturerUserId"], a.to_string());
+    assert_eq!(v["bridge"]["audioMode"], "voice");
+    assert_eq!(v["heartbeatIntervalSeconds"], 15);
+    assert_eq!(v["leaseSeconds"], 45);
+    let room = v["id"].as_str().unwrap().to_owned();
+
+    // same meeting (bare code, other member): same room, not capturer
+    let body = json!({"workspaceId": ws, "provider": "google_meet", "code": code.to_uppercase(),
+                      "sourceLanguage": "vi", "targetLanguages": ["en"]});
+    let (st, v) = c.call(Method::POST, CLAIM, b, Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["id"], room.as_str());
+    assert_eq!(v["created"], false);
+    assert_eq!(v["bridgeRole"], "viewer");
+    assert_eq!(v["bridge"]["capturerUserId"], a.to_string());
+
+    // the capturer re-claiming keeps the role
+    let (st, v) = c
+        .call(Method::POST, CLAIM, a, Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(
+        (
+            st,
+            v["id"].as_str().unwrap(),
+            v["bridgeRole"].as_str().unwrap()
+        ),
+        (StatusCode::OK, room.as_str(), "capturer")
+    );
+
+    // different meeting: different room
+    let (st, v) = c
+        .call(Method::POST, CLAIM, a, Some(claim_body(ws, &meet_code())))
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    assert_ne!(v["id"], room.as_str());
+
+    // stand-in seat is in the roster
+    let (st, v) = c
+        .call(
+            Method::GET,
+            &format!("/translation-rooms/{room}/participants"),
+            a,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let standin = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["userId"] == "00000000-0000-0000-0000-00000000b21d")
+        .expect("stand-in participant");
+    assert_eq!(standin["displayName"], "External Meeting");
+
+    // validation and access
+    let outsider = UserId::new();
+    let (st, _) = c
+        .call(Method::POST, CLAIM, outsider, Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let mut bad = claim_body(ws, &code);
+    bad["meetingUrl"] = json!("https://example.com/nope");
+    let (st, v) = c.call(Method::POST, CLAIM, a, Some(bad)).await;
+    assert!(st.is_client_error(), "{v}");
+    assert_eq!(v["code"], "INVALID_MEETING_REF");
+    let mut bad = claim_body(ws, &code);
+    bad["provider"] = json!("skype");
+    let (_, v) = c.call(Method::POST, CLAIM, a, Some(bad)).await;
+    assert_eq!(v["code"], "INVALID_PROVIDER");
+}
+
+#[tokio::test]
+async fn bridge_concurrent_claims_yield_one_room_and_unique_index_guards() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 2);
+    let code = meet_code();
+    let (r1, r2) = tokio::join!(
+        c.call(Method::POST, CLAIM, u[0], Some(claim_body(ws, &code))),
+        c.call(Method::POST, CLAIM, u[1], Some(claim_body(ws, &code))),
+    );
+    assert!(r1.0.is_success() && r2.0.is_success(), "{} {}", r1.1, r2.1);
+    assert_eq!(r1.1["id"], r2.1["id"]);
+    assert_eq!(
+        [
+            r1.1["created"].as_bool().unwrap(),
+            r2.1["created"].as_bool().unwrap()
+        ]
+        .iter()
+        .filter(|c| **c)
+        .count(),
+        1
+    );
+    let room = r1.1["id"].as_str().unwrap().to_owned();
+
+    // The partial unique index rejects a second open row; the repo maps it to the Conflict text.
+    let dup = sqlx::query(
+        "INSERT INTO translation_room.translation_rooms \
+         (id, workspace_id, host_id, title, translation_room_code, status, translation_room_type, \
+          source_language, created_at, bridge_provider, bridge_meeting_code) \
+         VALUES ($1, $2, $3, 'dup', $4, 'WAITING', 'EXTERNAL_BRIDGE', 'vi', now(), 'google_meet', $5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(ws.as_uuid())
+    .bind(u[0].as_uuid())
+    .bind(&Uuid::new_v4().simple().to_string()[..12])
+    .bind(&code)
+    .execute(&c.pool)
+    .await
+    .unwrap_err();
+    assert!(warptalk_room::infrastructure::pg_repo::is_open_bridge_violation(&dup));
+    assert_eq!(
+        warptalk_room::infrastructure::pg_repo::OPEN_BRIDGE_CONFLICT,
+        "An open room for this external meeting already exists."
+    );
+
+    // Once the room ended, the same meeting can be claimed again (new room).
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &format!("/translation-rooms/{room}/end"),
+            u[0],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, v) = c
+        .call(Method::POST, CLAIM, u[1], Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_ne!(v["id"], room.as_str());
+}
+
+/// Claim at a fixed clock; returns (ctx, clock, ws, [capturer/host, other, third], room id).
+async fn clocked_bridge() -> Option<(Ctx, Arc<FixedClock>, WorkspaceId, Vec<UserId>, String)> {
+    let clock = Arc::new(FixedClock::new(chrono::Utc::now()));
+    let c = ctx_with(clock.clone()).await?;
+    let (ws, u) = members(&c, 3);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            CLAIM,
+            u[0],
+            Some(claim_body(ws, &meet_code())),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    Some((c, clock, ws, u, room))
+}
+
+fn advance(clock: &FixedClock, secs: i64) {
+    clock.set(clock.now() + chrono::Duration::seconds(secs));
+}
+
+fn rid(room: &str) -> RoomId {
+    room.parse::<Uuid>().unwrap().into()
+}
+
+#[tokio::test]
+async fn bridge_heartbeat_keeps_lease() {
+    let Some((c, clock, _ws, u, room)) = clocked_bridge().await else {
+        return;
+    };
+    let hb = bridge_uri(&room, "capturer/heartbeat");
+    let take = bridge_uri(&room, "capturer/takeover");
+    for _ in 0..3 {
+        advance(&clock, 30);
+        let (st, v) = c
+            .call(Method::POST, &hb, u[0], Some(json!({"audioFlowing": true})))
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+        assert_eq!(v["bridge"]["audioFlowing"], true);
+    }
+    // 90 s after the claim, but only 0 s after the last heartbeat: not stale
+    let info = c
+        .module
+        .queries()
+        .bridge_info(rid(&room))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!info.capturer_stale);
+    assert_eq!(info.capturer_user_id, Some(u[0]));
+    assert_eq!(info.provider, "google_meet");
+    assert_eq!(info.audio_mode, "voice");
+    advance(&clock, 30);
+    let (st, v) = c.call(Method::POST, &take, u[1], None).await;
+    assert_eq!(
+        (st, v["code"].as_str().unwrap()),
+        (StatusCode::CONFLICT, "CAPTURER_ACTIVE")
+    );
+    // a non-capturer cannot heartbeat
+    let (st, v) = c.call(Method::POST, &hb, u[1], None).await;
+    assert_eq!(
+        (st, v["code"].as_str().unwrap()),
+        (StatusCode::CONFLICT, "CAPTURER_LEASE_LOST")
+    );
+    // body is optional (older clients)
+    let (st, _) = c.call(Method::POST, &hb, u[0], None).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn bridge_takeover_when_lease_stale() {
+    let Some((c, clock, _ws, u, room)) = clocked_bridge().await else {
+        return;
+    };
+    let hb = bridge_uri(&room, "capturer/heartbeat");
+    let take = bridge_uri(&room, "capturer/takeover");
+    advance(&clock, 45);
+    let info = c
+        .module
+        .queries()
+        .bridge_info(rid(&room))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!info.capturer_stale, "exactly at the window is still fresh");
+    let (st, _) = c.call(Method::POST, &take, u[1], None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    advance(&clock, 1);
+    assert!(
+        c.module
+            .queries()
+            .bridge_info(rid(&room))
+            .await
+            .unwrap()
+            .unwrap()
+            .capturer_stale
+    );
+    let (st, v) = c.call(Method::POST, &take, u[1], None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["bridge"]["capturerUserId"], u[1].to_string());
+    assert_eq!(v["bridge"]["epoch"], 2);
+    // the old capturer lost the lease; the new one holds it
+    let (st, v) = c.call(Method::POST, &hb, u[0], None).await;
+    assert_eq!(
+        (st, v["code"].as_str().unwrap()),
+        (StatusCode::CONFLICT, "CAPTURER_LEASE_LOST")
+    );
+    assert_eq!(
+        c.call(Method::POST, &hb, u[1], None).await.0,
+        StatusCode::OK
+    );
+    // the host may take over even though the lease is fresh
+    let (st, v) = c.call(Method::POST, &take, u[0], None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["bridge"]["capturerUserId"], u[0].to_string());
+    // outsiders do not even see the room
+    let (st, _) = c.call(Method::POST, &take, UserId::new(), None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn bridge_silent_audio_makes_lease_stale_despite_heartbeats() {
+    let Some((c, clock, _ws, u, room)) = clocked_bridge().await else {
+        return;
+    };
+    let hb = bridge_uri(&room, "capturer/heartbeat");
+    let take = bridge_uri(&room, "capturer/takeover");
+    let q = c.module.queries();
+    // heartbeats every 15 s, audio never flows
+    for _ in 0..3 {
+        advance(&clock, 15);
+        let (st, v) = c
+            .call(
+                Method::POST,
+                &hb,
+                u[0],
+                Some(json!({"audioFlowing": false})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+        assert!(
+            !q.bridge_info(rid(&room))
+                .await
+                .unwrap()
+                .unwrap()
+                .capturer_stale
+        );
+    }
+    // t = 45: the fourth heartbeat is still within the window, the fifth is not
+    advance(&clock, 15);
+    c.call(
+        Method::POST,
+        &hb,
+        u[0],
+        Some(json!({"audioFlowing": false})),
+    )
+    .await;
+    assert!(
+        q.bridge_info(rid(&room))
+            .await
+            .unwrap()
+            .unwrap()
+            .capturer_stale
+    );
+    let (st, v) = c.call(Method::POST, &take, u[1], None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["bridge"]["capturerUserId"], u[1].to_string());
+}
+
+#[tokio::test]
+async fn bridge_audio_mode_locks_while_translation_runs() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 2);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            CLAIM,
+            u[0],
+            Some(claim_body(ws, &meet_code())),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let room = v["id"].as_str().unwrap().to_owned();
+    let uri = bridge_uri(&room, "audio-mode");
+    let put =
+        |user: UserId, mode: &str| c.call(Method::PUT, &uri, user, Some(json!({"mode": mode})));
+
+    let (st, v) = put(u[1], "text").await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{v}");
+    let (_, v) = put(u[0], "loud").await;
+    assert_eq!(v["code"], "INVALID_AUDIO_MODE");
+
+    let (st, v) = put(u[0], "text").await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["bridge"]["audioMode"], "text");
+    // not running yet: back to voice is fine, then text again
+    assert_eq!(put(u[0], "voice").await.0, StatusCode::OK);
+    assert_eq!(put(u[0], "text").await.0, StatusCode::OK);
+
+    let (st, v) = c
+        .post(&format!("/translation-rooms/{room}/start"), u[0])
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["translationActive"], true);
+    let (st, v) = put(u[0], "voice").await;
+    assert_eq!(
+        (st, v["code"].as_str().unwrap()),
+        (StatusCode::CONFLICT, "BRIDGE_AUDIO_MODE_LOCKED")
+    );
+    // voice to text stays allowed while running
+    let (st, _) = c
+        .post(&format!("/translation-rooms/{room}/translation/stop"), u[0])
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(put(u[0], "voice").await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn bridge_endpoints_refuse_native_rooms() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 1);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            "/translation-rooms",
+            u[0],
+            Some(json!({"workspaceId": ws, "title": "Native", "sourceLanguage": "vi", "targetLanguages": ["en"]})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    assert_eq!(v["roomType"], "NATIVE");
+    assert!(v.get("bridge").is_none());
+    let room = v["id"].as_str().unwrap().to_owned();
+    for (m, tail, body) in [
+        (Method::POST, "capturer/heartbeat", None),
+        (Method::POST, "capturer/takeover", None),
+        (Method::PUT, "audio-mode", Some(json!({"mode": "text"}))),
+    ] {
+        let (st, v) = c.call(m, &bridge_uri(&room, tail), u[0], body).await;
+        assert_eq!(
+            (st, v["code"].as_str().unwrap()),
+            (StatusCode::CONFLICT, "NOT_BRIDGE_ROOM"),
+            "{tail}"
+        );
+    }
+    assert!(
+        c.module
+            .queries()
+            .bridge_info(rid(&room))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

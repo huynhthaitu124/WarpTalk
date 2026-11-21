@@ -60,10 +60,9 @@ impl Ticket {
             return true;
         };
         // Err means the predecessor's sender was dropped: it finished (or died). Either way go.
-        match tokio::time::timeout(max, prev.wait_for(|done| *done)).await {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        tokio::time::timeout(max, prev.wait_for(|done| *done))
+            .await
+            .is_ok()
     }
 
     /// Marks this ticket's work complete, releasing the successor.

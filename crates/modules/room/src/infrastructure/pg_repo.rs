@@ -71,7 +71,7 @@ const ROOM_COLS: &str = "r.id, r.workspace_id, r.host_id, r.active_host_id, r.ti
     EXISTS (SELECT 1 FROM translation_room.translation_room_sessions s \
             WHERE s.translation_room_id = r.id AND s.status = 'ACTIVE') AS has_active_session, \
     r.translation_room_type, r.bridge_provider, r.bridge_meeting_code, r.bridge_join_url, \
-    r.bridge_capturer_user_id, r.bridge_capturer_since, r.bridge_capturer_lease_at, \
+    r.bridge_capturer_user_id, r.bridge_capturer_lease_at, \
     r.bridge_audio_flowing, r.bridge_last_audio_at, r.bridge_audio_mode, r.bridge_epoch";
 
 #[derive(sqlx::FromRow)]
@@ -96,7 +96,6 @@ struct RoomRow {
     bridge_meeting_code: Option<String>,
     bridge_join_url: Option<String>,
     bridge_capturer_user_id: Option<Uuid>,
-    bridge_capturer_since: Option<DateTime<Utc>>,
     bridge_capturer_lease_at: Option<DateTime<Utc>>,
     bridge_audio_flowing: Option<bool>,
     bridge_last_audio_at: Option<DateTime<Utc>>,

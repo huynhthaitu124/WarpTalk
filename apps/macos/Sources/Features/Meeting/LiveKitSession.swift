@@ -42,6 +42,7 @@ final class LiveKitSession: ObservableObject, RoomDelegate {
     private var reconcileTask: Task<Void, Never>?
     private var rendererAttachedTo: String?   // track sid string
     private var loggedFirstCaption = false
+    private var lastSubRequest: [String: Date] = [:]
 
     init(listenLanguage: String, hearOriginals: Bool) {
         self.listenLanguage = listenLanguage
@@ -126,7 +127,10 @@ final class LiveKitSession: ObservableObject, RoomDelegate {
 
                 let want = isDub ? (name == wanted) : hearOriginals
                 if isDub && want { activeDub = name }
-                if rpub.isSubscribed != want {      // VERIFY: RemoteTrackPublication.isSubscribed
+                let sidKey = rpub.sid.stringValue   // VERIFY: Track.Sid.stringValue
+                if rpub.isSubscribed != want,       // VERIFY: RemoteTrackPublication.isSubscribed
+                   Date().timeIntervalSince(lastSubRequest[sidKey] ?? .distantPast) > 3 {
+                    lastSubRequest[sidKey] = Date()
                     Task { try? await rpub.set(subscribed: want) }   // VERIFY: set(subscribed:) async throws
                 }
                 if isDub && want { attachRendererIfNeeded(rpub) }

@@ -247,8 +247,10 @@ mod tests {
 
     #[test]
     fn debug_hides_key() {
-        let mut c = RealtimeConfig::default();
-        c.api_key = "sk-secret".into();
+        let c = RealtimeConfig {
+            api_key: "sk-secret".into(),
+            ..RealtimeConfig::default()
+        };
         assert!(!format!("{c:?}").contains("sk-secret"));
     }
 }
