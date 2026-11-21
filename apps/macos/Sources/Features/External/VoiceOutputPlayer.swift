@@ -20,7 +20,7 @@ final class VoiceOutputPlayer: @unchecked Sendable {
 
     var isRunning: Bool { engine.isRunning }
 
-    /// Entry point for `LiveKitSession.dubPCMSink`.
+    /// Entry point for `DubListener` pcmSink.
     func enqueue(_ buffer: AVAudioPCMBuffer) {
         lock.lock(); defer { lock.unlock() }
         if format != buffer.format { rebuildLocked(for: buffer.format) }
