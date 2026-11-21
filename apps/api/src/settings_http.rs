@@ -1,8 +1,7 @@
 //! Admin HTTP for the runtime settings store: `/settings/{namespace}`.
 
-use axum::Json;
 use axum::Router;
-use axum::extract::{FromRef, Path, Query, State};
+use axum::extract::{FromRef, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use serde::Deserialize;
@@ -15,6 +14,7 @@ use warptalk_settings::{
     AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_RAG, NS_SUGGESTION, PipelineSettings,
     RagSettings, Scope, ScopeChain, SettingsStore, SuggestionSettings,
 };
+use warptalk_web::extract::{Json, Path, Query};
 use warptalk_web::{AuthUser, JwtKeys};
 use warptalk_workspace::WorkspaceQueries;
 

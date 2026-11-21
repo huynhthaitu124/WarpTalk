@@ -1,8 +1,8 @@
-use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use warptalk_kernel::AppResult;
 use warptalk_web::AuthUser;
+use warptalk_web::extract::Json;
 
 use super::HttpState;
 use super::dto::*;

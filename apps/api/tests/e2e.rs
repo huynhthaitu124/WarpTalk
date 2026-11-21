@@ -461,6 +461,33 @@ async fn full_flow() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
+    // Bad input (malformed JSON, bad path, bad query) answers 400 INVALID_REQUEST as JSON.
+    for (method, uri, body) in [
+        ("PUT", "/api/v1/settings/suggestion?scope=platform", "{bad"),
+        ("PUT", "/api/v1/ai/workspaces/not-a-uuid/config", "{}"),
+        (
+            "GET",
+            "/api/v1/knowledge/search?workspaceId=nope&q=budget",
+            "",
+        ),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {access}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
+    }
+
     // Knowledge search: no index yet, so 200 with no chunks; non-members are refused.
     let (s, b) = call(
         &app,

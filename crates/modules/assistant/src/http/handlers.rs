@@ -1,9 +1,9 @@
-use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use uuid::Uuid;
 use warptalk_kernel::{AppResult, WorkspaceId};
 use warptalk_web::AuthUser;
+use warptalk_web::extract::{Json, Path};
 
 use super::AppState;
 use super::dto::{

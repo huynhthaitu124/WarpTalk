@@ -914,3 +914,29 @@ async fn dev_invitation_capture_writes_redis_only_when_enabled() {
     let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, &key).await.unwrap();
     assert!(ttl > 3500 && ttl <= 3600);
 }
+
+#[tokio::test]
+async fn malformed_input_is_invalid_request() {
+    let Some(c) = ctx().await else { return };
+    let user = UserId::new();
+    for (method, uri, body) in [
+        (Method::POST, "/workspaces", "{bad"),
+        (Method::GET, "/workspaces/not-a-uuid", ""),
+    ] {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {}", c.token(user)))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = c.router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
+    }
+}

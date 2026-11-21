@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
-use axum::Json;
 use axum::Router;
-use axum::extract::{FromRef, Query, State};
+use axum::extract::{FromRef, State};
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, WorkspaceId};
+use warptalk_web::extract::{Json, Query};
 use warptalk_web::{AuthUser, JwtKeys};
 
 use crate::application::{

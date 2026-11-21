@@ -801,3 +801,43 @@ async fn head_chain_links_previous_transcript() {
     .unwrap();
     assert_eq!((version, prev), (2, Some(first)));
 }
+
+#[tokio::test]
+async fn malformed_input_is_invalid_request() {
+    let Some(c) = ctx(Opts {
+        retrieval: false,
+        save: false,
+    })
+    .await
+    else {
+        return;
+    };
+    let token = c
+        .keys
+        .issue_access(UserId::new(), Uuid::new_v4(), false, Utc::now())
+        .unwrap()
+        .0;
+    for (uri, body) in [
+        ("/transcripts/not-a-uuid/corrections", "{}"),
+        (
+            &format!("/transcripts/{}/corrections", Uuid::new_v4()),
+            "{bad",
+        ),
+    ] {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = c.router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
+    }
+}

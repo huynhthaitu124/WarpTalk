@@ -640,3 +640,23 @@ async fn dev_mail_capture_is_opt_in_and_stores_latest_raw_token() {
     let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, &key).await.unwrap();
     assert!(ttl > 3500 && ttl <= 3600);
 }
+
+#[tokio::test]
+async fn malformed_json_is_invalid_request() {
+    let Some(env) = setup().await else { return };
+    for (uri, body) in [("/auth/login", "{bad"), ("/auth/refresh", "not json")] {
+        let req = Request::post(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = env.app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
+        assert!(v["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+}

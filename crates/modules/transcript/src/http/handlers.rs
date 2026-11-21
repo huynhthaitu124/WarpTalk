@@ -1,11 +1,13 @@
-use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use warptalk_kernel::{AppResult, RoomId, TranscriptId};
-use warptalk_web::{ApiResult, AuthUser};
+use warptalk_web::AuthUser;
+use warptalk_web::extract::{Json, Path, Query};
 
 use super::AppState;
 use super::dto::{CorrectionDto, CorrectionRequest, CorrectionsQuery, LangQuery, TranscriptDto};
+
+type ApiResult<T> = AppResult<Json<T>>;
 
 pub async fn get_by_room(
     State(s): State<AppState>,

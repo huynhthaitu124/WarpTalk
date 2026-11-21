@@ -1,8 +1,8 @@
-use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use warptalk_kernel::{AppError, AppResult, Page, PageRequest, UserId, WorkspaceId, WorkspaceRole};
-use warptalk_web::{ApiResult, AuthUser};
+use warptalk_web::AuthUser;
+use warptalk_web::extract::{Json, Path, Query};
 
 use super::AppState;
 use super::dto::{
@@ -12,6 +12,8 @@ use super::dto::{
 use crate::application::invitations::AcceptBy;
 use crate::domain::WorkspaceSettings;
 use uuid::Uuid;
+
+type ApiResult<T> = AppResult<Json<T>>;
 
 pub async fn create(
     State(s): State<AppState>,

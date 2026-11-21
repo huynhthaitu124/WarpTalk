@@ -1151,3 +1151,30 @@ async fn redis_consumer_end_to_end() {
         .unwrap();
     assert_eq!(status.as_deref(), Some("indexed"));
 }
+
+#[tokio::test]
+async fn malformed_query_is_invalid_request() {
+    let Some(env) = setup().await else { return };
+    let token = env
+        .jwt
+        .issue_access(UserId::new(), Uuid::now_v7(), false, Utc::now())
+        .unwrap()
+        .0;
+    let app = env.module.router();
+    let res = app
+        .oneshot(
+            Request::get("/knowledge/search?workspaceId=nope&q=x")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(v["code"], "INVALID_REQUEST", "{v}");
+}
