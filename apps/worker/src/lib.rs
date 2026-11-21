@@ -2,8 +2,6 @@
 //! embeddings, summaries, suggestions, notifications later).
 
 pub mod adapters;
-pub mod ai;
-pub mod knowledge;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,11 +18,11 @@ use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 
 use crate::adapters::{PgRoomDirectory, PgSuggestionRoomDirectory, PgWorkspaceAiPolicy};
-use crate::ai::AiProviders;
-use crate::knowledge::{
+use redis::aio::ConnectionManager;
+use warptalk_ai_plane::ai::AiProviders;
+use warptalk_ai_plane::knowledge::{
     DenyDocumentAccess, KnowledgeParts, ServiceRetriever, build_knowledge_module,
 };
-use redis::aio::ConnectionManager;
 use warptalk_assistant::suggestion::{
     EngineDeps, RedisConsentPolicy, RedisRoomSignals, SettingsConfigSource, SuggestionEngine,
     SuggestionState, SuggestionWorker,

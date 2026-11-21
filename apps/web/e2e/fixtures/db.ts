@@ -40,3 +40,11 @@ export function addWorkspaceMember(workspaceId: string, userId: string) {
     `INSERT INTO workspace.workspace_members (id, workspace_id, user_id, role_id, joined_at) VALUES ('${randomUUID()}', '${assertUuid(workspaceId)}', '${assertUuid(userId)}', '${MEMBER_ROLE}', now())`,
   );
 }
+
+/** Pretend the capturer's last heartbeat was long ago (the real lease is 45s; tests must not wait). TEST-ONLY. */
+export function expireBridgeLease(roomId: string, secondsAgo = 600) {
+  const n = psql(
+    `UPDATE translation_room.translation_rooms SET bridge_capturer_lease_at = now() - interval '${Math.floor(secondsAgo)} seconds' WHERE id = '${assertUuid(roomId)}' RETURNING 1`,
+  );
+  if (n !== '1') throw new Error(`bridge room not found: ${roomId}`);
+}

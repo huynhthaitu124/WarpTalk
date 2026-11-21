@@ -1,47 +1,37 @@
 // Loaded lazily: livekit-client is large and only needed once a meeting is joined.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LiveKitRoom, RoomAudioRenderer, useDataChannel, useLocalParticipant, useParticipants, useRoomContext } from '@livekit/components-react';
+import {
+  LiveKitRoom, RoomAudioRenderer, useConnectionQualityIndicator, useConnectionState, useDataChannel, useLocalParticipant, useParticipants, useRoomContext,
+} from '@livekit/components-react';
 import { RoomEvent, Track } from 'livekit-client';
 import { Alert, useToast } from '@/ui';
-import type { JoinGrant } from '@/lib/schemas';
-import { CaptionsPanel, MeetingControls, ParticipantGrid, type CaptionLine, type Tile } from './MeetingParts';
+import type { JoinGrant, Room } from '@/lib/schemas';
+import { mergeCaption, parseCaption, type CaptionLine } from '@/lib/captions';
+import { CaptionsPanel, MeetingControls, ParticipantGrid, StatusStrip, type ConnectionLabel, type QualityLabel, type Tile } from './MeetingParts';
 
-/** Captions arrive on data topic "captions": JSON {id?, text, speaker?, language?, final?} or plain text. */
-export function parseCaption(payload: Uint8Array, fallbackSpeaker: string, seq: number): CaptionLine | null {
-  const raw = new TextDecoder().decode(payload).trim();
-  if (!raw) return null;
-  try {
-    const j = JSON.parse(raw) as Record<string, unknown>;
-    const text = String(j.text ?? j.caption ?? '');
-    if (!text) return null;
-    return {
-      id: String(j.id ?? j.segmentId ?? `c${seq}`),
-      speaker: String(j.speaker ?? j.speakerName ?? j.participantName ?? fallbackSpeaker),
-      text,
-      lang: typeof j.language === 'string' ? j.language : typeof j.lang === 'string' ? j.lang : undefined,
-      final: j.final === undefined && j.isFinal === undefined ? true : Boolean(j.final ?? j.isFinal),
-    };
-  } catch {
-    return { id: `c${seq}`, speaker: fallbackSpeaker, text: raw, final: true };
-  }
+export { parseCaption };
+
+function connectionLabel(s: string): ConnectionLabel {
+  if (s === 'connected') return 'connected';
+  if (s === 'connecting') return 'connecting';
+  if (s === 'reconnecting' || s === 'signalReconnecting') return 'reconnecting';
+  return 'disconnected';
 }
 
-function Stage({ listen, onListen, onLeave }: { listen: string; onListen(v: string): void; onLeave(): void }) {
+function Stage({ listen, onListen, onLeave, roomInfo, captionLang }: { listen: string; onListen(v: string): void; onLeave(): void; roomInfo: Room; captionLang: string }) {
   const room = useRoomContext();
   const participants = useParticipants();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const toast = useToast();
+  const connection = useConnectionState();
+  const { quality } = useConnectionQualityIndicator({ participant: localParticipant });
   const [lines, setLines] = useState<CaptionLine[]>([]);
   const seq = useRef(0);
 
   useDataChannel('captions', (msg) => {
     const line = parseCaption(msg.payload, msg.from?.name || msg.from?.identity || 'Speaker', ++seq.current);
     if (!line) return;
-    setLines((cur) => {
-      const i = cur.findIndex((c) => c.id === line.id);
-      const next = i >= 0 ? cur.map((c, k) => (k === i ? line : c)) : [...cur, line];
-      return next.slice(-200);
-    });
+    setLines((cur) => mergeCaption(cur, line));
   });
 
   // Subscribe to the original mix, or to exactly one dubbed track `dub-{lang}`.
@@ -75,9 +65,10 @@ function Stage({ listen, onListen, onLeave }: { listen: string; onListen(v: stri
 
   return (
     <div className="flex flex-col gap-6">
+      <StatusStrip connection={connectionLabel(connection)} quality={quality as QualityLabel} room={roomInfo} />
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <ParticipantGrid tiles={tiles} />
-        <CaptionsPanel lines={lines} />
+        <CaptionsPanel lines={lines} translationLang={captionLang} />
       </div>
       <MeetingControls micOn={isMicrophoneEnabled} onToggleMic={() => void toggleMic()} listen={listen} onListen={onListen} onLeave={onLeave} />
       <RoomAudioRenderer />
@@ -85,7 +76,7 @@ function Stage({ listen, onListen, onLeave }: { listen: string; onListen(v: stri
   );
 }
 
-export default function LiveKitStage({ grant, listen, onListen, onLeave }: { grant: JoinGrant; listen: string; onListen(v: string): void; onLeave(): void }) {
+export default function LiveKitStage({ grant, listen, onListen, onLeave, room, captionLang }: { grant: JoinGrant; listen: string; onListen(v: string): void; onLeave(): void; room: Room; captionLang: string }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <LiveKitRoom
@@ -100,7 +91,7 @@ export default function LiveKitStage({ grant, listen, onListen, onLeave }: { gra
       data-lk-theme="default"
     >
       {error && <Alert tone="danger" title="Connection problem" className="mb-4">{error}</Alert>}
-      <Stage listen={listen} onListen={onListen} onLeave={onLeave} />
+      <Stage listen={listen} onListen={onListen} onLeave={onLeave} roomInfo={room} captionLang={captionLang} />
     </LiveKitRoom>
   );
 }

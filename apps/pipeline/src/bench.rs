@@ -138,10 +138,11 @@ impl Default for BenchConfig {
             tts_cold_extra_ms: 490.0,
             tts_cold_probability: 0.2,
             tts_concurrency: 16,
-            early_endpoint_ms: 0,
-            early_mt: false,
-            tts_prewarm: false,
-            stage_capacity: 64,
+            // The production defaults of `LatencyTuning`; the CLI's `--baseline` switches all off.
+            early_endpoint_ms: LatencyTuning::default().early_endpoint_hangover_ms,
+            early_mt: LatencyTuning::default().early_mt,
+            tts_prewarm: LatencyTuning::default().tts_prewarm,
+            stage_capacity: LatencyTuning::default().stage_channel_capacity,
             workers: None,
         }
     }

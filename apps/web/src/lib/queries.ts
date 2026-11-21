@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
-import { api } from './api';
+import { api, ApiError } from './api';
 import {
   joinGrant, member, page, participant, room, routes, settingsRead, settingsWrite, workspace, workspaceSettings,
   type WorkspaceSettings,
@@ -180,6 +180,32 @@ export function useResetSettings(ns: Namespace, scope: ScopeKind, id: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['settings-scoped', ns, scope, id] });
       void qc.invalidateQueries({ queryKey: ['settings-effective', ns] });
+    },
+  });
+}
+
+export function useEndMeeting(roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      // The meeting (LiveKit) session only exists once somebody joined and LiveKit is configured:
+      // 404 "meeting has not started" / 503 mean there is nothing to tear down, so end the room itself.
+      try {
+        await api(`/meetings/${roomId}/end`, { method: 'POST' });
+      } catch (e) {
+        if (!(e instanceof ApiError) || ![404, 503].includes(e.status)) throw e;
+      }
+      try {
+        return await api(`/translation-rooms/${roomId}/end`, { method: 'POST', schema: room });
+      } catch (e) {
+        // The meeting-end event may already have ended the room.
+        if (e instanceof ApiError && e.status === 409) return api(`/translation-rooms/${roomId}`, { schema: room });
+        throw e;
+      }
+    },
+    onSuccess: (r) => {
+      qc.setQueryData(['room', roomId], r);
+      void qc.invalidateQueries({ queryKey: ['rooms'] });
     },
   });
 }

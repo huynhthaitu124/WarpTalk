@@ -21,3 +21,4 @@ warptalk-settings = { workspace = true }
 warptalk-meeting = { workspace = true }
 warptalk-transcript = { workspace = true }
 warptalk-knowledge = { workspace = true }
+warptalk-assistant = { workspace = true }

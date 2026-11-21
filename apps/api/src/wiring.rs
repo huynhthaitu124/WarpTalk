@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ai::AiProviders;
-use crate::knowledge::{KnowledgeParts, build_knowledge_module, build_vector_store};
 use crate::settings_http::{self, SettingsHttpState};
 use async_trait::async_trait;
 use axum::Router;
@@ -15,6 +13,16 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use redis::aio::ConnectionManager;
 use sqlx::PgPool;
+use warptalk_ai_plane::ai::{AiProviders, PlatformKeys};
+use warptalk_ai_plane::knowledge::{KnowledgeParts, build_knowledge_module, build_vector_store};
+use warptalk_ai_plane::{
+    BaseUrlPolicy, ByoDeps, LlmKeyValidator, PgExternalLlmPolicy, RedisConfigNotifier,
+    vault_from_env,
+};
+use warptalk_assistant::application::ports::{
+    ConfigNotifier, KeyValidator, NoopNotifier, SecretVault, WorkspaceAccess,
+};
+use warptalk_assistant::{AssistantDeps, AssistantModule};
 use warptalk_bus::publish_json;
 use warptalk_config::JwtConfig;
 use warptalk_contracts::events::{DomainEventEnvelope, MEETING_PRODUCER};
@@ -144,6 +152,16 @@ impl DocumentAccess for KnowledgeAccessAdapter {
     }
 }
 
+/// Adapter: assistant's `WorkspaceAccess` port backed by workspace roles.
+pub struct AssistantWorkspaceAccess(pub WorkspaceQueries);
+
+#[async_trait]
+impl WorkspaceAccess for AssistantWorkspaceAccess {
+    async fn member_role(&self, ws: WorkspaceId, user: UserId) -> AppResult<Option<WorkspaceRole>> {
+        self.0.member_role(ws, user).await
+    }
+}
+
 /// Meeting events on Redis pub/sub; the channel is named by the event type.
 pub struct RedisMeetingEventPublisher {
     conn: ConnectionManager,
@@ -216,6 +234,11 @@ pub struct ApiOptions {
     pub ai: Option<Arc<AiProviders>>,
     /// Overrides the vector store (tests); default is Qdrant when `QDRANT_URL` is set.
     pub vectors: Option<Arc<dyn VectorStore>>,
+    /// Overrides the BYO key vault (tests); default reads `AI_KEYS_KEK` (BYO off when unset).
+    pub vault: Option<Arc<dyn SecretVault>>,
+    /// Overrides BYO key validation (tests); default is the real provider check with the
+    /// strict `baseUrl` guard (`AI_ALLOW_INSECURE_BASE_URL` relaxes it).
+    pub key_validator: Option<Arc<dyn KeyValidator>>,
 }
 
 /// Rejects the routes that mint LiveKit tokens when LiveKit is not configured.
@@ -279,6 +302,10 @@ pub async fn build(
     if let Some(url) = &opts.redis_url {
         settings.spawn_invalidation_listener(url);
     }
+    let ai_notifier: Arc<dyn ConfigNotifier> = match &redis {
+        Some(conn) => Arc::new(RedisConfigNotifier::new(conn.clone())),
+        None => Arc::new(NoopNotifier),
+    };
     let events: Arc<dyn RoomEventPublisher> = match redis {
         Some(conn) => Arc::new(RedisRoomEventPublisher::new(conn)),
         None => Arc::new(NoopRoomEventPublisher),
@@ -323,9 +350,33 @@ pub async fn build(
     if !configured {
         meeting_router = meeting_router.layer(middleware::from_fn(livekit_required));
     }
-    let ai = opts
-        .ai
-        .unwrap_or_else(|| AiProviders::from_env(settings.clone()));
+    let vault = opts.vault.unwrap_or_else(vault_from_env);
+    let assistant = AssistantModule::new(AssistantDeps {
+        pool: pool.clone(),
+        jwt: jwt.clone(),
+        clock: Arc::new(SystemClock),
+        access: Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+        vault: vault.clone(),
+        validator: opts
+            .key_validator
+            .unwrap_or_else(|| Arc::new(LlmKeyValidator::new(BaseUrlPolicy::from_env()))),
+        notifier: ai_notifier,
+    });
+    let ai = opts.ai.unwrap_or_else(|| {
+        AiProviders::with_byo(
+            settings.clone(),
+            PlatformKeys::from_env(),
+            ByoDeps::new(
+                assistant.llm_config_repository(),
+                vault,
+                Arc::new(PgExternalLlmPolicy::new(pool.clone())),
+            ),
+        )
+    });
+    if let Some(url) = &opts.redis_url {
+        // Config writes on any replica apply here at once.
+        ai.spawn_invalidation_listener(url);
+    }
     let vectors = opts.vectors.unwrap_or_else(|| {
         build_vector_store().unwrap_or_else(|e| {
             tracing::error!(error = %e, "vector store unavailable; using in-memory");
@@ -356,6 +407,7 @@ pub async fn build(
         .merge(room.router())
         .merge(meeting_router)
         .merge(settings_router)
+        .merge(assistant.router())
         .merge(knowledge.router());
     let router = Router::new()
         .route("/health", get(warptalk_web::health))

@@ -6,16 +6,17 @@
 //! providers are cached per `(kind, base_url)`; because the settings are read on every
 //! resolution, a settings change takes effect on the next call without a restart.
 //!
-//! TODO(byo-llm): per-workspace BYO keys (docs/architecture/byo-llm.md) plug in at
-//! [`AiProviders::llm_for`]: look up the workspace's encrypted provider config first, mark it
-//! [`DataBoundary::WorkspaceControlled`] when it points into the tenant, and fall back to the
-//! platform keys below.
+//! Per-workspace BYO providers (see [`crate::byo`]) take precedence in [`AiProviders::llm_for`];
+//! without an enabled workspace override the platform default above applies.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::byo::{ByoDeps, ByoResolver, Outcome};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use tokio::task::JoinHandle;
+use warptalk_assistant::domain::byo::LlmPurpose;
 use warptalk_assistant::suggestion::{
     DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm,
 };
@@ -103,16 +104,45 @@ pub struct AiProviders {
     keys: PlatformKeys,
     llm: Mutex<HashMap<CacheKey, Arc<dyn LlmProvider>>>,
     embed: Mutex<HashMap<CacheKey, Arc<dyn EmbeddingProvider>>>,
+    byo: Option<Arc<ByoResolver>>,
 }
 
 impl AiProviders {
+    /// Platform keys only (no workspace overrides).
     pub fn new(settings: SettingsStore, keys: PlatformKeys) -> Arc<Self> {
+        Self::build(settings, keys, None)
+    }
+
+    /// Platform keys plus per-workspace BYO overrides.
+    pub fn with_byo(settings: SettingsStore, keys: PlatformKeys, byo: ByoDeps) -> Arc<Self> {
+        Self::build(settings, keys, Some(Arc::new(ByoResolver::new(byo))))
+    }
+
+    fn build(
+        settings: SettingsStore,
+        keys: PlatformKeys,
+        byo: Option<Arc<ByoResolver>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             settings,
             keys,
             llm: Mutex::new(HashMap::new()),
             embed: Mutex::new(HashMap::new()),
+            byo,
         })
+    }
+
+    /// Drop cached BYO resolutions of one workspace (what a pub/sub message does).
+    pub fn invalidate_workspace(&self, workspace: WorkspaceId) {
+        if let Some(b) = &self.byo {
+            b.invalidate_workspace(workspace);
+        }
+    }
+
+    /// Follow `warptalk:ai-config:changed` so config writes on any replica apply here at once.
+    /// `None` without BYO.
+    pub fn spawn_invalidation_listener(&self, redis_url: &str) -> Option<JoinHandle<()>> {
+        self.byo.as_ref().map(|b| b.spawn_listener(redis_url))
     }
 
     pub fn from_env(settings: SettingsStore) -> Arc<Self> {
@@ -170,12 +200,8 @@ impl AiProviders {
         Ok(p)
     }
 
-    /// Provider and model for an LLM purpose (platform keys only; BYO hook above).
-    pub async fn llm_for(
-        &self,
-        _workspace: WorkspaceId,
-        _purpose: Purpose,
-    ) -> Result<ResolvedLlm, ResolveError> {
+    /// Platform default provider and model (platform keys).
+    async fn platform_llm(&self) -> Result<ResolvedLlm, ResolveError> {
         let choice = self.choices().await.llm;
         let kind = parse_kind(&choice.provider).ok_or(ResolveError::NotConfigured)?;
         let provider = self.llm_provider(kind)?;
@@ -185,6 +211,44 @@ impl AiProviders {
             // Platform keys reach third-party endpoints.
             boundary: DataBoundary::External,
         })
+    }
+
+    /// Provider and model for an LLM purpose: the workspace's own provider when it has an enabled
+    /// override, else the platform default. A workspace whose own provider cannot serve gets an
+    /// error, not a silent switch to the platform, unless it enabled `platform_if_allowed` and
+    /// `external_llm_allowed` holds.
+    pub async fn llm_for_purpose(
+        &self,
+        workspace: WorkspaceId,
+        purpose: LlmPurpose,
+    ) -> Result<ResolvedLlm, ResolveError> {
+        let Some(byo) = &self.byo else {
+            return self.platform_llm().await;
+        };
+        match byo.resolve(workspace, purpose).await? {
+            Outcome::NoOverride => self.platform_llm().await,
+            Outcome::Byo(r) => Ok(r),
+            Outcome::Unavailable { reason, fallback } => {
+                if fallback {
+                    tracing::warn!(
+                        workspace_id = %workspace, purpose = purpose.as_str(),
+                        "audit: workspace AI provider unavailable, falling back to platform provider ({reason})"
+                    );
+                    self.platform_llm().await
+                } else {
+                    Err(ResolveError::Failed(reason))
+                }
+            }
+        }
+    }
+
+    /// Suggestion purposes; see [`Self::llm_for_purpose`].
+    pub async fn llm_for(
+        &self,
+        workspace: WorkspaceId,
+        purpose: Purpose,
+    ) -> Result<ResolvedLlm, ResolveError> {
+        self.llm_for_purpose(workspace, purpose.into()).await
     }
 
     /// Provider name recorded in the knowledge embedding profile.

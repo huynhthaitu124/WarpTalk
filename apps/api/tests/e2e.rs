@@ -116,6 +116,7 @@ async fn full_flow() {
             warptalk_meeting::MIGRATIONS,
             warptalk_transcript::MIGRATIONS,
             warptalk_knowledge::MIGRATIONS,
+            warptalk_assistant::MIGRATIONS,
         ],
     )
     .await
@@ -147,6 +148,14 @@ async fn full_flow() {
             redis_url: None,
             ai: None,
             vectors: None,
+            vault: Some(Arc::new(
+                warptalk_ai_plane::KeyVault::from_base64(
+                    "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+                    1,
+                )
+                .unwrap(),
+            )),
+            key_validator: None,
         },
     )
     .await;
@@ -324,6 +333,34 @@ async fn full_flow() {
         (s, &b["value"]["max_per_meeting"]),
         (StatusCode::OK, &json!(7))
     );
+    // BYO AI config: OWNER/ADMIN only (workspace adapter), key never echoed.
+    let ai_cfg = format!("/api/v1/ai/workspaces/{ws_id}/config");
+    let (s, _) = call(&app, "GET", &ai_cfg, None, Some(&member_access)).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(
+        &app,
+        "PUT",
+        &format!("/api/v1/ai/workspaces/{ws_id}/credentials/openai"),
+        Some(json!({"apiKey": "sk-e2e-member-0000"})),
+        Some(&member_access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, b) = call(&app, "GET", &ai_cfg, None, Some(&access)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["byoEnabled"], true);
+    let (s, b) = call(
+        &app,
+        "PUT",
+        &ai_cfg,
+        Some(json!({"purposes": {"embedding": {"provider": "openai", "model": "text-embedding-3-small"}}})),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["reindexRequired"], true);
+    assert_eq!(b["purposes"]["embedding"]["status"], "invalid", "{b}");
+
     let (s, _) = call(
         &app,
         "GET",

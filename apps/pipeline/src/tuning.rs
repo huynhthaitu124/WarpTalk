@@ -35,9 +35,13 @@ pub struct LatencyTuning {
 impl Default for LatencyTuning {
     fn default() -> Self {
         Self {
+            // Measured (docs/perf): no gain once `early_mt` is on, so off; it helps only
+            // deployments that run with `early_mt` off (about -145 ms p50 there).
             early_endpoint_hangover_ms: 0,
-            early_mt: false,
-            tts_prewarm: false,
+            // Measured: speech end -> first dub p50 2361 -> 1407 ms, p95 3080 -> 2020 ms.
+            early_mt: true,
+            // Measured: TTS first audio p95 700 -> 260 ms, e2e p95 -200 ms on top of `early_mt`.
+            tts_prewarm: true,
             tts_prewarm_max_age_ms: 8_000,
             stage_channel_capacity: 64,
         }

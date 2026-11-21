@@ -1,13 +1,13 @@
 import { lazy, Suspense, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { PlugZap, Video } from 'lucide-react';
-import { Alert, Button, Card, CardBody, Field, Input, PageHeader, Skeleton, StatusPill } from '@/ui';
+import { PlugZap, Video, PhoneOff } from 'lucide-react';
+import { Alert, Button, Card, CardBody, Dialog, DialogClose, DialogContent, Field, Input, PageHeader, Skeleton, StatusPill, useToast } from '@/ui';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useMeetingJoin, useParticipants, useRoom } from '@/lib/queries';
+import { useEndMeeting, useMeetingJoin, useParticipants, useRoom } from '@/lib/queries';
 import type { JoinGrant } from '@/lib/schemas';
 import { languageLabel } from '@/lib/languages';
-import { CaptionsPanel, MeetingControls, ParticipantGrid } from './MeetingParts';
+import { CaptionsPanel, MeetingControls, ParticipantGrid, StatusStrip } from './MeetingParts';
 import { errMsg } from './errors';
 
 const LiveKitStage = lazy(() => import('./LiveKitStage'));
@@ -25,6 +25,9 @@ export function MeetingPage() {
   const room = useRoom(roomId);
   const parts = useParticipants(roomId);
   const joinM = useMeetingJoin(roomId);
+  const endM = useEndMeeting(roomId);
+  const toast = useToast();
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'prejoin' });
   const [name, setName] = useState('');
   const self = parts.data?.find((p) => p.userId === userId);
@@ -41,26 +44,59 @@ export function MeetingPage() {
     }
   }
   const leave = () => { setPhase({ kind: 'prejoin' }); nav(`/rooms/${roomId}`); };
+  async function endMeeting() {
+    try {
+      await endM.mutateAsync();
+      setConfirmEnd(false);
+      setPhase({ kind: 'prejoin' });
+      toast({ tone: 'success', title: 'Meeting ended' });
+      nav(`/rooms/${roomId}`);
+    } catch { /* shown inside the dialog */ }
+  }
 
   if (room.isLoading) return <Skeleton className="h-40" />;
   if (room.isError || !room.data) return <Alert tone="danger" title="Meeting not found">{errMsg(room.error)} <Link to="/rooms">Back to rooms</Link></Alert>;
   const r = room.data;
   const roster = (parts.data ?? []).filter((p) => ['CONNECTED', 'WAITING'].includes(p.status));
+  const isHost = r.effectiveHostId === userId || r.hostId === userId;
+  const terminal = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'].includes(r.status);
+  const captionLang = listen === 'original' ? (self?.listenLanguage ?? 'original') : listen;
 
   return (
     <>
       <PageHeader
         title={r.title}
         description={<span className="flex items-center gap-2"><StatusPill status={r.status} />{languageLabel(r.sourceLanguage)} → {r.targetLanguages.map(languageLabel).join(', ')}</span>}
-        actions={<Link to={`/rooms/${r.id}`} className="text-body">Room details</Link>}
+        actions={(
+          <>
+            <Link to={`/rooms/${r.id}`} className="text-body">Room details</Link>
+            {isHost && !terminal && <Button variant="danger" size="sm" onClick={() => setConfirmEnd(true)}><PhoneOff className="size-4" aria-hidden />End meeting</Button>}
+          </>
+        )}
       />
+      <Dialog open={confirmEnd} onOpenChange={(v) => { if (!endM.isPending) { setConfirmEnd(v); if (!v) endM.reset(); } }}>
+        <DialogContent
+          title="End meeting for everyone?"
+          description="Everyone is disconnected and the room is closed. This cannot be undone."
+          footer={(
+            <>
+              <DialogClose asChild><Button>Cancel</Button></DialogClose>
+              <Button variant="danger" loading={endM.isPending} onClick={() => void endMeeting()}>End meeting</Button>
+            </>
+          )}
+        >
+          {endM.isError && <Alert tone="danger" title="Could not end the meeting">{errMsg(endM.error)}</Alert>}
+        </DialogContent>
+      </Dialog>
+      {phase.kind !== 'joined' && <div className="mb-6"><StatusStrip connection="idle" quality="unknown" room={r} /></div>}
       {phase.kind === 'joined' ? (
         <Suspense fallback={<Skeleton className="h-64" />}>
-          <LiveKitStage grant={phase.grant} listen={listen} onListen={setListen} onLeave={leave} />
+          <LiveKitStage grant={phase.grant} listen={listen} onListen={setListen} onLeave={leave} room={r} captionLang={captionLang} />
         </Suspense>
       ) : (
         <div className="flex flex-col gap-6">
-          {phase.kind === 'prejoin' && (
+          {terminal && <Alert tone="info" title="This meeting has ended">It is closed to new participants. <Link to={`/rooms/${r.id}`}>Back to room details</Link></Alert>}
+          {phase.kind === 'prejoin' && !terminal && (
             <Card className="max-w-md" data-testid="meeting-prejoin">
               <CardBody className="flex flex-col gap-4">
                 <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-lg bg-surface-2 text-ink-subtle"><Video className="size-5" aria-hidden /></span><div><h2 className="text-title font-semibold">Ready to join?</h2><p className="text-body-sm text-ink-subtle">You will connect with your microphone off.</p></div></div>
@@ -83,7 +119,7 @@ export function MeetingPage() {
           )}
           <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
             <ParticipantGrid tiles={roster.map((p) => ({ id: p.id, name: p.displayName, note: p.status === 'WAITING' ? 'In lobby' : undefined, isLocal: p.userId === userId }))} empty="Nobody is in the room yet." />
-            <CaptionsPanel lines={[]} placeholder="Captions are unavailable until you are connected to the meeting." />
+            <CaptionsPanel lines={[]} translationLang={captionLang} placeholder="Captions are unavailable until you are connected to the meeting." />
           </div>
           <MeetingControls micOn={false} onToggleMic={() => undefined} micDisabled micHint="Join the meeting to use your microphone" listen={listen} onListen={setListen} onLeave={leave} />
         </div>

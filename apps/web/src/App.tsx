@@ -10,6 +10,7 @@ import { RoomDetailPage } from '@/features/RoomDetail';
 import { JoinByCodePage } from '@/features/Join';
 import { MeetingsPage } from '@/features/Meetings';
 import { MeetingPage } from '@/features/Meeting';
+import { ExternalPage } from '@/features/External';
 import { SettingsPage } from '@/features/Settings';
 import { WorkspacesPage } from '@/features/Workspaces';
 
@@ -44,6 +45,7 @@ export function App() {
             <Route path="/join" element={<JoinByCodePage />} />
             <Route path="/meetings" element={<MeetingsPage />} />
             <Route path="/meetings/:roomId" element={<MeetingPage />} />
+            <Route path="/external" element={<ExternalPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>

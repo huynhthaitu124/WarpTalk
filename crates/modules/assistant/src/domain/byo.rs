@@ -205,7 +205,9 @@ mod tests {
         }
         assert_eq!(LlmProviderKind::parse("nope"), None);
         assert_eq!(
-            serde_json::to_string(&LlmPurpose::SuggestionDecide).ok().as_deref(),
+            serde_json::to_string(&LlmPurpose::SuggestionDecide)
+                .ok()
+                .as_deref(),
             Some("\"suggestion_decide\"")
         );
     }

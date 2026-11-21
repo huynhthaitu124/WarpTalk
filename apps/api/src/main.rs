@@ -38,16 +38,19 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to PostgreSQL")?;
 
-    let migrated: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = 'identity')",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap_or(false);
-    if !migrated {
-        bail!(
-            "database is not migrated (no 'identity' migrations found): run warptalk-migrator first"
-        );
+    for module in ["identity", "assistant"] {
+        let migrated: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
+        )
+        .bind(module)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+        if !migrated {
+            bail!(
+                "database is not migrated (no '{module}' migrations found): run warptalk-migrator first"
+            );
+        }
     }
 
     let redis = warptalk_bus::connect(&redis_cfg.url)
@@ -64,6 +67,8 @@ async fn main() -> anyhow::Result<()> {
         redis_url: Some(redis_cfg.url.clone()),
         ai: None,
         vectors: None,
+        vault: None,
+        key_validator: None,
     };
     let jwt = JwtKeys::from_config(&jwt_cfg);
     let app = warptalk_api::build_router(

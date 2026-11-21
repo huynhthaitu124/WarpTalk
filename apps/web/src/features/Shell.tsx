@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Check, ChevronsUpDown, DoorOpen, KeyRound, LogOut, Menu, Moon, Plus, Search, Settings, Sun, Video, X, Palette,
+  Cast, Check, ChevronsUpDown, DoorOpen, KeyRound, LogOut, Menu, Moon, Plus, Search, Settings, Sun, Video, X, Palette,
 } from 'lucide-react';
 import {
   Avatar, Brand, Button, CommandMenuProvider, Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator,
@@ -83,6 +83,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <SidebarNav>
         <SidebarLink to="/rooms" icon={<DoorOpen className="size-4" />}>Rooms</SidebarLink>
         <SidebarLink to="/meetings" icon={<Video className="size-4" />}>Meetings</SidebarLink>
+        <SidebarLink to="/external" icon={<Cast className="size-4" />}>External meeting</SidebarLink>
         <SidebarLink to="/join" icon={<KeyRound className="size-4" />}>Join by code</SidebarLink>
         <SidebarLink to="/settings" icon={<Settings className="size-4" />}>Settings</SidebarLink>
       </SidebarNav>
@@ -136,6 +137,7 @@ export function Shell() {
   const items = useMemo<CommandItem[]>(() => [
     { id: 'go-rooms', group: 'Navigate', label: 'Go to Rooms', icon: <DoorOpen className="size-4" />, shortcut: 'G R', run: () => navigate('/rooms') },
     { id: 'go-meetings', group: 'Navigate', label: 'Go to Meetings', icon: <Video className="size-4" />, run: () => navigate('/meetings') },
+    { id: 'go-external', group: 'Navigate', label: 'Go to External meeting', icon: <Cast className="size-4" />, run: () => navigate('/external') },
     { id: 'go-join', group: 'Navigate', label: 'Join a room by code', icon: <KeyRound className="size-4" />, run: () => navigate('/join') },
     { id: 'go-settings', group: 'Navigate', label: 'Go to Settings', icon: <Settings className="size-4" />, run: () => navigate('/settings') },
     { id: 'go-design', group: 'Navigate', label: 'Open design system', icon: <Palette className="size-4" />, run: () => navigate('/design') },

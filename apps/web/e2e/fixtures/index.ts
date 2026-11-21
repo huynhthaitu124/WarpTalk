@@ -4,6 +4,7 @@ import { createUser, createWorkspace, login, type Tokens, type TestUser, type Ws
 export { expect };
 export * from './api';
 export * from './db';
+export * from './native-mock';
 
 /**
  * Seeds the refresh token into localStorage once per tab (guarded by sessionStorage so a rotated

@@ -64,6 +64,19 @@ export const ROOM_STATUSES = [
 ] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
 
+export const bridgeState = z.object({
+  provider: z.string(),
+  meetingCode: z.string(),
+  joinUrl: z.string().nullable().optional(),
+  capturerUserId: uuid.nullable().optional(),
+  capturerLeaseAt: ts.nullable().optional(),
+  audioFlowing: z.boolean().nullable().optional(),
+  lastAudioAt: ts.nullable().optional(),
+  audioMode: z.string(),
+  epoch: z.number(),
+});
+export type BridgeState = z.infer<typeof bridgeState>;
+
 export const room = z.object({
   id: uuid,
   workspaceId: uuid,
@@ -82,6 +95,8 @@ export const room = z.object({
   createdAt: ts,
   translationActive: z.boolean(),
   roomType: z.string(),
+  /** Only on EXTERNAL_BRIDGE rooms. */
+  bridge: bridgeState.optional(),
 });
 export type Room = z.infer<typeof room>;
 
@@ -141,3 +156,19 @@ export type SettingsRead = z.infer<typeof settingsRead>;
 export const settingsWrite = z.object({ namespace: z.string(), version: z.number().optional() });
 
 export const errorBody = z.object({ code: z.string(), message: z.string() });
+
+export const claimResponse = room.extend({
+  created: z.boolean(),
+  bridgeRole: z.enum(['capturer', 'viewer']),
+  heartbeatIntervalSeconds: z.number(),
+  leaseSeconds: z.number(),
+});
+export type ClaimResponse = z.infer<typeof claimResponse>;
+
+/** Answer of bridge heartbeat / takeover / audio-mode: the bridge state flattened next to the room id. */
+export const bridgeStateResponse = bridgeState.extend({
+  roomId: uuid,
+  heartbeatIntervalSeconds: z.number(),
+  leaseSeconds: z.number(),
+});
+export type BridgeStateResponse = z.infer<typeof bridgeStateResponse>;

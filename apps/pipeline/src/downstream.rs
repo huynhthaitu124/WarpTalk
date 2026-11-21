@@ -525,12 +525,19 @@ struct Ingest {
 impl Ingest {
     async fn run(mut self, mut segments: mpsc::Receiver<SttSegment>) {
         loop {
+            // Wake when the oldest held turn reaches the watchdog, however busy other speakers are.
+            let deadline = self.held.values().map(|h| h.since + HOLD_WATCHDOG).min();
             let seg = tokio::select! {
                 s = segments.recv() => match s {
                     Some(s) => s,
                     None => break,
                 },
-                () = tokio::time::sleep(HOLD_WATCHDOG), if !self.held.is_empty() => {
+                () = async {
+                    match deadline {
+                        Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     self.flush_stale().await;
                     continue;
                 }

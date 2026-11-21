@@ -1,9 +1,10 @@
 use anyhow::{Context, bail};
 use tokio::sync::watch;
+use warptalk_ai_plane::ai::{AiProviders, PlatformKeys};
+use warptalk_ai_plane::byo_from_env;
+use warptalk_ai_plane::knowledge::build_vector_store;
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
-use warptalk_worker::ai::AiProviders;
-use warptalk_worker::knowledge::build_vector_store;
 use warptalk_worker::{
     build_ai_plane, build_settings, build_transcript_module, join_consumers, knowledge_consumers,
     spawn_consumers, spawn_suggestion,
@@ -47,16 +48,19 @@ async fn main() -> anyhow::Result<()> {
     let pool = warptalk_db::connect(&db.url, db.max_connections)
         .await
         .context("connecting to PostgreSQL")?;
-    let migrated: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = 'transcript')",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap_or(false);
-    if !migrated {
-        bail!(
-            "database is not migrated (no 'transcript' migrations found): run warptalk-migrator first"
-        );
+    for module in ["transcript", "assistant"] {
+        let migrated: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
+        )
+        .bind(module)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+        if !migrated {
+            bail!(
+                "database is not migrated (no '{module}' migrations found): run warptalk-migrator first"
+            );
+        }
     }
 
     let transcript = build_transcript_module(pool.clone(), &redis_cfg.url).await?;
@@ -65,7 +69,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to Redis")?;
     let settings = build_settings(pool.clone(), redis, &redis_cfg.url);
-    let ai = AiProviders::from_env(settings.clone());
+    let ai = AiProviders::with_byo(
+        settings.clone(),
+        PlatformKeys::from_env(),
+        byo_from_env(pool.clone()),
+    );
+    // Workspace AI config changes made through the API apply here without a restart.
+    let _ai_config_listener = ai.spawn_invalidation_listener(&redis_cfg.url);
     let plane = build_ai_plane(
         pool.clone(),
         &redis_cfg.url,

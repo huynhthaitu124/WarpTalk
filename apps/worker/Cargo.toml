@@ -24,6 +24,7 @@ warptalk-transcript = { workspace = true }
 warptalk-knowledge = { workspace = true }
 warptalk-assistant = { workspace = true }
 warptalk-llm = { workspace = true }
+warptalk-ai-plane = { workspace = true }
 warptalk-qdrant = { workspace = true }
 warptalk-settings = { workspace = true }
 redis = { workspace = true }

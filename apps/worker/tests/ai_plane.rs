@@ -7,6 +7,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::watch;
 use uuid::Uuid;
+use warptalk_ai_plane::ai::{AiProviders, PlatformKey, PlatformKeys};
+use warptalk_ai_plane::knowledge::{DenyDocumentAccess, ServiceRetriever};
 use warptalk_assistant::suggestion::{
     DataBoundary, KnowledgeQuery, KnowledgeRetriever, LlmResolver, Purpose, ResolveError,
 };
@@ -19,8 +21,6 @@ use warptalk_llm::{EmbeddingProvider, Embeddings, LlmError, ProviderId, Usage};
 use warptalk_qdrant::{InMemoryVectorStore, VectorStore};
 use warptalk_settings::{NS_RAG, Scope, SettingsStore};
 use warptalk_web::JwtKeys;
-use warptalk_worker::ai::{AiProviders, PlatformKey, PlatformKeys};
-use warptalk_worker::knowledge::{DenyDocumentAccess, ServiceRetriever};
 use warptalk_worker::{build_ai_plane, build_settings, join_consumers, spawn_suggestion};
 
 const DIMS: usize = 64;
