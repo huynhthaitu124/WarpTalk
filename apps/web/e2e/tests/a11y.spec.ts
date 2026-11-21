@@ -1,7 +1,12 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { call, joinByCode, createRoom, createUser, expect, ok, signedInContext, test, seedSession, login, createWorkspace } from '../fixtures';
+import { call, joinByCode, createRoom, createUser, expect, installNativeMock, ok, signedInContext, test, seedSession, login, createWorkspace } from '../fixtures';
 import { test as raw } from '@playwright/test';
+
+const randomMeetCode = () => {
+  const l = (n: number) => Array.from({ length: n }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('');
+  return `${l(3)}-${l(4)}-${l(3)}`;
+};
 
 async function setTheme(page: Page, theme: 'dark' | 'light') {
   await page.addInitScript((t) => { try { localStorage.setItem('wt.theme', t); } catch { /* ignore */ } }, theme);
@@ -108,6 +113,52 @@ test.describe('A11Y signed-in pages', () => {
     await app.goto('/meetings');
     await expect(app.getByRole('list', { name: 'Live meetings' })).toBeVisible();
     await scan(app, 'meetings');
+  });
+
+  test('A11Y-09 /external in a browser (no native host), dark + light', async ({ app }) => {
+    await app.goto('/external');
+    await expect(app.getByTestId('external-browser-fallback')).toBeVisible();
+    await scan(app, 'external browser dark');
+    await app.getByLabel('Meeting link').fill('https://meet.google.com/abc-defg-hij');
+    await expect(app.getByTestId('provider-badge')).toBeVisible();
+    await app.getByRole('button', { name: 'Toggle theme' }).click();
+    await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');
+    await scan(app, 'external browser light');
+    await app.getByLabel('Meeting link').fill('nonsense');
+    await expect(app.getByRole('alert').filter({ hasText: 'Not a recognised meeting code' })).toBeVisible();
+    await scan(app, 'external invalid link light');
+  });
+
+  test('A11Y-10 /external with native host: claimed room, capture error, permissions (dark + light)', async ({ app }) => {
+    await installNativeMock(app, {
+      permissions: { audioCapture: 'denied', screenRecording: 'notDetermined' },
+      startError: { code: 'PERMISSION_DENIED', message: 'Audio capture permission was denied' },
+      capabilities: { outputDevices: [{ uid: 'bh', name: 'BlackHole 2ch', isVirtual: true }] },
+    });
+    await app.goto('/external');
+    await app.getByLabel('Meeting link').fill(`https://meet.google.com/${randomMeetCode()}`);
+    await app.getByRole('button', { name: 'Claim meeting' }).click();
+    await expect(app.getByTestId('bridge-role')).toContainText('Capturer');
+    await app.getByRole('combobox', { name: 'Source app' }).click();
+    await app.getByRole('option', { name: /Google Chrome/ }).click();
+    await app.getByRole('button', { name: 'Start capture' }).click();
+    await expect(app.getByTestId('capture-error')).toBeVisible();
+    await expect(app.getByTestId('perm-audioCapture')).toHaveAttribute('data-state', 'denied');
+    await scan(app, 'external capture dark');
+    await app.getByRole('button', { name: 'Toggle theme' }).click();
+    await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');
+    await scan(app, 'external capture light');
+  });
+
+  test('A11Y-11 meeting page with the End meeting dialog open', async ({ app, tokens, workspace }) => {
+    const room = await createRoom(tokens.accessToken, workspace.id, { title: 'A11y end' });
+    await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
+    await app.goto(`/meetings/${room.id}`);
+    await expect(app.getByTestId('status-strip')).toBeVisible();
+    await scan(app, 'meeting with status strip');
+    await app.getByRole('button', { name: 'End meeting' }).click();
+    await expect(app.getByRole('dialog', { name: 'End meeting for everyone?' })).toBeVisible();
+    await scan(app, 'end meeting dialog');
   });
 
   test('A11Y-08 dialog and command menu', async ({ app }) => {

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test as raw } from '@playwright/test';
-import { call, createRoom, createWorkspace, expect, login, markEmailVerified, ok, rnd, seedSession } from '../fixtures';
+import { call, createRoom, createWorkspace, expect, installNativeMock, login, markEmailVerified, ok, rnd, seedSession } from '../fixtures';
 
 async function setTheme(page: Page, theme: 'dark' | 'light') {
   await page.addInitScript((t) => { try { localStorage.setItem('wt.theme', t); } catch { /* ignore */ } }, theme);
@@ -51,6 +51,30 @@ raw.describe('Visual regression', () => {
       await expect(page.getByRole('link', { name: 'Quarterly planning' })).toBeVisible();
       await settle(page);
       await expect(page).toHaveScreenshot(`rooms-${theme}.png`, { mask: [page.getByTestId('account-menu'), page.locator('code')] });
+    });
+  }
+
+  for (const theme of ['dark', 'light'] as const) {
+    raw(`VR-07 /external with native host (${theme})`, async ({ page }) => {
+      const s = await seededApp();
+      await seedSession(page, s.tokens);
+      await installNativeMock(page, { permissions: { screenRecording: 'notDetermined', audioCapture: 'denied' } });
+      await setTheme(page, theme);
+      await page.goto('/external');
+      await expect(page.getByTestId('native-connected')).toBeVisible();
+      await expect(page.getByTestId('perm-audioCapture')).toHaveAttribute('data-state', 'denied');
+      await settle(page);
+      await expect(page).toHaveScreenshot(`external-native-${theme}.png`, { mask: masks(page) });
+    });
+
+    raw(`VR-08 /external in a browser (${theme})`, async ({ page }) => {
+      const s = await seededApp();
+      await seedSession(page, s.tokens);
+      await setTheme(page, theme);
+      await page.goto('/external');
+      await expect(page.getByTestId('external-browser-fallback')).toBeVisible();
+      await settle(page);
+      await expect(page).toHaveScreenshot(`external-browser-${theme}.png`, { mask: masks(page) });
     });
   }
 
