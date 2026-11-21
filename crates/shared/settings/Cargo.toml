@@ -1,0 +1,10 @@
+[package]
+name = "warptalk-settings"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

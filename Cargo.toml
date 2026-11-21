@@ -42,6 +42,8 @@ rand = "0.8"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+url = "2"
 
 # internal crates
 warptalk-kernel = { path = "crates/shared/kernel" }
@@ -52,6 +54,17 @@ warptalk-bus = { path = "crates/shared/bus" }
 warptalk-db = { path = "crates/shared/db" }
 warptalk-storage = { path = "crates/shared/storage" }
 warptalk-web = { path = "crates/shared/web" }
+warptalk-settings = { path = "crates/shared/settings" }
+warptalk-audio = { path = "crates/pipeline/audio" }
+warptalk-ingress = { path = "crates/pipeline/ingress" }
+warptalk-stt = { path = "crates/pipeline/stt" }
+warptalk-mt = { path = "crates/pipeline/mt" }
+warptalk-tts = { path = "crates/pipeline/tts" }
+warptalk-pipeline-runtime = { path = "crates/pipeline/runtime" }
+warptalk-livekit = { path = "crates/providers/livekit" }
+warptalk-openai = { path = "crates/providers/openai" }
+warptalk-cartesia = { path = "crates/providers/cartesia" }
+warptalk-qdrant = { path = "crates/providers/qdrant" }
 warptalk-identity = { path = "crates/modules/identity" }
 warptalk-workspace = { path = "crates/modules/workspace" }
 warptalk-room = { path = "crates/modules/room" }
