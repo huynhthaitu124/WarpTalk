@@ -1,14 +1,16 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { WorkspaceProvider } from '@/lib/workspace';
+import { useWorkspace, WorkspaceProvider } from '@/lib/workspace';
 import { Skeleton } from '@/ui';
 import { Shell, SkipLink } from '@/features/Shell';
 import { LoginPage, RegisterPage, VerifyEmailPage } from '@/features/Auth';
-import { RoomsPage } from '@/features/Rooms';
 import { RoomDetailPage } from '@/features/RoomDetail';
 import { JoinByCodePage } from '@/features/Join';
 import { MeetingsPage } from '@/features/Meetings';
+import { HomePage } from '@/features/Home';
+import { MembersPage } from '@/features/Members';
+import { KnowledgePage } from '@/features/Knowledge';
 import { MeetingPage } from '@/features/Meeting';
 import { ExternalPage } from '@/features/External';
 import { SettingsPage } from '@/features/Settings';
@@ -28,6 +30,15 @@ function Protected() {
   );
 }
 
+/** Old unprefixed list URLs (`/rooms`, `/meetings`, `/settings`, `/`) forward to the current workspace, keeping the query. */
+function ToWorkspace({ to }: { to: string }) {
+  const { current, loading, wsPath } = useWorkspace();
+  const loc = useLocation();
+  if (loading) return <div className="p-8"><Skeleton className="h-8 w-48" /></div>;
+  if (!current) return <Navigate to={`/workspaces${loc.search}`} replace />;
+  return <Navigate to={`${wsPath(to)}${loc.search}`} replace />;
+}
+
 export function App() {
   return (
     <>
@@ -39,15 +50,23 @@ export function App() {
         <Route path="/design" element={<Suspense fallback={null}><DesignPage /></Suspense>} />
         <Route element={<Protected />}>
           <Route element={<Shell />}>
-            <Route index element={<Navigate to="/rooms" replace />} />
-            <Route path="/rooms" element={<RoomsPage />} />
+            <Route index element={<ToWorkspace to="/home" />} />
+            {/* Workspace pages live under /:workspaceSlug (shareable links). */}
+            <Route path="/:workspaceSlug/home" element={<HomePage />} />
+            <Route path="/:workspaceSlug/meetings" element={<MeetingsPage />} />
+            <Route path="/:workspaceSlug/members" element={<MembersPage />} />
+            <Route path="/:workspaceSlug/knowledge" element={<KnowledgePage />} />
+            <Route path="/:workspaceSlug/settings" element={<SettingsPage />} />
+            <Route path="/:workspaceSlug/settings/:section" element={<SettingsPage />} />
+            {/* Id-addressed pages, valid for people who are not in the room's workspace. */}
+            <Route path="/rooms" element={<ToWorkspace to="/meetings" />} />
             <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
             <Route path="/join" element={<JoinByCodePage />} />
-            <Route path="/meetings" element={<MeetingsPage />} />
+            <Route path="/meetings" element={<ToWorkspace to="/meetings" />} />
             <Route path="/meetings/:roomId" element={<MeetingPage />} />
             <Route path="/external" element={<ExternalPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<ToWorkspace to="/settings" />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

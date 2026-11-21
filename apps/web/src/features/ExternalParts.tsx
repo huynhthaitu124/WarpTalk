@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { AppWindow, Download, MonitorSmartphone, ShieldCheck } from 'lucide-react';
+import { AppWindow, DownloadSimple as Download, Desktop as MonitorSmartphone, ShieldCheck } from '@phosphor-icons/react';
 import { Badge, Button, Card, CardBody, CardHeader } from '@/ui';
 import { cn } from '@/lib/cn';
 import type { NativeError, PermissionKind, PermissionState, Permissions } from '@/lib/native';
@@ -37,7 +37,7 @@ export function BrowserFallback() {
           <div>
             <h3 className="text-body font-semibold text-ink">Get the macOS app</h3>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-body-sm text-ink-subtle">
-              <li>Install WarpTalk for macOS 14.2 or later.</li>
+              <li>Install WarpTalk for macOS 14.2 or later (the desktop app is macOS-only for now).</li>
               <li>Open the app and sign in with this account.</li>
               <li>Open External meeting inside the app and grant the audio permission when macOS asks.</li>
             </ol>

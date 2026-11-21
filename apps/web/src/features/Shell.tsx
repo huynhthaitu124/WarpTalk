@@ -85,7 +85,7 @@ function AccountMenu() {
 const ico = (I: typeof House) => <I weight="duotone" size={16} />;
 
 function Sidebar() {
-  const { current, workspaces, loading, wsPath } = useWorkspace();
+  const { workspaces, loading, wsPath } = useWorkspace();
   const { userId } = useAuth();
   const pending = usePendingInvitations(userId);
   const guest = !loading && workspaces.length === 0;

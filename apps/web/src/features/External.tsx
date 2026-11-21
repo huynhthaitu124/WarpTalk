@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Cast, Mic, Play, RefreshCw, Square, Users } from 'lucide-react';
+import { Broadcast as Cast, Microphone as Mic, Play, ArrowsClockwise as RefreshCw, Stop as Square, Users } from '@phosphor-icons/react';
 import {
   Alert, Badge, Button, EmptyState, Field, Input, PageHeader, Select, StatusPill, Switch, useToast,
 } from '@/ui';
@@ -354,7 +354,7 @@ export function ExternalPage() {
     <>
       <PageHeader
         title="External meeting"
-        description="Translate a Google Meet, Zoom or Microsoft Teams call by listening to its audio on this Mac."
+        description={native ? 'Translate a Google Meet, Zoom or Microsoft Teams call by listening to its audio on this Mac.' : 'Translate a Google Meet, Zoom or Microsoft Teams call by listening to its audio with the WarpTalk desktop app.'}
         actions={native && caps ? <NativeBadge text={`Desktop app · macOS ${caps.osVersion}`} /> : undefined}
       />
 

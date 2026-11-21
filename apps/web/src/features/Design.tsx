@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { DoorOpen, Inbox, Plus, Settings, Video, Moon, Sun, Search } from 'lucide-react';
+import { House, Tray, Plus, GearSix, SquaresFour, Moon, Sun, MagnifyingGlass } from '@phosphor-icons/react';
 import {
   Alert, Avatar, Badge, Brand, Button, Card, CardBody, CardHeader, Checkbox, CommandMenuProvider, Dialog, DialogContent, DialogTrigger,
   Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator, DropdownTrigger, EmptyState, Field, Input, Kbd, ListRow,
@@ -9,7 +9,7 @@ import {
 import { useTheme } from '@/lib/theme';
 
 const SURFACES = ['canvas', 'panel', 'surface-1', 'surface-2', 'surface-3', 'surface-4'];
-const LINES = ['hairline', 'hairline-strong', 'hairline-tertiary'];
+const LINES = ['hairline', 'hairline-strong', 'hairline-tertiary', 'control-border'];
 const INKS = ['ink', 'ink-muted', 'ink-subtle', 'ink-tertiary'];
 const BRAND = ['primary', 'primary-hover', 'primary-pressed', 'link', 'focus'];
 const SEMANTIC = ['success', 'warning', 'danger', 'info'];
@@ -58,7 +58,7 @@ function Demos() {
         <h3 className="text-body font-medium">Surface ladder</h3>
         <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">{SURFACES.map((n) => <Swatch key={n} name={n} />)}</div>
         <h3 className="text-body font-medium">Hairlines</h3>
-        <div className="grid grid-cols-3 gap-4">{LINES.map((n) => <Swatch key={n} name={n} />)}</div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">{LINES.map((n) => <Swatch key={n} name={n} />)}</div>
         <h3 className="text-body font-medium">Ink</h3>
         <div className="grid grid-cols-4 gap-4">{INKS.map((n) => <Swatch key={n} name={n} />)}</div>
         <h3 className="text-body font-medium">Primary (lavender)</h3>
@@ -104,6 +104,7 @@ function Demos() {
           <Button variant="secondary">Secondary</Button>
           <Button variant="ghost">Ghost</Button>
           <Button variant="danger">Danger</Button>
+          <Button variant="danger-soft">Danger soft</Button>
           <Button variant="primary" loading>Loading</Button>
           <Button variant="secondary" disabled>Disabled</Button>
         </div>
@@ -111,7 +112,7 @@ function Demos() {
           <Button variant="primary" size="sm">Small</Button>
           <Button variant="primary" size="md">Medium</Button>
           <Button variant="primary" size="lg">Large</Button>
-          <Button variant="secondary" size="icon" aria-label="Add item"><Plus className="size-4" aria-hidden /></Button>
+          <Button variant="secondary" size="icon" aria-label="Add item"><Plus size={16} aria-hidden /></Button>
         </div>
       </Section>
 
@@ -167,13 +168,13 @@ function Demos() {
             <DropdownTrigger asChild><Button>Open menu</Button></DropdownTrigger>
             <DropdownContent>
               <DropdownLabel>Actions</DropdownLabel>
-              <DropdownItem icon={<Plus className="size-4" />} shortcut="C">New room</DropdownItem>
-              <DropdownItem icon={<Settings className="size-4" />}>Settings</DropdownItem>
+              <DropdownItem icon={<Plus size={16} />} shortcut="C">New meeting</DropdownItem>
+              <DropdownItem icon={<GearSix size={16} />}>Settings</DropdownItem>
               <DropdownSeparator />
               <DropdownItem danger>Delete</DropdownItem>
             </DropdownContent>
           </Dropdown>
-          <Button onClick={() => setOpen(true)}><Search className="size-4" aria-hidden />Command menu <Kbd>⌘K</Kbd></Button>
+          <Button onClick={() => setOpen(true)}><MagnifyingGlass size={16} aria-hidden />Command menu <Kbd>⌘K</Kbd></Button>
           <Tooltip content="Tooltip text"><Button variant="ghost">Hover me</Button></Tooltip>
           <Button onClick={() => toast({ tone: 'success', title: 'Saved', description: 'Toast message' })}>Show toast</Button>
         </div>
@@ -188,9 +189,9 @@ function Demos() {
         </Tabs>
         <div className="w-60 rounded-lg border border-hairline bg-canvas p-3">
             <SidebarNav label="Sidebar sample">
-              <SidebarLink to="/design#rooms" active icon={<DoorOpen className="size-4" />}>Rooms</SidebarLink>
-              <SidebarLink to="/design#meetings" icon={<Video className="size-4" />}>Meetings</SidebarLink>
-              <SidebarLink to="/design#settings" icon={<Settings className="size-4" />}>Settings</SidebarLink>
+              <SidebarLink to="/design#rooms" active icon={<House weight="duotone" size={16} />}>Home</SidebarLink>
+              <SidebarLink to="/design#meetings" icon={<SquaresFour weight="duotone" size={16} />}>Meetings</SidebarLink>
+              <SidebarLink to="/design#settings" icon={<GearSix weight="duotone" size={16} />}>Settings</SidebarLink>
             </SidebarNav>
         </div>
       </Section>
@@ -208,7 +209,7 @@ function Demos() {
             <div className="flex items-center gap-2"><Avatar name="Ada Lovelace" size="sm" /><Avatar name="Grace Hopper" /><Avatar name="Linus T" size="lg" /><Kbd>⌘</Kbd><Kbd>K</Kbd></div>
           </div>
         </div>
-        <EmptyState icon={<Inbox className="size-5" />} title="Nothing here yet" description="Empty states explain what belongs here and offer the next step." action={<Button variant="primary">Create something</Button>} />
+        <EmptyState icon={<Tray size={20} weight="duotone" />} title="Nothing here yet" description="Empty states explain what belongs here and offer the next step." action={<Button variant="primary">Create something</Button>} />
       </Section>
     </div>
   );
@@ -217,12 +218,12 @@ function Demos() {
 export function DesignPage() {
   const { theme, toggle } = useTheme();
   return (
-    <CommandMenuProvider items={[{ id: 'a', group: 'Navigate', label: 'Go to Rooms', run: () => undefined }, { id: 'b', group: 'Actions', label: 'Create room', run: () => undefined }]}>
+    <CommandMenuProvider items={[{ id: 'a', group: 'Navigate', label: 'Go to Meetings', run: () => undefined }, { id: 'b', group: 'Actions', label: 'Create meeting', run: () => undefined }]}>
       <div className="min-h-dvh bg-panel">
         <header className="sticky top-0 z-30 flex h-12 items-center justify-between border-b border-hairline bg-canvas px-6">
           <Brand />
           <span className="text-body text-ink-subtle">Design system</span>
-          <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>{theme === 'dark' ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}</Button>
+          <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>{theme === 'dark' ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}</Button>
         </header>
         <main id="main" className="mx-auto max-w-5xl px-6 py-10 max-sm:px-4">
           <h1 className="mb-2 text-display-md font-semibold tracking-[-1px]">Design system</h1>

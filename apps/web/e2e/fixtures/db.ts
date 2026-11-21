@@ -1,8 +1,9 @@
 // TEST-ONLY database helpers.
-// The API never returns or e-mails the verification token (it logs the token length only), so the
-// E2E suite marks users as verified straight in Postgres. This bypass exists ONLY in e2e fixtures;
-// the application code has no such path. It also seeds MEMBER rows because the backend has no
-// invite-member endpoint yet.
+// Email verification no longer touches Postgres: fixtures read the raw token from the dev mail
+// capture in Redis (see api.ts `verifyEmail`). What is left here is for state with no public API:
+//  - `expireBridgeLease`: age the capturer lease (the real lease is 45s).
+//  - `addWorkspaceMember`: DEPRECATED direct insert kept for specs that have not moved to
+//    `inviteAndAccept` (api.ts), which uses the real invitation endpoints.
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
@@ -26,13 +27,6 @@ const assertEmail = (v: string) => {
   if (!/^[\w.+-]+@[\w.-]+$/.test(v)) throw new Error(`unsafe email: ${v}`);
   return v;
 };
-
-export function markEmailVerified(email: string) {
-  const n = psql(
-    `UPDATE auth.users SET email_verified = true, email_verified_at = now() WHERE email = '${assertEmail(email.toLowerCase())}' RETURNING 1`,
-  );
-  if (n !== '1') throw new Error(`user not found for verification: ${email}`);
-}
 
 const MEMBER_ROLE = '00000000-0000-7000-8000-000000000003';
 export function addWorkspaceMember(workspaceId: string, userId: string) {

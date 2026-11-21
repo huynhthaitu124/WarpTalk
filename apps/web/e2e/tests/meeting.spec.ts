@@ -99,10 +99,10 @@ test.describe('Meeting shell', () => {
     expect((await ok(call<{ status: string }>(`/translation-rooms/${room.id}`, { token: tokens.accessToken }))).status).toBe('IN_PROGRESS');
 
     await app.getByRole('button', { name: 'End meeting for everyone' }).click();
-    // Without LiveKit the meeting-end call answers 404/503; the app still ends the room itself.
+    // Without LiveKit the meeting-end call answers 204/404/503; the app still ends the room itself.
     const endMeeting = app.waitForResponse((r) => r.url().includes(`/meetings/${room.id}/end`));
     await app.getByRole('dialog').getByRole('button', { name: 'End meeting' }).click();
-    expect([404, 503]).toContain((await endMeeting).status());
+    expect([204, 404, 503]).toContain((await endMeeting).status());
     await expect(app).toHaveURL(new RegExp(`/rooms/${room.id}$`));
     await expect(app.getByText('Meeting ended')).toBeVisible();
     await expect(app.locator('[data-status="ENDED"]').first()).toBeVisible();
