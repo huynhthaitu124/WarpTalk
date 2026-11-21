@@ -70,7 +70,7 @@ test.describe('Meeting shell', () => {
     const ended = await createRoom(tokens.accessToken, workspace.id, { title: 'Done one' });
     await ok(call(`/translation-rooms/${ended.id}/end`, { token: tokens.accessToken, method: 'POST' }));
     await app.goto('/meetings');
-    const list = app.getByRole('list', { name: 'Live meetings' });
+    const list = app.getByRole('list', { name: 'Meetings' });
     await expect(list.getByText('Live one')).toBeVisible();
     await expect(list.getByText('Done one')).toHaveCount(0);
     await app.getByRole('link', { name: 'Open meeting Live one' }).click();
