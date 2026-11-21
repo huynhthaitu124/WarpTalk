@@ -80,10 +80,11 @@ test.describe('Keyboard (signed in)', () => {
     await app.keyboard.press('Enter');
     await expect(app.getByRole('menu')).toBeVisible();
     // Items: [ws..., Create workspace]; walk until the target is focused, then select it.
-    for (let i = 0; i < 4; i++) {
-      await app.keyboard.press('ArrowDown');
+    // (The menu may open with the first item already focused, so check before each ArrowDown.)
+    for (let i = 0; i < 5; i++) {
       const focused = await app.evaluate(() => document.activeElement?.textContent?.trim());
       if (focused === other.name) break;
+      await app.keyboard.press('ArrowDown');
     }
     await app.keyboard.press('Enter');
     await expect(current).toHaveText(other.name);
