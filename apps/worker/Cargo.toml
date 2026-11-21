@@ -8,3 +8,16 @@ publish = false
 workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+warptalk-kernel = { workspace = true }
+warptalk-config = { workspace = true }
+warptalk-telemetry = { workspace = true }
+warptalk-db = { workspace = true }
+warptalk-bus = { workspace = true }
+warptalk-web = { workspace = true }
+warptalk-transcript = { workspace = true }

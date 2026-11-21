@@ -3006,6 +3006,7 @@ dependencies = [
  "warptalk-room",
  "warptalk-settings",
  "warptalk-telemetry",
+ "warptalk-transcript",
  "warptalk-workspace",
 ]
 
@@ -3177,6 +3178,21 @@ dependencies = [
 [[package]]
 name = "warptalk-worker"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+ "warptalk-bus",
+ "warptalk-config",
+ "warptalk-db",
+ "warptalk-kernel",
+ "warptalk-telemetry",
+ "warptalk-transcript",
+ "warptalk-web",
+]
 
 [[package]]
 name = "warptalk-workspace"

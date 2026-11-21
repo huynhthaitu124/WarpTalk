@@ -152,7 +152,9 @@ impl TranscriptService {
             .await?
             .ok_or_else(|| AppError::not_found("room not found"))?;
         if host != user {
-            return Err(AppError::forbidden("only the host can finalize the transcript"));
+            return Err(AppError::forbidden(
+                "only the host can finalize the transcript",
+            ));
         }
         match transcript.status.finalize()? {
             FinalizeAction::AlreadyDone => Ok(()),

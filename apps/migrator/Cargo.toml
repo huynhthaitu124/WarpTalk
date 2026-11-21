@@ -19,3 +19,4 @@ warptalk-workspace = { workspace = true }
 warptalk-room = { workspace = true }
 warptalk-settings = { workspace = true }
 warptalk-meeting = { workspace = true }
+warptalk-transcript = { workspace = true }

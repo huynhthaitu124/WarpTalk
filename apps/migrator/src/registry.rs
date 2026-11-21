@@ -12,5 +12,6 @@ pub fn registry() -> Vec<ModuleMigrations> {
         warptalk_workspace::MIGRATIONS,
         warptalk_room::MIGRATIONS,
         warptalk_meeting::MIGRATIONS,
+        warptalk_transcript::MIGRATIONS,
     ]
 }

@@ -219,7 +219,12 @@ impl IngestService {
                 chunks_json: serde_json::Value::Array(vec![chunk]).to_string(),
                 external_llm_allowed: external,
                 ai_retrieval_allowed: true,
-                retention_state: if transcript.is_current { "active" } else { "inactive" }.into(),
+                retention_state: if transcript.is_current {
+                    "active"
+                } else {
+                    "inactive"
+                }
+                .into(),
                 deletion_state: "active".into(),
                 timestamp_ms: self.clock.now().timestamp_millis(),
             };
@@ -249,7 +254,11 @@ impl IngestService {
             return Ok(Some(found));
         }
         if let Some(room) = room
-            && self.pause.was_skipped(room, segment_id).await.unwrap_or(false)
+            && self
+                .pause
+                .was_skipped(room, segment_id)
+                .await
+                .unwrap_or(false)
         {
             return Ok(None);
         }
