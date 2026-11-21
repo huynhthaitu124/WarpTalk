@@ -175,20 +175,6 @@ impl MeetingService {
         })
     }
 
-    /// Load the live session and require `user` to be its host.
-    async fn host_session(&self, user: UserId, room: RoomId) -> AppResult<MeetingRoom> {
-        let info = self.room_info(room).await?;
-        let meeting = self
-            .repo
-            .find_current(room)
-            .await?
-            .ok_or_else(|| AppError::not_found("meeting has not started"))?;
-        if !Self::is_host(&info, Some(&meeting), user) {
-            return Err(AppError::forbidden("only the host can do this"));
-        }
-        Ok(meeting)
-    }
-
     /// Spec: 11 §3.1 `bridge-token` (publish-only seat). Room must be EXTERNAL_BRIDGE (409
     /// `NOT_BRIDGE_ROOM`); caller must be the current non-stale capturer, or the host while the
     /// room has no capturer (403 `NOT_CAPTURER`).
@@ -251,10 +237,57 @@ impl MeetingService {
         })
     }
 
+    fn livekit_configured(&self) -> bool {
+        !self.livekit.url.is_empty() && !self.livekit.api_key.is_empty()
+    }
+
+    async fn publish_end(
+        &self,
+        info: &RoomInfo,
+        room: RoomId,
+        room_name: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let base = json!({
+            "translation_room_id": room,
+            "workspace_id": info.workspace_id,
+            "room_name": room_name,
+            "ended_at": now,
+        });
+        for event_type in [EVENT_END_ROOM, EVENT_BILLING_STOP] {
+            self.events
+                .publish(MeetingEvent {
+                    event_type,
+                    payload: base.clone(),
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Spec: 11 §4.3 (host check, DeleteRoom first, single winner marks FINISHED and publishes).
+    ///
+    /// Also succeeds when no meeting session exists yet or LiveKit is not configured: the
+    /// translation room is then ended through the [`RoomDirectory`] port.
     pub async fn end(&self, user: UserId, room: RoomId) -> AppResult<()> {
-        let meeting = self.host_session(user, room).await?;
         let info = self.room_info(room).await?;
+        let meeting = self.repo.find_current(room).await?;
+        if !Self::is_host(&info, meeting.as_ref(), user) {
+            return Err(AppError::forbidden("only the host can do this"));
+        }
+        let Some(meeting) = meeting else {
+            // Nobody ever joined the media room: nothing to delete, just close the room.
+            if is_ended_status(&info.status) {
+                return Ok(());
+            }
+            self.rooms.end_room(room, user).await?;
+            return self
+                .publish_end(&info, room, &room.to_string(), self.clock.now())
+                .await;
+        };
+        if !self.livekit_configured() {
+            self.rooms.end_room(room, user).await?;
+        }
         match self
             .room_service
             .delete_room(&meeting.provider_room_name)
@@ -268,24 +301,15 @@ impl MeetingService {
         if !self.repo.try_mark_finished(meeting.id, now).await? {
             return Ok(()); // already finished by another call: idempotent
         }
-        let base = json!({
-            "translation_room_id": room,
-            "workspace_id": info.workspace_id,
-            "room_name": meeting.provider_room_name,
-            "ended_at": now,
-        });
-        for event_type in [EVENT_END_ROOM, EVENT_BILLING_STOP] {
-            let ev = MeetingEvent {
-                event_type,
-                payload: base.clone(),
-            };
-            if let Err(e) = self.events.publish(ev).await {
-                // Let the host retry: reopen so the next End wins again (DeleteRoom is idempotent).
-                if let Err(re) = self.repo.reopen(meeting.id, self.clock.now()).await {
-                    tracing::error!(error = %re, "failed to reopen meeting after publish failure");
-                }
-                return Err(e);
+        if let Err(e) = self
+            .publish_end(&info, room, &meeting.provider_room_name, now)
+            .await
+        {
+            // Let the host retry: reopen so the next End wins again (DeleteRoom is idempotent).
+            if let Err(re) = self.repo.reopen(meeting.id, self.clock.now()).await {
+                tracing::error!(error = %re, "failed to reopen meeting after publish failure");
             }
+            return Err(e);
         }
         Ok(())
     }

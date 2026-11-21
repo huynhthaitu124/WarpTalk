@@ -9,7 +9,7 @@ pub use bridge::{
     ROOM_TYPE_EXTERNAL_BRIDGE, RoomType, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID,
     normalize_meeting_ref,
 };
-pub use routes::{ExistingRoute, NewRoute, RoutePlan, RouteSpeaker, plan_routes};
+pub use routes::{ExistingRoute, LISTEN_ONLY, NewRoute, RoutePlan, RouteSpeaker, plan_routes};
 pub use status::{DomainError, RoomAction, RoomStatus, transition};
 
 use rand::Rng;

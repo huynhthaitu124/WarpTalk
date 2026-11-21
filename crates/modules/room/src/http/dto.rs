@@ -92,11 +92,17 @@ pub struct BridgeDto {
     pub last_audio_at: Option<DateTime<Utc>>,
     pub audio_mode: &'static str,
     pub epoch: i32,
+    /// Server-computed end of the capturer lease (`capturerLeaseAt + leaseSeconds`); `null`
+    /// without capturer. Compare with `serverTime`, not the client clock.
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    pub server_time: DateTime<Utc>,
 }
 
-impl From<BridgeState> for BridgeDto {
-    fn from(b: BridgeState) -> Self {
+impl BridgeDto {
+    pub fn new(b: BridgeState, cfg: &BridgeConfig, now: DateTime<Utc>) -> Self {
         Self {
+            lease_expires_at: b.lease.expires_at(cfg),
+            server_time: now,
             provider: b.provider.as_str(),
             meeting_code: b.meeting_code,
             join_url: b.join_url,
@@ -110,8 +116,8 @@ impl From<BridgeState> for BridgeDto {
     }
 }
 
-impl From<RoomRecord> for RoomDto {
-    fn from(r: RoomRecord) -> Self {
+impl RoomDto {
+    pub fn new(r: RoomRecord, cfg: &BridgeConfig, now: DateTime<Utc>) -> Self {
         Self {
             effective_host_id: r.effective_host(),
             id: r.id,
@@ -130,7 +136,7 @@ impl From<RoomRecord> for RoomDto {
             created_at: r.created_at,
             translation_active: r.translation_active,
             room_type: r.room_type.as_str(),
-            bridge: r.bridge.map(Into::into),
+            bridge: r.bridge.map(|b| BridgeDto::new(b, cfg, now)),
         }
     }
 }
@@ -146,6 +152,8 @@ pub struct ClaimBridgeRequest {
     pub display_name: Option<String>,
     pub source_language: String,
     pub target_languages: Vec<String>,
+    /// Caption language when joining as listener (default: first target language).
+    pub listen_language: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -171,12 +179,17 @@ pub struct ClaimBridgeResponse {
     pub bridge_role: &'static str,
     pub heartbeat_interval_seconds: u64,
     pub lease_seconds: u64,
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    pub server_time: DateTime<Utc>,
 }
 
 impl ClaimBridgeResponse {
-    pub fn new(o: ClaimOutcome, cfg: BridgeConfig) -> Self {
+    pub fn new(o: ClaimOutcome, cfg: BridgeConfig, now: DateTime<Utc>) -> Self {
+        let room = RoomDto::new(o.room, &cfg, now);
         Self {
-            room: o.room.into(),
+            lease_expires_at: room.bridge.as_ref().and_then(|b| b.lease_expires_at),
+            server_time: now,
+            room,
             created: o.created,
             bridge_role: if o.is_capturer { "capturer" } else { "viewer" },
             heartbeat_interval_seconds: cfg.heartbeat_interval.as_secs(),
@@ -197,10 +210,10 @@ pub struct BridgeStateResponse {
 }
 
 impl BridgeStateResponse {
-    pub fn new(r: RoomRecord, cfg: BridgeConfig) -> Option<Self> {
+    pub fn new(r: RoomRecord, cfg: BridgeConfig, now: DateTime<Utc>) -> Option<Self> {
         Some(Self {
             room_id: r.id,
-            bridge: r.bridge?.into(),
+            bridge: BridgeDto::new(r.bridge?, &cfg, now),
             heartbeat_interval_seconds: cfg.heartbeat_interval.as_secs(),
             lease_seconds: cfg.stale_after.as_secs(),
         })

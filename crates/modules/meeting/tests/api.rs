@@ -44,6 +44,10 @@ fn lk_cfg(secret: &str) -> LiveKitConfig {
 }
 
 async fn ctx() -> Option<Ctx> {
+    ctx_with(lk_cfg(SECRET)).await
+}
+
+async fn ctx_with(cfg: LiveKitConfig) -> Option<Ctx> {
     let Ok(db) = std::env::var("DATABASE_URL") else {
         println!("DATABASE_URL unset; skipping");
         return None;
@@ -63,7 +67,6 @@ async fn ctx() -> Option<Ctx> {
     let lk = Arc::new(InMemoryRoomService::default());
     let events = Arc::new(InMemoryMeetingEventPublisher::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let cfg = lk_cfg(SECRET);
     let module = MeetingModule::new(MeetingDeps {
         pool: pool.clone(),
         jwt: keys.clone(),
@@ -345,10 +348,6 @@ async fn end_requires_host_and_publishes_once() {
     let join = format!("/meetings/{room}/join");
     let end = format!("/meetings/{room}/end");
 
-    // Not started yet.
-    let (st, _) = c.post(&end, host).await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
-
     assert_eq!(c.post(&join, guest).await.0, StatusCode::OK);
     let (st, body) = c.post(&end, guest).await;
     assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
@@ -523,4 +522,102 @@ async fn join_requires_auth() {
         )
         .await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn end_without_meeting_row_ends_room_through_directory() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    let guest = UserId::new();
+    c.dir.set_participant(room, guest, "CONNECTED", "G");
+    let end = format!("/meetings/{room}/end");
+
+    // Only the host may end, even before any session exists.
+    assert_eq!(c.post(&end, guest).await.0, StatusCode::FORBIDDEN);
+    assert!(c.dir.ended_rooms().is_empty());
+
+    assert_eq!(c.post(&end, host).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(c.dir.ended_rooms(), vec![(room, host)]);
+    let types: Vec<_> = c.events.events().iter().map(|e| e.event_type).collect();
+    assert_eq!(types, vec![EVENT_END_ROOM, EVENT_BILLING_STOP]);
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM meeting.meeting_rooms WHERE translation_room_id = $1")
+            .bind(room.as_uuid())
+            .fetch_one(&c.pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 0);
+
+    // Repeat End: room already ended, nothing more happens.
+    assert_eq!(c.post(&end, host).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(c.dir.ended_rooms().len(), 1);
+    assert_eq!(c.events.events().len(), 2);
+}
+
+#[tokio::test]
+async fn end_works_when_livekit_is_not_configured() {
+    let Some(c) = ctx_with(LiveKitConfig {
+        url: String::new(),
+        api_key: String::new(),
+        api_secret: String::new(),
+    })
+    .await
+    else {
+        return;
+    };
+    // No session yet.
+    let (room, host) = c.room("WAITING");
+    let end = format!("/meetings/{room}/end");
+    assert_eq!(c.post(&end, host).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(c.dir.ended_rooms(), vec![(room, host)]);
+    assert_eq!(c.events.events().len(), 2);
+    assert!(c.lk.calls().is_empty());
+
+    // A session row exists (e.g. created while LiveKit was configured): the room is still ended.
+    let (room2, host2) = c.room("IN_PROGRESS");
+    sqlx::query(
+        "INSERT INTO meeting.meeting_rooms (id, translation_room_id, provider_room_name, status, \
+         active_host_id, is_current, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'ACTIVE', $4, true, now(), now())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(room2.as_uuid())
+    .bind(room2.to_string())
+    .bind(host2.as_uuid())
+    .execute(&c.pool)
+    .await
+    .unwrap();
+    let end2 = format!("/meetings/{room2}/end");
+    assert_eq!(c.post(&end2, host2).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(c.dir.ended_rooms().len(), 2);
+    assert_eq!(c.events.events().len(), 4);
+}
+
+#[tokio::test]
+async fn invalid_json_body_is_a_json_error() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    let token = c
+        .keys
+        .issue_access(host, Uuid::new_v4(), false, Utc::now())
+        .unwrap()
+        .0;
+    let (st, v) = c
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/meetings/{room}/join"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["code"], "INVALID_REQUEST", "{v}");
+    assert!(v["message"].as_str().is_some_and(|m| !m.is_empty()));
+
+    let (st, v) = c.post("/meetings/not-a-uuid/end", host).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["code"], "INVALID_REQUEST", "{v}");
 }

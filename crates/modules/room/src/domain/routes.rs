@@ -5,6 +5,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use warptalk_kernel::ParticipantId;
 
+/// `speak_language` of a listen-only participant (e.g. a bridge viewer): never a route source.
+pub const LISTEN_ONLY: &str = "none";
+
 /// A CONNECTED participant as seen by the planner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteSpeaker {
@@ -55,7 +58,10 @@ pub fn plan_routes(participants: &[RouteSpeaker], existing: &[ExistingRoute]) ->
     let mut wanted: HashMap<(ParticipantId, ParticipantId), NewRoute> = HashMap::new();
     for s in participants {
         for l in participants {
-            if s.id == l.id || s.speak_language == l.listen_language {
+            if s.id == l.id
+                || s.speak_language == LISTEN_ONLY
+                || s.speak_language == l.listen_language
+            {
                 continue;
             }
             wanted.insert(
@@ -95,6 +101,16 @@ pub fn plan_routes(participants: &[RouteSpeaker], existing: &[ExistingRoute]) ->
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listen_only_participants_are_never_a_route_source() {
+        let standin = sp("vi", "vi", false);
+        let viewer = sp(LISTEN_ONLY, "en", false);
+        let plan = plan_routes(&[standin.clone(), viewer.clone()], &[]);
+        assert_eq!(plan.add.len(), 1);
+        assert_eq!(plan.add[0].source, standin.id);
+        assert_eq!(plan.add[0].target, viewer.id);
+    }
 
     fn sp(speak: &str, listen: &str, clone: bool) -> RouteSpeaker {
         RouteSpeaker {

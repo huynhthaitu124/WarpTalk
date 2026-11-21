@@ -23,8 +23,9 @@ use crate::application::ports::{
 };
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
-    ExistingRoute, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction, RoomStatus, RoomType,
-    RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes, room_languages,
+    ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction,
+    RoomStatus, RoomType, RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes,
+    room_languages,
 };
 
 /// Name of the partial unique index "one open bridge room per workspace + provider + meeting".
@@ -591,6 +592,87 @@ async fn refresh_lease(conn: &mut PgConnection, room: RoomId, now: DateTime<Utc>
     Ok(())
 }
 
+/// Make `user` a CONNECTED listen-only participant of a bridge room (idempotent). Hosts keep
+/// their role and status; kicked/rejected users are left alone. Returns whether routes may have
+/// changed.
+async fn ensure_bridge_listener(
+    conn: &mut PgConnection,
+    room: &RoomRecord,
+    user: UserId,
+    display_name: Option<&str>,
+    listen: Option<&str>,
+    now: DateTime<Utc>,
+) -> AppResult<bool> {
+    let langs = room_languages(&room.source_language, &room.target_languages);
+    if let Some(l) = listen
+        && !langs.iter().any(|x| x == l)
+    {
+        return Err(AppError::validation(
+            "LANGUAGE_NOT_IN_ROOM",
+            "listenLanguage must be a language of the room",
+        ));
+    }
+    let name = display_name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| n.chars().take(100).collect::<String>());
+    match participant_by_user(&mut *conn, room.id, user).await? {
+        Some(p)
+            if matches!(
+                p.status,
+                ParticipantStatus::Kicked | ParticipantStatus::Rejected
+            ) =>
+        {
+            Ok(false)
+        }
+        Some(p) => {
+            let reconnect = !p.is_host && p.status != ParticipantStatus::Connected;
+            if !reconnect && listen.is_none_or(|l| l == p.listen_language) {
+                return Ok(false);
+            }
+            sqlx::query(
+                "UPDATE translation_room.translation_room_participants \
+                 SET listen_language = COALESCE($2, listen_language), \
+                     status = CASE WHEN $3 THEN 'CONNECTED' ELSE status END, \
+                     joined_at = CASE WHEN $3 THEN $4 ELSE joined_at END, \
+                     left_at = CASE WHEN $3 THEN NULL ELSE left_at END, \
+                     updated_at = $4 \
+                 WHERE id = $1",
+            )
+            .bind(p.id.as_uuid())
+            .bind(listen)
+            .bind(reconnect)
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_sqlx_error)?;
+            Ok(true)
+        }
+        None => {
+            let listen = listen
+                .or_else(|| room.target_languages.first().map(String::as_str))
+                .unwrap_or(&room.source_language);
+            sqlx::query(
+                "INSERT INTO translation_room.translation_room_participants \
+                 (id, translation_room_id, user_id, display_name, role, listen_language, \
+                  speak_language, status, joined_at, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, 'participant', $5, $6, 'CONNECTED', $7, $7, $7)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(room.id.as_uuid())
+            .bind(user.as_uuid())
+            .bind(name.as_deref().unwrap_or("Participant"))
+            .bind(listen)
+            .bind(LISTEN_ONLY)
+            .bind(now)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_sqlx_error)?;
+            Ok(true)
+        }
+    }
+}
+
 #[async_trait]
 impl RoomRepo for PgRoomRepo {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord> {
@@ -856,7 +938,9 @@ impl RoomRepo for PgRoomRepo {
         let rec = lock_room(&mut tx, input.room).await?;
         ensure_open(&rec)?;
         let langs = room_languages(&rec.source_language, &rec.target_languages);
-        if !langs.contains(&input.speak_language) || !langs.contains(&input.listen_language) {
+        if !(langs.contains(&input.speak_language) || input.speak_language == LISTEN_ONLY)
+            || !langs.contains(&input.listen_language)
+        {
             return Err(AppError::validation(
                 "LANGUAGE_NOT_IN_ROOM",
                 "speakLanguage and listenLanguage must be languages of the room",
@@ -1146,6 +1230,20 @@ impl RoomRepo for PgRoomRepo {
                 }
                 Some(_) => false,
             };
+            let changed = ensure_bridge_listener(
+                &mut tx,
+                &rec,
+                new.creator,
+                new.display_name.as_deref(),
+                new.listen_language.as_deref(),
+                new.now,
+            )
+            .await?;
+            let mut snapshot = None;
+            if changed && rec.status == RoomStatus::InProgress {
+                self.reconcile_routes(&mut tx, id, new.now).await?;
+                snapshot = Some(build_snapshot(&mut tx, &rec, new.now).await?);
+            }
             let room = fetch_room(&mut tx, id)
                 .await?
                 .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
@@ -1154,6 +1252,7 @@ impl RoomRepo for PgRoomRepo {
                 room,
                 created: false,
                 is_capturer,
+                snapshot,
             });
         }
 
@@ -1211,11 +1310,24 @@ impl RoomRepo for PgRoomRepo {
         let room = fetch_room(&mut tx, new.id)
             .await?
             .ok_or_else(|| AppError::internal("room vanished after insert"))?;
+        // The creator is the host participant; only honour an explicit caption language.
+        if new.listen_language.is_some() {
+            ensure_bridge_listener(
+                &mut tx,
+                &room,
+                new.creator,
+                None,
+                new.listen_language.as_deref(),
+                new.now,
+            )
+            .await?;
+        }
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(ClaimOutcome {
             room,
             created: true,
             is_capturer: true,
+            snapshot: None,
         })
     }
 
@@ -1328,6 +1440,45 @@ impl RoomRepo for PgRoomRepo {
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
+        let out = fetch_room(&mut tx, room)
+            .await?
+            .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(out)
+    }
+
+    async fn bridge_release(
+        &self,
+        room: RoomId,
+        caller: Caller,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, room).await?;
+        let state = bridge_of(&rec)?;
+        ensure_open(&rec)?;
+        let is_host = caller.user == rec.effective_host() || caller.user == rec.host_id;
+        let is_capturer = state.lease.user_id == Some(caller.user.as_uuid());
+        if !(is_host || is_capturer) {
+            return Err(AppError::forbidden(
+                "Only the host or the capturer can release the capturer seat",
+            ));
+        }
+        if state.lease.user_id.is_some() {
+            // New epoch: the released capturer's stand-in token stops being current.
+            sqlx::query(
+                "UPDATE translation_room.translation_rooms SET bridge_capturer_user_id = NULL, \
+                 bridge_capturer_since = NULL, bridge_capturer_lease_at = NULL, \
+                 bridge_audio_flowing = NULL, bridge_last_audio_at = NULL, \
+                 bridge_epoch = bridge_epoch + 1, updated_at = $2, updated_by = $3 WHERE id = $1",
+            )
+            .bind(room.as_uuid())
+            .bind(now)
+            .bind(caller.user.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
         let out = fetch_room(&mut tx, room)
             .await?
             .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;

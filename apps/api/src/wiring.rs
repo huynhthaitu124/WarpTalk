@@ -122,6 +122,10 @@ impl RoomDirectory for RoomDirectoryAdapter {
             }))
     }
 
+    async fn end_room(&self, room: RoomId, actor: UserId) -> AppResult<()> {
+        self.0.end_room(room, actor).await
+    }
+
     async fn bridge(&self, room: RoomId) -> AppResult<Option<BridgeInfo>> {
         Ok(self.0.bridge_info(room).await?.map(|b| BridgeInfo {
             provider: b.provider,

@@ -1,6 +1,7 @@
 //! HTTP glue shared by modules: JWT sign/verify, `AuthUser` extractor, request-id/trace layers.
 
 pub mod auth;
+pub mod extract;
 pub mod jwt;
 pub mod layers;
 

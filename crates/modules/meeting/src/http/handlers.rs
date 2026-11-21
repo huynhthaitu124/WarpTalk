@@ -1,11 +1,13 @@
-use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use warptalk_kernel::{AppError, AppResult, RoomId};
-use warptalk_web::{ApiResult, AuthUser};
+use warptalk_web::AuthUser;
+use warptalk_web::extract::{Json, Path};
 
 use super::AppState;
+
+type ApiResult<T> = AppResult<Json<T>>;
 use super::dto::{JoinRequest, JoinResponse};
 
 pub async fn join(

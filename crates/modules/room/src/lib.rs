@@ -104,6 +104,7 @@ impl RoomModule {
     /// Read-only facade for other modules.
     pub fn queries(&self) -> RoomQueries {
         RoomQueries {
+            service: self.service.clone(),
             repo: self.repo.clone(),
             clock: self.clock.clone(),
             bridge: self.bridge,
@@ -114,6 +115,7 @@ impl RoomModule {
 /// Public query facade for other modules.
 #[derive(Clone)]
 pub struct RoomQueries {
+    service: Arc<RoomService>,
     repo: Arc<dyn RoomRepo>,
     clock: Arc<dyn Clock>,
     bridge: BridgeConfig,
@@ -150,6 +152,14 @@ impl RoomQueries {
                 audio_mode: b.audio_mode.as_str().to_owned(),
             })
         }))
+    }
+
+    /// End the room as `actor` (host, or workspace owner/admin); idempotent when already ended.
+    pub async fn end_room(&self, room: RoomId, actor: UserId) -> AppResult<()> {
+        self.service
+            .lifecycle(room, actor, domain::RoomAction::End)
+            .await
+            .map(|_| ())
     }
 
     /// Participant status of `user` in `room`; `None` when the user never joined.

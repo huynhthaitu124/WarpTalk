@@ -224,6 +224,10 @@ pub struct NewBridgeRoom {
     pub join_url: Option<String>,
     pub source_language: String,
     pub target_languages: Vec<String>,
+    /// Raw display name of the caller (roster name when they join as listener).
+    pub display_name: Option<String>,
+    /// Caller's caption language; `None`: keep the existing one, else the first target language.
+    pub listen_language: Option<String>,
     pub now: DateTime<Utc>,
 }
 
@@ -235,6 +239,8 @@ pub struct ClaimOutcome {
     pub created: bool,
     /// `true`: the caller holds the capturer lease after the call.
     pub is_capturer: bool,
+    /// Route snapshot to publish when the caller joining as listener changed a live room's routes.
+    pub snapshot: Option<AudioRoutesSnapshot>,
 }
 
 /// Capturer heartbeat report (proposal B8).
@@ -346,6 +352,13 @@ pub trait RoomRepo: Send + Sync {
         room: RoomId,
         caller: Caller,
         cfg: BridgeConfig,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord>;
+    /// Current capturer or host clears the capturer immediately (idempotent when there is none).
+    async fn bridge_release(
+        &self,
+        room: RoomId,
+        caller: Caller,
         now: DateTime<Utc>,
     ) -> AppResult<RoomRecord>;
     /// Host or current capturer. Text to voice is refused while translation runs.

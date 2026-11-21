@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use warptalk_kernel::{AppResult, MeetingRoomId, RoomId, UserId, WorkspaceId};
+use warptalk_kernel::{AppError, AppResult, MeetingRoomId, RoomId, UserId, WorkspaceId};
 
 use crate::domain::TrackChange;
 
@@ -52,6 +52,11 @@ pub trait RoomDirectory: Send + Sync {
     /// `None` when the translation room does not exist.
     async fn room(&self, room: RoomId) -> AppResult<Option<RoomInfo>>;
     async fn participant(&self, room: RoomId, user: UserId) -> AppResult<Option<ParticipantInfo>>;
+    /// End the translation room as `actor` (the host). Idempotent for an already ended room.
+    /// The default fails closed (`503`): adapters that cannot end rooms must say so.
+    async fn end_room(&self, _room: RoomId, _actor: UserId) -> AppResult<()> {
+        Err(AppError::unavailable("room directory cannot end rooms"))
+    }
 }
 
 /// Knows no rooms.
@@ -73,9 +78,15 @@ pub struct InMemoryRoomDirectory {
     rooms: Mutex<HashMap<RoomId, RoomInfo>>,
     participants: Mutex<HashMap<(RoomId, UserId), ParticipantInfo>>,
     bridges: Mutex<HashMap<RoomId, BridgeInfo>>,
+    ended: Mutex<Vec<(RoomId, UserId)>>,
 }
 
 impl InMemoryRoomDirectory {
+    /// `(room, actor)` of every `end_room` call, in order.
+    pub fn ended_rooms(&self) -> Vec<(RoomId, UserId)> {
+        self.ended.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Mark `room` as an EXTERNAL_BRIDGE room.
     pub fn set_bridge(&self, room: RoomId, info: BridgeInfo) {
         self.bridges
@@ -130,6 +141,21 @@ impl RoomDirectory for InMemoryRoomDirectory {
             .unwrap_or_else(|e| e.into_inner())
             .get(&(room, user))
             .cloned())
+    }
+    async fn end_room(&self, room: RoomId, actor: UserId) -> AppResult<()> {
+        self.ended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((room, actor));
+        if let Some(r) = self
+            .rooms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&room)
+        {
+            r.status = "ENDED".to_owned();
+        }
+        Ok(())
     }
 }
 

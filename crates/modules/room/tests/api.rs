@@ -1025,6 +1025,7 @@ async fn bridge_endpoints_refuse_native_rooms() {
     for (m, tail, body) in [
         (Method::POST, "capturer/heartbeat", None),
         (Method::POST, "capturer/takeover", None),
+        (Method::POST, "capturer/release", None),
         (Method::PUT, "audio-mode", Some(json!({"mode": "text"}))),
     ] {
         let (st, v) = c.call(m, &bridge_uri(&room, tail), u[0], body).await;
@@ -1125,4 +1126,342 @@ async fn join_returns_room_summary_and_participants_can_read_room() {
         .call(Method::GET, &format!("{rooms}/{room}"), guest, None)
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+fn participants_of(v: &Value) -> Vec<Value> {
+    v.as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn bridge_claim_joins_viewer_as_connected_listener() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 4);
+    let code = meet_code();
+    let (st, v) = c
+        .call(Method::POST, CLAIM, u[0], Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    let list = format!("/translation-rooms/{room}/participants");
+
+    // Viewer with an explicit caption language.
+    let mut body = claim_body(ws, &code);
+    body["listenLanguage"] = json!("vi");
+    body["displayName"] = json!("Vera");
+    let (st, v) = c.call(Method::POST, CLAIM, u[1], Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["bridgeRole"], "viewer");
+    let (_, v) = c.call(Method::GET, &list, u[0], None).await;
+    let me = participants_of(&v)
+        .into_iter()
+        .find(|p| p["userId"] == u[1].to_string())
+        .expect("viewer is a participant");
+    assert_eq!(me["status"], "CONNECTED");
+    assert_eq!(me["role"], "PARTICIPANT");
+    assert_eq!(me["listenLanguage"], "vi");
+    assert_eq!(me["speakLanguage"], "none");
+    assert_eq!(me["displayName"], "Vera");
+    assert!(me["joinedAt"].is_string());
+
+    // Without listenLanguage: first target language; re-claim is idempotent (one row).
+    let (st, _) = c
+        .call(Method::POST, CLAIM, u[2], Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = c
+        .call(Method::POST, CLAIM, u[2], Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, v) = c.call(Method::GET, &list, u[0], None).await;
+    let mine: Vec<_> = participants_of(&v)
+        .into_iter()
+        .filter(|p| p["userId"] == u[2].to_string())
+        .collect();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0]["listenLanguage"], "en");
+    assert_eq!(mine[0]["status"], "CONNECTED");
+
+    // A later claim may change the caption language; the host row is untouched.
+    let mut body = claim_body(ws, &code);
+    body["listenLanguage"] = json!("vi");
+    let (st, _) = c.call(Method::POST, CLAIM, u[2], Some(body)).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, v) = c.call(Method::GET, &list, u[0], None).await;
+    let ps = participants_of(&v);
+    let p2 = ps.iter().find(|p| p["userId"] == u[2].to_string()).unwrap();
+    assert_eq!(p2["listenLanguage"], "vi");
+    let host = ps.iter().find(|p| p["userId"] == u[0].to_string()).unwrap();
+    assert_eq!(
+        (host["role"].as_str(), host["status"].as_str()),
+        (Some("HOST"), Some("CONNECTED"))
+    );
+    assert_eq!(host["speakLanguage"], "vi");
+
+    // A viewer who left reconnects on the next claim.
+    let (st, _) = c
+        .call(
+            Method::PUT,
+            &format!("/translation-rooms/{room}/participants/me/leave"),
+            u[2],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    c.call(Method::POST, CLAIM, u[2], Some(claim_body(ws, &code)))
+        .await;
+    let (_, v) = c.call(Method::GET, &list, u[0], None).await;
+    let p2 = participants_of(&v)
+        .into_iter()
+        .find(|p| p["userId"] == u[2].to_string())
+        .unwrap();
+    assert_eq!(p2["status"], "CONNECTED");
+
+    // Invalid caption language is rejected and does not create a participant.
+    let mut body = claim_body(ws, &code);
+    body["listenLanguage"] = json!("fr");
+    let (st, v) = c.call(Method::POST, CLAIM, u[3], Some(body)).await;
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("LANGUAGE_NOT_IN_ROOM"))
+    );
+    let (_, v) = c.call(Method::GET, &list, u[0], None).await;
+    assert!(
+        !participants_of(&v)
+            .iter()
+            .any(|p| p["userId"] == u[3].to_string())
+    );
+}
+
+#[tokio::test]
+async fn bridge_viewer_listener_gets_routes_in_live_room() {
+    let Some(mut c) = ctx().await else { return };
+    let (ws, u) = members(&c, 2);
+    let code = meet_code();
+    let (_, v) = c
+        .call(Method::POST, CLAIM, u[0], Some(claim_body(ws, &code)))
+        .await;
+    let room = v["id"].as_str().unwrap().to_owned();
+    let (st, v) = c
+        .post(&format!("/translation-rooms/{room}/start"), u[0])
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, _) = c
+        .call(Method::POST, CLAIM, u[1], Some(claim_body(ws, &code)))
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (snap, _) = c.cached_routes(&room).await;
+    let routes = snap["routes"].as_array().unwrap();
+    // stand-in/host (vi) -> viewer (en); the listen-only viewer is never a source
+    assert!(
+        routes.iter().any(|r| r["target_language"] == "en"),
+        "{snap}"
+    );
+    assert!(
+        routes.iter().all(|r| r["source_language"] != "none"),
+        "{snap}"
+    );
+}
+
+#[tokio::test]
+async fn bridge_responses_carry_server_computed_lease_expiry() {
+    let Some((c, clock, _ws, u, room)) = clocked_bridge().await else {
+        return;
+    };
+    let secs = |v: &Value| {
+        chrono::DateTime::parse_from_rfc3339(v.as_str().unwrap())
+            .unwrap()
+            .timestamp()
+    };
+    let t0 = clock.now().timestamp();
+
+    let (_, v) = c
+        .call(
+            Method::GET,
+            &format!("/translation-rooms/{room}"),
+            u[0],
+            None,
+        )
+        .await;
+    assert_eq!(secs(&v["bridge"]["leaseExpiresAt"]), t0 + 45);
+    assert_eq!(secs(&v["bridge"]["serverTime"]), t0);
+
+    advance(&clock, 20);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &bridge_uri(&room, "capturer/heartbeat"),
+            u[0],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(secs(&v["leaseExpiresAt"]), t0 + 20 + 45);
+    assert_eq!(secs(&v["serverTime"]), t0 + 20);
+    assert_eq!(secs(&v["capturerLeaseAt"]), t0 + 20);
+    assert_eq!(v["leaseSeconds"], 45);
+
+    // claim (viewer + capturer) and takeover responses
+    let (_, v0) = c
+        .call(
+            Method::GET,
+            &format!("/translation-rooms/{room}"),
+            u[0],
+            None,
+        )
+        .await;
+    let code = v0["bridge"]["meetingCode"].as_str().unwrap().to_owned();
+    let (_, v0) = c
+        .call(
+            Method::GET,
+            &format!("/translation-rooms/{room}"),
+            u[0],
+            None,
+        )
+        .await;
+    let ws = v0["workspaceId"].as_str().unwrap().to_owned();
+    let body = json!({"workspaceId": ws, "provider": "google_meet", "code": code,
+                      "sourceLanguage": "vi", "targetLanguages": ["en"]});
+    advance(&clock, 5);
+    let (st, v) = c.call(Method::POST, CLAIM, u[1], Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(secs(&v["leaseExpiresAt"]), t0 + 20 + 45);
+    assert_eq!(secs(&v["serverTime"]), t0 + 25);
+    assert_eq!(secs(&v["bridge"]["leaseExpiresAt"]), t0 + 20 + 45);
+
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &bridge_uri(&room, "capturer/takeover"),
+            u[0],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(secs(&v["leaseExpiresAt"]), t0 + 25 + 45);
+    assert_eq!(secs(&v["serverTime"]), t0 + 25);
+}
+
+#[tokio::test]
+async fn bridge_release_clears_capturer_for_capturer_or_host() {
+    let Some((c, _clock, ws, u, room)) = clocked_bridge().await else {
+        return;
+    };
+    let release = bridge_uri(&room, "capturer/release");
+    let take = bridge_uri(&room, "capturer/takeover");
+    let q = c.module.queries();
+
+    // u[1] takes over from the (non-stale) host-capturer? Host may; make u[1] the capturer.
+    let (st, _) = c.post(&take, u[0]).await; // host keeps it (re-take)
+    assert_eq!(st, StatusCode::OK);
+
+    // A plain viewer cannot release; an outsider cannot see the room.
+    let (st, v) = c.post(&release, u[1]).await;
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (StatusCode::FORBIDDEN, Some("FORBIDDEN"))
+    );
+    let (st, _) = c.post(&release, UserId::new()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(
+        q.bridge_info(rid(&room))
+            .await
+            .unwrap()
+            .unwrap()
+            .capturer_user_id,
+        Some(u[0])
+    );
+
+    // Capturer releases: cleared at once, response shows no lease.
+    let (st, v) = c.post(&release, u[0]).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(v["capturerUserId"].is_null(), "{v}");
+    assert!(v["leaseExpiresAt"].is_null(), "{v}");
+    assert!(
+        q.bridge_info(rid(&room))
+            .await
+            .unwrap()
+            .unwrap()
+            .capturer_user_id
+            .is_none()
+    );
+    // Idempotent
+    assert_eq!(c.post(&release, u[0]).await.0, StatusCode::OK);
+
+    // Anyone can claim the free seat; the new capturer (not host) can release; so can the host.
+    let (st, v) = c.post(&take, u[1]).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["capturerUserId"], u[1].to_string());
+    let (st, v) = c.post(&release, u[1]).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(v["capturerUserId"].is_null());
+    let (st, _) = c.post(&take, u[2]).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, v) = c.post(&release, u[0]).await; // host releases someone else
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(v["capturerUserId"].is_null());
+    let _ = ws;
+}
+
+#[tokio::test]
+async fn extractor_rejections_are_json() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 1);
+    let token = c
+        .keys
+        .issue_access(u[0], Uuid::new_v4(), false, chrono::Utc::now())
+        .unwrap()
+        .0;
+    let raw = |m: Method, uri: String, body: &'static str| {
+        let token = token.clone();
+        let router = c.router.clone();
+        async move {
+            let resp = router
+                .oneshot(
+                    Request::builder()
+                        .method(m)
+                        .uri(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let st = resp.status();
+            let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (
+                st,
+                serde_json::from_slice::<Value>(&b).unwrap_or(Value::Null),
+            )
+        }
+    };
+    for (m, uri, body) in [
+        (Method::POST, "/translation-rooms".to_owned(), "{nope"),
+        (
+            Method::POST,
+            "/translation-rooms".to_owned(),
+            r#"{"title":1}"#,
+        ),
+        (Method::POST, CLAIM.to_owned(), "[]"),
+        (Method::GET, "/translation-rooms".to_owned(), ""),
+        (
+            Method::GET,
+            "/translation-rooms?workspaceId=zz".to_owned(),
+            "",
+        ),
+        (Method::GET, "/translation-rooms/not-a-uuid".to_owned(), ""),
+        (
+            Method::PUT,
+            bridge_uri(&Uuid::new_v4().to_string(), "audio-mode"),
+            "{}",
+        ),
+    ] {
+        let (st, v) = raw(m, uri.clone(), body).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}: {v}");
+        assert_eq!(v["code"], "INVALID_REQUEST", "{uri}: {v}");
+        assert!(v["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+    let _ = ws;
 }

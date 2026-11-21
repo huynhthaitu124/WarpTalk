@@ -1,10 +1,12 @@
-use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use warptalk_kernel::{AppError, AppResult, ParticipantId, RoomId};
-use warptalk_web::{ApiResult, AuthUser};
+use warptalk_web::AuthUser;
+use warptalk_web::extract::{Json, Path, Query};
 
 use super::AppState;
+
+type ApiResult<T> = AppResult<Json<T>>;
 use super::dto::{
     AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
     CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, JoinedDto, ListQuery,
@@ -34,7 +36,7 @@ pub async fn create(
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(room.into())))
+    Ok((StatusCode::CREATED, Json(s.room_dto(room))))
 }
 
 pub async fn list(
@@ -53,7 +55,7 @@ pub async fn list(
         .service
         .list(auth.user_id(), q.workspace_id, status, &q.page_request())
         .await?;
-    Ok(Json(PageDto::map(page, RoomDto::from)))
+    Ok(Json(PageDto::map(page, |r| s.room_dto(r))))
 }
 
 pub async fn get_one(
@@ -61,7 +63,7 @@ pub async fn get_one(
     auth: AuthUser,
     Path(id): Path<RoomId>,
 ) -> ApiResult<RoomDto> {
-    Ok(Json(s.service.get(id, auth.user_id()).await?.into()))
+    Ok(Json(s.room_dto(s.service.get(id, auth.user_id()).await?)))
 }
 
 pub async fn join_by_code(
@@ -112,9 +114,8 @@ pub async fn join_by_id(
 }
 
 async fn lifecycle(s: AppState, auth: AuthUser, id: RoomId, a: RoomAction) -> ApiResult<RoomDto> {
-    Ok(Json(
-        s.service.lifecycle(id, auth.user_id(), a).await?.into(),
-    ))
+    let room = s.service.lifecycle(id, auth.user_id(), a).await?;
+    Ok(Json(s.room_dto(room)))
 }
 
 pub async fn start(
@@ -217,7 +218,7 @@ pub async fn routes(
 }
 
 fn bridge_state(s: &AppState, room: RoomRecord) -> AppResult<Json<BridgeStateResponse>> {
-    BridgeStateResponse::new(room, s.service.bridge_config())
+    BridgeStateResponse::new(room, s.service.bridge_config(), s.service.now())
         .map(Json)
         .ok_or_else(|| AppError::internal("bridge room without bridge state"))
 }
@@ -240,6 +241,7 @@ pub async fn bridge_claim(
                 display_name: req.display_name,
                 source_language: req.source_language,
                 target_languages: req.target_languages,
+                listen_language: req.listen_language,
             },
         )
         .await?;
@@ -250,7 +252,11 @@ pub async fn bridge_claim(
     };
     Ok((
         status,
-        Json(ClaimBridgeResponse::new(out, s.service.bridge_config())),
+        Json(ClaimBridgeResponse::new(
+            out,
+            s.service.bridge_config(),
+            s.service.now(),
+        )),
     ))
 }
 
@@ -279,6 +285,15 @@ pub async fn bridge_takeover(
     Path(id): Path<RoomId>,
 ) -> AppResult<Json<BridgeStateResponse>> {
     let room = s.service.bridge_takeover(id, auth.user_id()).await?;
+    bridge_state(&s, room)
+}
+
+pub async fn bridge_release(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+) -> AppResult<Json<BridgeStateResponse>> {
+    let room = s.service.bridge_release(id, auth.user_id()).await?;
     bridge_state(&s, room)
 }
 

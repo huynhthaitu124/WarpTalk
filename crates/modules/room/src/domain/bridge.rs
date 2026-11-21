@@ -103,7 +103,7 @@ impl Default for BridgeConfig {
 }
 
 impl BridgeConfig {
-    fn stale_chrono(&self) -> chrono::Duration {
+    pub fn stale_chrono(&self) -> chrono::Duration {
         chrono::Duration::from_std(self.stale_after).unwrap_or(chrono::Duration::seconds(45))
     }
 }
@@ -119,6 +119,12 @@ pub struct CapturerLease {
 }
 
 impl CapturerLease {
+    /// When the heartbeat lease runs out (`lease_at + stale_after`); `None` without capturer.
+    pub fn expires_at(&self, cfg: &BridgeConfig) -> Option<DateTime<Utc>> {
+        self.user_id?;
+        self.lease_at.map(|t| t + cfg.stale_chrono())
+    }
+
     /// A capturer is stale when its heartbeat is older than `stale_after`, or when its heartbeat
     /// keeps reporting no audio and the last audio is older than `stale_after` (proposal B8).
     /// A room without capturer is not stale (there is nothing to take over).

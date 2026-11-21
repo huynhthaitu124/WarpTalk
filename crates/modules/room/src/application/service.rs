@@ -27,6 +27,8 @@ pub struct ClaimBridge {
     pub display_name: Option<String>,
     pub source_language: String,
     pub target_languages: Vec<String>,
+    /// Caption language of the caller as listener (default: first target language).
+    pub listen_language: Option<String>,
 }
 
 pub struct CreateRoom {
@@ -405,6 +407,14 @@ impl RoomService {
                 "sourceLanguage and at least one valid targetLanguage are required",
             ));
         }
+        if let Some(l) = req.listen_language.as_deref()
+            && !valid_language(l)
+        {
+            return Err(validation(
+                "INVALID_LANGUAGE",
+                "listenLanguage is not a valid language",
+            ));
+        }
         let title = match req.title.as_deref().map(str::trim) {
             Some(t) if !t.is_empty() => t.to_owned(),
             _ => format!("External meeting {meeting_code}"),
@@ -452,10 +462,20 @@ impl RoomService {
                 join_url: join_url.clone(),
                 source_language: req.source_language.clone(),
                 target_languages: targets.clone(),
+                display_name: req.display_name.clone(),
+                listen_language: req.listen_language.clone(),
                 now: self.clock.now(),
             };
             match self.repo.claim_bridge(new, self.bridge).await {
                 Err(AppError::Conflict { code, .. }) if code == "DUPLICATE" => continue,
+                Ok(mut out) => {
+                    if let Some(s) = out.snapshot.take()
+                        && let Err(e) = self.events.publish_routes(out.room.id, &s).await
+                    {
+                        tracing::warn!(room = %out.room.id, error = %e, "route publication failed");
+                    }
+                    return Ok(out);
+                }
                 other => return other,
             }
         }
@@ -489,6 +509,17 @@ impl RoomService {
         self.repo
             .bridge_takeover(id, caller, self.bridge, self.clock.now())
             .await
+    }
+
+    /// Capturer or host gives up the capturer seat immediately.
+    pub async fn bridge_release(&self, id: RoomId, user: UserId) -> AppResult<RoomRecord> {
+        let (_, caller) = self.access(id, user).await?;
+        self.repo.bridge_release(id, caller, self.clock.now()).await
+    }
+
+    /// Server clock, for `serverTime` in responses.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
     }
 
     pub async fn set_bridge_audio_mode(

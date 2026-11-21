@@ -18,6 +18,12 @@ pub struct AppState {
     pub jwt: JwtKeys,
 }
 
+impl AppState {
+    fn room_dto(&self, r: crate::application::ports::RoomRecord) -> dto::RoomDto {
+        dto::RoomDto::new(r, &self.service.bridge_config(), self.service.now())
+    }
+}
+
 impl FromRef<AppState> for JwtKeys {
     fn from_ref(s: &AppState) -> JwtKeys {
         s.jwt.clone()
@@ -42,6 +48,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/translation-rooms/{id}/bridge/capturer/takeover",
             post(handlers::bridge_takeover),
+        )
+        .route(
+            "/translation-rooms/{id}/bridge/capturer/release",
+            post(handlers::bridge_release),
         )
         .route(
             "/translation-rooms/{id}/bridge/audio-mode",
