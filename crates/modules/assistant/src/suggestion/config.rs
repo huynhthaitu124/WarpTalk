@@ -24,7 +24,7 @@
 //!   "min_words": 4, "min_question_words": 2, "min_stt_confidence": -0.5, "stt_unknown_sentinel": -1.0,
 //!   "window_size": 8,                       // turns
 //!   "window": { "max_age_seconds": 0, "max_tokens": 0, "chars_per_token": 4.0 },   // 0 = no limit
-//!   "max_suggestion_chars": 140,
+//!   "max_suggestion_chars": 140, "max_detail_chars": 600,
 //!   "categories": [ { "id": "term", "enabled": false } ],        // toggles (unlisted = enabled)
 //!   "category_rules": { "<id>": {                                 // overlay on the built-in rules
 //!       "description": "...", "contract": "...", "min_confidence": 0.7,
@@ -362,6 +362,8 @@ pub struct SuggestionConfig {
     pub prompts: BTreeMap<String, String>,
     // ---- extensions ----
     pub stt_unknown_sentinel: f32,
+    /// Cap on `detail` (the expanded evidence text).
+    pub max_detail_chars: u32,
     pub sensitivity: f32,
     pub sensitivity_span: f32,
     pub budget: BudgetConfig,
@@ -401,6 +403,7 @@ impl Default for SuggestionConfig {
             categories: Vec::new(),
             prompts: BTreeMap::new(),
             stt_unknown_sentinel: -1.0,
+            max_detail_chars: 600,
             sensitivity: 0.5,
             sensitivity_span: 0.4,
             budget: BudgetConfig::default(),
@@ -441,6 +444,7 @@ impl Validate for SuggestionConfig {
         )?;
         check_range("window_size", self.window_size, 1, 100)?;
         check_range("max_suggestion_chars", self.max_suggestion_chars, 20, 2000)?;
+        check_range("max_detail_chars", self.max_detail_chars, 0, 8000)?;
         check_range("decide_max_tokens", self.decide_max_tokens, 16, 4096)?;
         check_range("generate_max_tokens", self.generate_max_tokens, 32, 8192)?;
         check_range("window.chars_per_token", self.window.chars_per_token, 1.0, 16.0)?;

@@ -1,0 +1,7 @@
+WarpTalk.xcodeproj/
+build/
+DerivedData/
+Config/Local.xcconfig
+.swiftpm/
+*.xcuserstate
+.DS_Store

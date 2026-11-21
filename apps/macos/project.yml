@@ -1,0 +1,83 @@
+name: WarpTalk
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    macOS: "14.2"
+  createIntermediateGroups: true
+  developmentLanguage: en
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+packages:
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    from: 2.0.0   # any 2.x; if Audio/BridgePublisher.swift fails to compile, see VERIFY notes and bump
+targets:
+  WarpTalk:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: LiveKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.warptalk   # PLACEHOLDER: change to your own reverse-DNS id
+        PRODUCT_NAME: WarpTalk
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/WarpTalk.entitlements
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_TESTABILITY: YES
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleName: WarpTalk
+        CFBundleDisplayName: WarpTalk
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.2"
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+        NSMicrophoneUsageDescription: "WarpTalk dùng micro của bạn để gửi giọng nói vào phòng dịch trực tiếp."
+        NSAudioCaptureUsageDescription: "WarpTalk ghi lại âm thanh của ứng dụng họp (Chrome, Zoom, Teams...) để dịch cuộc họp bên ngoài."
+        NSScreenCaptureUsageDescription: "WarpTalk chỉ dùng quyền Ghi màn hình (phương án dự phòng) để lấy âm thanh của ứng dụng họp, không lưu hình ảnh."
+        # DEMO ONLY: allow plain http/ws to a dev backend / LiveKit. Remove for production (use https/wss).
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    entitlements:
+      path: Resources/WarpTalk.entitlements
+      properties:
+        # DEMO: sandbox OFF so Core Audio process taps + CoreAudio device enumeration work without
+        # extra entitlements. Before App Store/notarized release re-enable the sandbox and re-test taps.
+        com.apple.security.app-sandbox: false
+        com.apple.security.device.audio-input: true
+        com.apple.security.network.client: true
+  WarpTalkTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: WarpTalk
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.warptalk.tests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/WarpTalk.app/Contents/MacOS/WarpTalk"
+schemes:
+  WarpTalk:
+    build:
+      targets:
+        WarpTalk: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WarpTalkTests

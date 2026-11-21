@@ -8,3 +8,18 @@ publish = false
 workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+warptalk-contracts = { workspace = true }
+warptalk-kernel = { workspace = true }
+warptalk-llm = { workspace = true }
+warptalk-pipeline-runtime = { workspace = true }
+warptalk-telemetry = { workspace = true }

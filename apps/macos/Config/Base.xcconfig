@@ -1,0 +1,9 @@
+// Defaults for local development. Override in Config/Local.xcconfig (gitignored), see Local.xcconfig.example.
+SWIFT_VERSION = 5.10
+MACOSX_DEPLOYMENT_TARGET = 14.2
+// Ad-hoc signing works to run locally, but TCC permissions (mic / audio capture) may be asked again
+// after every rebuild because the code identity changes. Prefer a real team in Local.xcconfig.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+ENABLE_HARDENED_RUNTIME = NO
+#include? "Local.xcconfig"

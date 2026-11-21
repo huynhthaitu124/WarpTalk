@@ -12,7 +12,10 @@ use warptalk_kernel::{
     WorkspaceRole,
 };
 
-use crate::domain::{ParticipantStatus, RoomAction, RoomStatus};
+use crate::domain::{
+    AudioMode, BridgeConfig, BridgeProvider, BridgeState, ParticipantStatus, RoomAction, RoomStatus,
+    RoomType,
+};
 
 // ---------------------------------------------------------------- outbound ports
 
@@ -169,6 +172,9 @@ pub struct RoomRecord {
     pub created_at: DateTime<Utc>,
     /// IN_PROGRESS with an ACTIVE session.
     pub translation_active: bool,
+    pub room_type: RoomType,
+    /// Present only for `EXTERNAL_BRIDGE` rooms.
+    pub bridge: Option<BridgeState>,
 }
 
 impl RoomRecord {
@@ -204,6 +210,38 @@ pub struct NewRoom {
     pub requires_approval: bool,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub now: DateTime<Utc>,
+}
+
+pub struct NewBridgeRoom {
+    pub id: RoomId,
+    pub workspace_id: WorkspaceId,
+    pub creator: UserId,
+    pub creator_display_name: String,
+    pub title: String,
+    pub code: String,
+    pub provider: BridgeProvider,
+    pub meeting_code: String,
+    pub join_url: Option<String>,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+    pub now: DateTime<Utc>,
+}
+
+/// Outcome of `claim_bridge`.
+#[derive(Debug, Clone)]
+pub struct ClaimOutcome {
+    pub room: RoomRecord,
+    /// `true`: this call created the room.
+    pub created: bool,
+    /// `true`: the caller holds the capturer lease after the call.
+    pub is_capturer: bool,
+}
+
+/// Capturer heartbeat report (proposal B8).
+#[derive(Debug, Clone, Copy)]
+pub struct Heartbeat {
+    pub audio_flowing: bool,
+    pub last_audio_at: Option<DateTime<Utc>>,
 }
 
 /// The acting user plus their workspace role, resolved by the service before the lock is taken.
@@ -290,4 +328,32 @@ pub trait RoomRepo: Send + Sync {
         caller: Caller,
         now: DateTime<Utc>,
     ) -> AppResult<Mutation>;
+
+    /// Find-or-create the open bridge room for `(workspace, provider, meeting_code)`; the caller
+    /// becomes capturer when the room has none (or when it is new).
+    async fn claim_bridge(&self, new: NewBridgeRoom, cfg: BridgeConfig) -> AppResult<ClaimOutcome>;
+    /// Current capturer renews the lease. 409 `NOT_BRIDGE_ROOM` / `CAPTURER_LEASE_LOST`.
+    async fn bridge_heartbeat(
+        &self,
+        room: RoomId,
+        user: UserId,
+        hb: Heartbeat,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord>;
+    /// Reassign the capturer: allowed when stale, when none, by the current capturer or the host.
+    async fn bridge_takeover(
+        &self,
+        room: RoomId,
+        caller: Caller,
+        cfg: BridgeConfig,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord>;
+    /// Host or current capturer. Text to voice is refused while translation runs.
+    async fn set_bridge_audio_mode(
+        &self,
+        room: RoomId,
+        caller: Caller,
+        mode: AudioMode,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord>;
 }

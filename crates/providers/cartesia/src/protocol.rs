@@ -143,7 +143,10 @@ mod tests {
         let r = GenerationRequest {
             model_id: "sonic-3.5",
             transcript: "hi",
-            voice: VoiceSpec { mode: "id", id: "v" },
+            voice: VoiceSpec {
+                mode: "id",
+                id: "v",
+            },
             language: "en",
             context_id: "c",
             output_format: OutputFormat {
@@ -166,13 +169,25 @@ mod tests {
         let c: ServerMessage =
             serde_json::from_str(r#"{"type":"chunk","data":"AAA=","flush_id":0,"step_time":1.0}"#)
                 .unwrap();
-        assert!(matches!(c, ServerMessage::Chunk { flush_id: Some(0), .. }));
+        assert!(matches!(
+            c,
+            ServerMessage::Chunk {
+                flush_id: Some(0),
+                ..
+            }
+        ));
         let o: ServerMessage = serde_json::from_str(r#"{"type":"timestamps"}"#).unwrap();
         assert_eq!(o, ServerMessage::Other);
         let e: ServerMessage =
             serde_json::from_str(r#"{"type":"error","error":"bad voice","status_code":404}"#)
                 .unwrap();
-        assert!(matches!(e, ServerMessage::Error { status_code: Some(404), .. }));
+        assert!(matches!(
+            e,
+            ServerMessage::Error {
+                status_code: Some(404),
+                ..
+            }
+        ));
     }
 
     #[test]

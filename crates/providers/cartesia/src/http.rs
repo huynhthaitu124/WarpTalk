@@ -171,7 +171,10 @@ impl CartesiaHttp {
                 }
             }
             if scanned >= max_scanned {
-                warn!(scanned, "cartesia voice scan capped; some language may be starved");
+                warn!(
+                    scanned,
+                    "cartesia voice scan capped; some language may be starved"
+                );
                 break;
             }
             match (page.has_more, last) {
@@ -207,13 +210,15 @@ fn multipart_body(
     b
 }
 
+type CatalogSnapshot = (Instant, HashMap<String, Vec<VoiceInfo>>);
+
 /// Catalog cache: one walk of the library per `ttl`, single-flight, stale-on-error (a catalog
 /// refresh must never be able to take synthesis down).
 pub struct VoiceCatalog {
     http: std::sync::Arc<CartesiaHttp>,
     ttl: Duration,
     max_scanned: usize,
-    state: Mutex<Option<(Instant, HashMap<String, Vec<VoiceInfo>>)>>,
+    state: Mutex<Option<CatalogSnapshot>>,
 }
 
 impl VoiceCatalog {

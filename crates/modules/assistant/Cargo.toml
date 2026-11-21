@@ -8,3 +8,25 @@ publish = false
 workspace = true
 
 [dependencies]
+warptalk-kernel = { workspace = true }
+warptalk-contracts = { workspace = true }
+warptalk-bus = { workspace = true }
+warptalk-settings = { workspace = true }
+warptalk-llm = { workspace = true }
+warptalk-telemetry = { workspace = true }
+tokio = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+metrics = { workspace = true }
+
+[dev-dependencies]
+warptalk-db = { workspace = true }
+sqlx = { workspace = true }
+futures = { workspace = true }

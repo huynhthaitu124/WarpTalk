@@ -12,7 +12,10 @@ pub enum CartesiaError {
     Closed,
     /// The vendor answered with an error. `status` is the HTTP / event status code when known.
     #[error("cartesia api error (status {status:?}): {message}")]
-    Api { status: Option<u16>, message: String },
+    Api {
+        status: Option<u16>,
+        message: String,
+    },
     /// The consumer of the audio went away; nothing is wrong with the vendor.
     #[error("synthesis cancelled by consumer")]
     Cancelled,

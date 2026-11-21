@@ -47,7 +47,6 @@ pub struct SpeakContext {
     closed: bool,
     seen_flush_ids: BTreeSet<u64>,
     last_activity: Instant,
-    pub(crate) socket_opened_at: Instant,
 }
 
 pub(crate) struct ContextParams {
@@ -74,7 +73,6 @@ impl SpeakContext {
             closed: false,
             seen_flush_ids: BTreeSet::new(),
             last_activity: Instant::now(),
-            socket_opened_at: socket.opened_at,
         }
     }
 
@@ -145,15 +143,13 @@ impl SpeakContext {
             generation_config: (!gen_cfg.is_empty()).then_some(gen_cfg),
         };
         let res = match self.send_json(&req).await {
-            Ok(()) => match tokio::time::timeout(
-                self.sentence_timeout,
-                self.collect(expected, out),
-            )
-            .await
-            {
-                Ok(r) => r,
-                Err(_) => Err(CartesiaError::Timeout("sentence")),
-            },
+            Ok(()) => {
+                match tokio::time::timeout(self.sentence_timeout, self.collect(expected, out)).await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(CartesiaError::Timeout("sentence")),
+                }
+            }
             Err(e) => Err(e),
         };
         match &res {
@@ -302,12 +298,11 @@ impl SpeakContext {
         let ack = tokio::time::timeout(self.close_ack, async {
             self.send_json(&end).await?;
             while let Some(Ok(msg)) = self.ws.next().await {
-                if let Message::Text(t) = msg {
-                    if let Ok(ServerMessage::Done {} | ServerMessage::Error { .. }) =
+                if let Message::Text(t) = msg
+                    && let Ok(ServerMessage::Done {} | ServerMessage::Error { .. }) =
                         serde_json::from_str::<ServerMessage>(t.as_str())
-                    {
-                        return Ok(());
-                    }
+                {
+                    return Ok(());
                 }
             }
             Ok::<(), CartesiaError>(())

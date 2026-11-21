@@ -2948,6 +2948,32 @@ dependencies = [
 [[package]]
 name = "warptalk-knowledge"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "futures",
+ "metrics",
+ "redis",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+ "warptalk-bus",
+ "warptalk-config",
+ "warptalk-contracts",
+ "warptalk-db",
+ "warptalk-kernel",
+ "warptalk-llm",
+ "warptalk-qdrant",
+ "warptalk-settings",
+ "warptalk-web",
+]
 
 [[package]]
 name = "warptalk-livekit"
@@ -3027,6 +3053,23 @@ dependencies = [
 [[package]]
 name = "warptalk-mt"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "url",
+ "uuid",
+ "warptalk-contracts",
+ "warptalk-kernel",
+ "warptalk-llm",
+ "warptalk-pipeline-runtime",
+ "warptalk-telemetry",
+]
 
 [[package]]
 name = "warptalk-notification"
