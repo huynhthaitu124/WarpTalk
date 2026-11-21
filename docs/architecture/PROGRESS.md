@@ -19,15 +19,23 @@ Quy trình: orchestrator giao từng crate cho agent model nhỏ (haiku: việc 
 | apps/migrator | chạy migration mọi module | chạy thật |
 | apps/api | server chạy được, e2e qua HTTP | e2e |
 
-## Backlog (theo thứ tự)
+## Backlog (loop, theo thứ tự ưu tiên)
 
-1. ~~Wire `room` vào `api`~~ xong
-2. `meeting`: LiveKit token, webhook (cần `providers/livekit`)
-3. **Pipeline vertical slice** (chờ tài liệu luồng dịch + latency): ingress VAD → STT → MT, caption only
-4. `transcript` consumer trong `apps/worker`
-5. TTS + egress, degradation ladder
-6. `billing` metering idempotent
-7. invitations, series, artifacts, notification, assistant
+Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh dấu `[~]` đang làm, `[x]` xong.
+
+- [~] W6a Research BYO LLM (OpenAI/Claude/Gemini) → `docs/architecture/byo-llm.md`
+- [~] W6b pipeline `audio` + `ingress` (endpointing, knob cấu hình runtime)
+- [~] W6c `providers/livekit` + `meeting` slice 1 (join token, bridge, end, webhook)
+- [ ] W7a `providers/llm` (trait + adapters openai/anthropic/gemini theo byo-llm.md) + workspace AI config (key mã hoá, hot reload)
+- [ ] W7b pipeline `runtime` (room actor, per-speaker task, bounded channel, latency stamps) + `stt` (OpenAI Realtime WS, warm pool, flash mode, early sentences)
+- [ ] W7c wire `meeting` vào api; platform settings store (runtime config, Redis pub/sub invalidation)
+- [ ] W8a pipeline `mt` (realtime first sentence + batch, glossary, speculative, ordering) + `tts` (Cartesia warm pool, cache, isochrony, catch-up, clone ladder, degradation)
+- [ ] W8b `apps/pipeline` binary: LiveKit RTC ingress/egress, room lease, caption stream
+- [ ] W8c `apps/worker` + `transcript` consumer (stt/translate/tts results, pause gate, backfill)
+- [ ] W9a suggestion engine (spec 09, mọi ngưỡng/category/prompt cấu hình runtime theo workspace/room) + follow-up/action items
+- [ ] W9b knowledge/RAG (spec 14 + proposals): structure-aware chunking + citation page/timestamp, score filter + re-rank, purge vectors khi archived/AI-disallowed, embedding retry/DLQ, fact extraction, PII scan transcript, OCR hook, search-quality metrics
+- [ ] W10 assistant (WarpBot) chat + tools + confirmation gate; billing metering; notification; invitations/series/artifacts
+- [ ] Voice clone (spec 13): consent gate runtime, progressive ladder, revocation/deletion
 
 ## Nợ kỹ thuật đã biết
 
