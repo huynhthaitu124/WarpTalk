@@ -53,6 +53,11 @@ use warptalk_room::application::ports::{
 };
 use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_settings::{SettingsStore, namespaces};
+use warptalk_transcript::application::glossary_ports::WorkspaceRoles;
+use warptalk_transcript::application::ports::{
+    AccessTarget, AlwaysSaveRoomPolicy, RoomDetails, RoomHost, StaticAiPolicy, TranscriptReadAccess,
+};
+use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 use warptalk_workspace::application::ports::UserDirectory;
 use warptalk_workspace::{
@@ -166,6 +171,127 @@ pub struct AssistantWorkspaceAccess(pub WorkspaceQueries);
 impl WorkspaceAccess for AssistantWorkspaceAccess {
     async fn member_role(&self, ws: WorkspaceId, user: UserId) -> AppResult<Option<WorkspaceRole>> {
         self.0.member_role(ws, user).await
+    }
+}
+
+/// Adapter: transcript's `WorkspaceRoles` port (glossary RBAC) backed by workspace roles.
+pub struct TranscriptWorkspaceRoles(pub WorkspaceQueries);
+
+#[async_trait]
+impl WorkspaceRoles for TranscriptWorkspaceRoles {
+    async fn member_role(&self, ws: WorkspaceId, user: UserId) -> AppResult<Option<WorkspaceRole>> {
+        self.0.member_role(ws, user).await
+    }
+}
+
+/// Adapter: transcript's room ports (directory, effective host, read access) backed by room's
+/// read facade and workspace roles. Read access: workspace owner/admin or a participant of the room.
+pub struct TranscriptRoomAdapter {
+    pub rooms: RoomQueries,
+    pub workspaces: WorkspaceQueries,
+}
+
+#[async_trait]
+impl warptalk_transcript::application::ports::RoomDirectory for TranscriptRoomAdapter {
+    async fn room(&self, room: RoomId) -> AppResult<Option<RoomDetails>> {
+        Ok(self
+            .rooms
+            .room_workspace(room)
+            .await?
+            .map(|workspace_id| RoomDetails { workspace_id }))
+    }
+}
+
+#[async_trait]
+impl RoomHost for TranscriptRoomAdapter {
+    async fn effective_host(&self, room: RoomId) -> AppResult<Option<UserId>> {
+        self.rooms.effective_host(room).await
+    }
+}
+
+#[async_trait]
+impl TranscriptReadAccess for TranscriptRoomAdapter {
+    async fn can_read(&self, user: UserId, target: AccessTarget) -> AppResult<bool> {
+        match self
+            .workspaces
+            .member_role(target.workspace_id, user)
+            .await?
+        {
+            Some(WorkspaceRole::Owner | WorkspaceRole::Admin) => Ok(true),
+            _ => Ok(self
+                .rooms
+                .participant_summary(target.room_id, user)
+                .await?
+                .is_some()),
+        }
+    }
+}
+
+/// Lifetime of `translationRoom:{id}:workspace` (refreshed on every routes update).
+const ROOM_WORKSPACE_TTL_SECS: u64 = 172_800;
+
+/// Decorator over the room event publisher: before a room's routes or start command go out, it
+/// writes `translationRoom:{id}:workspace` so the pipeline (no database) can resolve the room's
+/// workspace glossary. Best effort: a failure is logged and the event still goes out.
+pub struct RoomWorkspaceKeyPublisher {
+    inner: Arc<dyn RoomEventPublisher>,
+    conn: ConnectionManager,
+    rooms: Arc<std::sync::OnceLock<RoomQueries>>,
+}
+
+impl RoomWorkspaceKeyPublisher {
+    pub fn new(
+        inner: Arc<dyn RoomEventPublisher>,
+        conn: ConnectionManager,
+        rooms: Arc<std::sync::OnceLock<RoomQueries>>,
+    ) -> Self {
+        Self { inner, conn, rooms }
+    }
+
+    async fn remember(&self, room: RoomId) {
+        let Some(rooms) = self.rooms.get() else {
+            return;
+        };
+        let res = async {
+            let Some(ws) = rooms.room_workspace(room).await? else {
+                return Ok(());
+            };
+            let mut conn = self.conn.clone();
+            redis::cmd("SET")
+                .arg(format!("translationRoom:{room}:workspace"))
+                .arg(ws.to_string())
+                .arg("EX")
+                .arg(ROOM_WORKSPACE_TTL_SECS)
+                .query_async::<()>(&mut conn)
+                .await
+                .map_err(|e| AppError::unavailable(e.to_string()))
+        }
+        .await;
+        if let Err(e) = res {
+            tracing::warn!(%room, error = %e, "could not record the room's workspace for the pipeline");
+        }
+    }
+}
+
+#[async_trait]
+impl RoomEventPublisher for RoomWorkspaceKeyPublisher {
+    async fn publish_command(
+        &self,
+        cmd: &warptalk_contracts::events::RoomCommand,
+    ) -> AppResult<()> {
+        if let warptalk_contracts::events::RoomCommand::RoomStarted { state, .. } = cmd {
+            self.remember(state.room_id).await;
+        }
+        self.inner.publish_command(cmd).await
+    }
+
+    async fn publish_routes(
+        &self,
+        room: RoomId,
+        snapshot: &warptalk_contracts::events::AudioRoutesSnapshot,
+    ) -> AppResult<()> {
+        self.remember(room).await;
+        self.inner.publish_routes(room, snapshot).await
     }
 }
 
@@ -334,8 +460,14 @@ pub async fn build(
         Some(conn) => Arc::new(RedisConfigNotifier::new(conn.clone())),
         None => Arc::new(NoopNotifier),
     };
+    let transcript_redis = redis.clone();
+    let room_queries_cell: Arc<std::sync::OnceLock<RoomQueries>> = Arc::default();
     let events: Arc<dyn RoomEventPublisher> = match redis {
-        Some(conn) => Arc::new(RedisRoomEventPublisher::new(conn)),
+        Some(conn) => Arc::new(RoomWorkspaceKeyPublisher::new(
+            Arc::new(RedisRoomEventPublisher::new(conn.clone())),
+            conn,
+            room_queries_cell.clone(),
+        )),
         None => Arc::new(NoopRoomEventPublisher),
     };
     let room = RoomModule::new(RoomDeps {
@@ -345,6 +477,30 @@ pub async fn build(
         workspace: Arc::new(WorkspacePolicyAdapter(workspace.queries())),
         consent,
         events,
+    });
+
+    let _ = room_queries_cell.set(room.queries());
+    let transcript = transcript_redis.map(|conn| {
+        let rooms = Arc::new(TranscriptRoomAdapter {
+            rooms: room.queries(),
+            workspaces: workspace.queries(),
+        });
+        TranscriptModule::new(TranscriptDeps {
+            pool: pool.clone(),
+            redis: conn,
+            jwt: jwt.clone(),
+            clock: Arc::new(SystemClock),
+            rooms: rooms.clone(),
+            // TODO: wire room SaveTranscript and the workspace AI policy once those facades exist.
+            room_policy: Arc::new(AlwaysSaveRoomPolicy),
+            workspace_ai: Arc::new(StaticAiPolicy {
+                retrieval: false,
+                external_llm: false,
+            }),
+            host: rooms.clone(),
+            read_access: rooms,
+        })
+        .with_workspace_roles(Arc::new(TranscriptWorkspaceRoles(workspace.queries())))
     });
 
     let configured = opts.livekit.is_some();
@@ -437,6 +593,11 @@ pub async fn build(
         .merge(settings_router)
         .merge(assistant.router())
         .merge(knowledge.router());
+    // Transcript routes (glossaries) need Redis for the pipeline snapshots; without Redis they are not mounted.
+    let api = match transcript {
+        Some(t) => api.merge(t.router()),
+        None => api,
+    };
     let router = Router::new()
         .route("/health", get(warptalk_web::health))
         .nest("/api/v1", api);

@@ -25,6 +25,7 @@ warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 jsonwebtoken = { workspace = true }

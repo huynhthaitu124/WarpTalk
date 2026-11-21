@@ -24,10 +24,11 @@ use tracing::{info, warn};
 use warptalk_cartesia::{CartesiaClient, CartesiaConfig};
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
 use warptalk_llm::{ProviderConfig, ProviderId, ProviderRegistry};
-use warptalk_mt::{InMemoryGlossary, MtConfig, NoContext, OpenAiTranslator, RealtimeClient};
+use warptalk_mt::{MtConfig, NoContext, OpenAiTranslator, RealtimeClient};
 use warptalk_pipeline::config::{AppConfig, TransportKind, pipeline_config};
 use warptalk_pipeline::downstream::{DownstreamStage, Providers, SttOnlyStage, TranslateDubStage};
 use warptalk_pipeline::fakes::{FakeMt, FakeMtConfig, FakeTts, FakeTtsConfig};
+use warptalk_pipeline::glossary::{RedisGlossaryProvider, RedisKv, spawn_invalidation_listener};
 use warptalk_pipeline::host::{HostConfig, HostDeps, PipelineHost};
 use warptalk_pipeline::results::RedisResultSink;
 use warptalk_pipeline::simulated::{SimParticipant, SimulatedTransport};
@@ -83,7 +84,9 @@ async fn main() -> anyhow::Result<()> {
     let (mt_rx, tts_rx, tuning_rx) = spawn_extras_bridge(extras, app.openai_api_key.clone());
 
     let stt = build_stt(&app, &initial).await?;
-    let providers = build_providers(&app, &redis, &mt_rx).await?;
+    let glossary = Arc::new(RedisGlossaryProvider::new(Arc::new(RedisKv(redis.clone()))));
+    spawn_invalidation_listener(glossary.clone(), redis_cfg.url.clone());
+    let providers = build_providers(&app, &redis, &mt_rx, glossary).await?;
     let downstream: Arc<dyn DownstreamStage> = match providers {
         Some(p) => {
             info!("chain: STT -> MT -> TTS -> dub");
@@ -293,6 +296,7 @@ async fn build_providers(
     app: &AppConfig,
     redis: &redis::aio::ConnectionManager,
     mt_rx: &watch::Receiver<MtConfig>,
+    glossary: Arc<RedisGlossaryProvider>,
 ) -> anyhow::Result<Option<Providers>> {
     let cache = |real: bool| -> Arc<dyn TtsCache> {
         if real {
@@ -317,7 +321,7 @@ async fn build_providers(
         let tts = build_tts(app).await?;
         return Ok(Some(Providers {
             translator,
-            glossary: Arc::new(InMemoryGlossary::new()),
+            glossary: glossary.clone(),
             context: Arc::new(NoContext),
             synthesizer: tts.synthesizer,
             catalog: tts.catalog,
@@ -332,7 +336,7 @@ async fn build_providers(
         warn!("PIPELINE_FAKE_PROVIDERS: fake MT and TTS with the spec 08 latency profile");
         return Ok(Some(Providers {
             translator: FakeMt::new(FakeMtConfig::default()),
-            glossary: Arc::new(InMemoryGlossary::new()),
+            glossary: glossary.clone(),
             context: Arc::new(NoContext),
             synthesizer: Some(FakeTts::new(FakeTtsConfig::default())),
             catalog: Arc::new(FakeCatalog(vec!["voice-a".into(), "voice-b".into()])),

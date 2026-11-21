@@ -38,6 +38,7 @@ pub mod bench;
 pub mod config;
 pub mod downstream;
 pub mod fakes;
+pub mod glossary;
 pub mod host;
 #[cfg(feature = "livekit-rtc")]
 pub mod livekit_transport;

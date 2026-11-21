@@ -572,6 +572,18 @@ async fn full_flow() {
     .await;
     assert_eq!(s, StatusCode::OK, "{b}");
 
+    // The pipeline resolves a room's workspace glossary through this key.
+    if let Ok(u) = std::env::var("REDIS_URL") {
+        let mut conn = warptalk_bus::connect(&u).await.unwrap();
+        let key = format!("translationRoom:{room_id}:workspace");
+        let got: Option<String> = redis::cmd("GET")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(got.as_deref(), Some(ws_id.as_str()), "{key}");
+    }
+
     let (s, b) = call(
         &app,
         "POST",
@@ -602,4 +614,199 @@ async fn full_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+}
+
+/// Workspace glossary over the real wiring: owner writes, member reads (403 on write), and the
+/// pipeline snapshot lands in Redis.
+#[tokio::test]
+async fn glossary_flow() {
+    let (Ok(url), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
+    else {
+        eprintln!("DATABASE_URL / REDIS_URL not set; skipping glossary e2e test");
+        return;
+    };
+    let pool = warptalk_db::connect(&url, 5).await.unwrap();
+    warptalk_db::run_migrations(
+        &pool,
+        &[
+            warptalk_db::OUTBOX_MIGRATIONS,
+            warptalk_settings::MIGRATIONS,
+            warptalk_identity::MIGRATIONS,
+            warptalk_workspace::MIGRATIONS,
+            warptalk_room::MIGRATIONS,
+            warptalk_meeting::MIGRATIONS,
+            warptalk_transcript::MIGRATIONS,
+            warptalk_knowledge::MIGRATIONS,
+            warptalk_assistant::MIGRATIONS,
+        ],
+    )
+    .await
+    .unwrap();
+    let cfg = JwtConfig {
+        secret: "0123456789abcdef0123456789abcdef".to_owned(),
+        issuer: "warptalk-test".to_owned(),
+        audience: "warptalk".to_owned(),
+        access_ttl_seconds: 900,
+        refresh_ttl_seconds: 2_592_000,
+    };
+    let mailer = Arc::new(CaptureMailer::default());
+    let invitations = Arc::new(CaptureInvitations::default());
+    let redis = warptalk_bus::connect(&redis_url).await.unwrap();
+    let app = warptalk_api::build_router(
+        pool,
+        JwtKeys::from_config(&cfg),
+        &cfg,
+        &[],
+        mailer.clone(),
+        Some(redis.clone()),
+        warptalk_api::ApiOptions {
+            room_service: Some(Arc::new(NoopRoomService)),
+            invitation_mailer: Some(invitations.clone()),
+            ..warptalk_api::ApiOptions::default()
+        },
+    )
+    .await;
+
+    let (_, owner) = new_user(&app, &mailer, "Glossary Owner").await;
+    let (_, member) = new_user(&app, &mailer, "Glossary Member").await;
+    let (s, b) = call(
+        &app,
+        "POST",
+        "/api/v1/workspaces",
+        Some(json!({"name": format!("Gloss {}", uuid::Uuid::new_v4().simple())})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let ws = b["id"].as_str().unwrap().to_owned();
+
+    // Invite the second user as MEMBER and accept.
+    let (_, me) = call(&app, "GET", "/api/v1/me", None, Some(&member)).await;
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/workspaces/{ws}/invitations"),
+        Some(json!({"email": me["email"], "role": "member"})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (_, pending) = call(
+        &app,
+        "GET",
+        "/api/v1/invitations/pending",
+        None,
+        Some(&member),
+    )
+    .await;
+    let inv = pending
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["workspaceId"] == ws.as_str())
+        .unwrap();
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/invitations/{}/accept", inv["id"].as_str().unwrap()),
+        None,
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+
+    // Owner creates a glossary and a term.
+    let (s, g) = call(
+        &app,
+        "POST",
+        "/api/v1/glossaries",
+        Some(json!({"workspaceId": ws, "name": "Product", "sourceLanguage": "en", "targetLanguage": "vi"})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{g}");
+    let gid = g["id"].as_str().unwrap().to_owned();
+    let (s, t) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/glossaries/{gid}/terms"),
+        Some(json!({"sourceTerm": "WarpTalk", "targetTerm": "WarpTalk", "caseSensitive": true})),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+
+    // Member: 403 on every write, 200 on reads.
+    let (s, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/glossaries/{gid}/terms"),
+        Some(json!({"sourceTerm": "x", "targetTerm": "y"})),
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(
+        &app,
+        "POST",
+        "/api/v1/glossaries",
+        Some(json!({"workspaceId": ws, "name": "Nope", "sourceLanguage": "en", "targetLanguage": "vi"})),
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/v1/glossaries/{gid}"),
+        None,
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    let (s, list) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/glossaries/workspace/{ws}"),
+        None,
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["name"], "Product");
+    assert_eq!(list[0]["termCount"], 1);
+    let (s, terms) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/glossaries/{gid}/terms"),
+        None,
+        Some(&member),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{terms}");
+    assert_eq!(terms[0]["sourceTerm"], "WarpTalk");
+
+    // Pipeline snapshot.
+    let mut conn = redis.clone();
+    let snap: String = redis::cmd("GET")
+        .arg(format!("glossary:workspace:{ws}"))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let snap: Value = serde_json::from_str(&snap).unwrap();
+    assert_eq!(snap["terms"][0]["source"], "WarpTalk");
+    assert_eq!(snap["terms"][0]["targetLang"], "vi");
+
+    // Non-admin cannot reach the global glossary.
+    let (s, _) = call(
+        &app,
+        "GET",
+        "/api/v1/admin/global-glossary",
+        None,
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
 }

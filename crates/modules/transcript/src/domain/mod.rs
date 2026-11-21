@@ -1,5 +1,7 @@
 //! Entities, value objects, state machines. Pure Rust, no IO.
 
+pub mod glossary;
+
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use warptalk_kernel::{AppError, RoomId, TranscriptId, UserId, WorkspaceId};

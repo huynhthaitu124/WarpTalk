@@ -6,7 +6,9 @@ use uuid::Uuid;
 use warptalk_contracts::{keys, streams};
 use warptalk_kernel::{AppError, AppResult, RoomId};
 
+use crate::application::glossary_ports::{GlossaryFeed, GlossaryScope};
 use crate::application::ports::{EmbeddingIndexRequest, EmbeddingPublisher, PauseGate};
+use crate::domain::glossary::SnapshotTerm;
 
 /// Remembered paused segment ids expire after 30 minutes (spec 12 §5.4).
 pub const PAUSED_SEGMENT_TTL_SECS: i64 = 30 * 60;
@@ -109,5 +111,64 @@ impl EmbeddingPublisher for RedisEmbeddingPublisher {
         .await
         .map(|_| ())
         .map_err(redis_err)
+    }
+}
+
+/// Pub/sub channel announcing a glossary snapshot change; payload `{scope, id, version}`
+/// (`scope` is `workspace` or `global`; `id` is the workspace id, null for global).
+pub const GLOSSARY_CHANGED_CHANNEL: &str = "warptalk:glossary:changed";
+/// Snapshot of the published global terms.
+pub const GLOSSARY_GLOBAL_KEY: &str = "glossary:global";
+/// Counter that hands out snapshot versions (strictly increasing across all scopes).
+const GLOSSARY_VERSION_COUNTER: &str = "glossary:version";
+
+/// Snapshot key of one workspace's glossary terms.
+pub fn glossary_workspace_key(ws: warptalk_kernel::WorkspaceId) -> String {
+    format!("glossary:workspace:{ws}")
+}
+
+/// Writes `glossary:workspace:{id}` / `glossary:global` as `{version, terms:[...]}` and announces
+/// the change on [`GLOSSARY_CHANGED_CHANNEL`]. The pipeline reads these keys (it has no database).
+pub struct RedisGlossaryFeed {
+    conn: ConnectionManager,
+}
+
+impl RedisGlossaryFeed {
+    pub fn new(conn: ConnectionManager) -> Self {
+        Self { conn }
+    }
+}
+
+#[async_trait]
+impl GlossaryFeed for RedisGlossaryFeed {
+    async fn publish(&self, scope: &GlossaryScope, terms: &[SnapshotTerm]) -> AppResult<i64> {
+        let mut conn = self.conn.clone();
+        let version: i64 = redis::cmd("INCR")
+            .arg(GLOSSARY_VERSION_COUNTER)
+            .query_async(&mut conn)
+            .await
+            .map_err(redis_err)?;
+        let (key, scope_name, id) = match scope {
+            GlossaryScope::Workspace(ws) => (
+                glossary_workspace_key(*ws),
+                "workspace",
+                Some(ws.to_string()),
+            ),
+            GlossaryScope::Global => (GLOSSARY_GLOBAL_KEY.to_owned(), "global", None),
+        };
+        let body =
+            serde_json::to_string(&serde_json::json!({ "version": version, "terms": terms }))
+                .map_err(|e| AppError::internal(e.to_string()))?;
+        redis::cmd("SET")
+            .arg(&key)
+            .arg(body)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(redis_err)?;
+        let announce = serde_json::json!({ "scope": scope_name, "id": id, "version": version });
+        warptalk_bus::publish_json(&mut conn, GLOSSARY_CHANGED_CHANNEL, &announce)
+            .await
+            .map_err(redis_err)?;
+        Ok(version)
     }
 }

@@ -1,6 +1,7 @@
 //! HTTP surface: axum routes, handlers, DTOs.
 
 mod dto;
+pub mod glossary;
 mod handlers;
 
 use std::sync::Arc;
