@@ -43,10 +43,13 @@ pub struct SessionParams {
 
 /// Output of a session towards the speaker pipeline.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // Segment is the hot variant; boxing would add an alloc per segment.
 pub enum SttEvent {
     Segment(SttSegment),
     /// The commit finished (possibly with no segments, or after an error).
-    UtteranceDone { ok: bool },
+    UtteranceDone {
+        ok: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
