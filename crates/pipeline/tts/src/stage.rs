@@ -304,6 +304,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn chunk(
         &self,
         t: &Translation,
