@@ -8,7 +8,12 @@ publish = false
 workspace = true
 
 [dependencies]
-warptalk-kernel = { workspace = true }
+warptalk-kernel = { workspace = true, features = ["axum"] }
+warptalk-db = { workspace = true }
+warptalk-web = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+secrecy = { workspace = true }
 warptalk-contracts = { workspace = true }
 warptalk-bus = { workspace = true }
 warptalk-settings = { workspace = true }
@@ -27,6 +32,4 @@ sha2 = { workspace = true }
 metrics = { workspace = true }
 
 [dev-dependencies]
-warptalk-db = { workspace = true }
-sqlx = { workspace = true }
 futures = { workspace = true }

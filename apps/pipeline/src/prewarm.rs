@@ -6,7 +6,9 @@
 //! [`PrewarmSynthesizer::prewarm`] is called when a segment enters MT, so the dial overlaps the
 //! 650-900 ms the translation takes; the stage's own `open_context` then claims the ready
 //! context. Contexts nobody claims are cancelled after `max_age`, and at most
-//! [`MAX_PER_KEY`] are kept per (language, voice).
+//! [`MAX_PER_KEY`] are kept per (language, voice). The key is shared by every speaker that
+//! resolves to the same stock voice, so the cap must cover the speakers talking at once, not
+//! one (measured: with a cap of 1, 16 concurrent speakers pre-warmed only 40% of their opens).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,7 +19,7 @@ use tokio::sync::Notify;
 use warptalk_tts::{ContextParams, SynthContext, Synthesizer, TtsError};
 
 /// Pre-opened contexts kept per (language, voice).
-pub const MAX_PER_KEY: usize = 1;
+pub const MAX_PER_KEY: usize = 8;
 
 type Key = (String, String);
 
