@@ -204,7 +204,7 @@ impl RoomService {
         id: RoomId,
         user: UserId,
         req: JoinRoom,
-    ) -> AppResult<ParticipantRecord> {
+    ) -> AppResult<(RoomRecord, ParticipantRecord)> {
         let (room, _) = self.access(id, user).await?;
         self.join_room(room, user, req).await
     }
@@ -214,7 +214,7 @@ impl RoomService {
         code: &str,
         user: UserId,
         req: JoinRoom,
-    ) -> AppResult<ParticipantRecord> {
+    ) -> AppResult<(RoomRecord, ParticipantRecord)> {
         let room = self
             .repo
             .find_by_code(code.trim().to_lowercase().as_str())
@@ -228,7 +228,7 @@ impl RoomService {
         room: RoomRecord,
         user: UserId,
         req: JoinRoom,
-    ) -> AppResult<ParticipantRecord> {
+    ) -> AppResult<(RoomRecord, ParticipantRecord)> {
         if !valid_language(&req.speak_language) || !valid_language(&req.listen_language) {
             return Err(validation(
                 "INVALID_LANGUAGE",
@@ -267,8 +267,10 @@ impl RoomService {
             })
             .await?;
         self.publish(&m, false).await?;
-        m.participant
-            .ok_or_else(|| AppError::internal("join returned no participant"))
+        let p = m
+            .participant
+            .ok_or_else(|| AppError::internal("join returned no participant"))?;
+        Ok((m.room, p))
     }
 
     pub async fn lifecycle(

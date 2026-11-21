@@ -9,7 +9,9 @@ use chrono::{Duration, Utc};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use warptalk_config::JwtConfig;
-use warptalk_identity::{IdentityDeps, IdentityModule, MIGRATIONS, Policy, VerificationMailer};
+use warptalk_identity::{
+    DevMailCapture, IdentityDeps, IdentityModule, MIGRATIONS, Policy, VerificationMailer,
+};
 use warptalk_kernel::{AppError, FixedClock};
 use warptalk_web::JwtKeys;
 
@@ -577,4 +579,64 @@ async fn queries_facade_and_system_admin_claim() {
             .unwrap()
             .sa
     );
+}
+
+#[tokio::test]
+async fn me_returns_account_overview() {
+    let Some(env) = setup().await else { return };
+    let email = fresh_email();
+    let user_id = register(&env, &email).await;
+    let token = env.mailer.token_for(&email);
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        "/auth/verify-email",
+        Some(json!({ "token": token })),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, l) = login(&env, &email, PW).await;
+    let at = l["accessToken"].as_str().unwrap().to_owned();
+
+    let (s, me) = call(&env.app, "GET", "/me", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert!(me["email"].is_null());
+
+    let (s, me) = call(&env.app, "GET", "/me", None, Some(&at)).await;
+    assert_eq!(s, StatusCode::OK, "{me}");
+    assert_eq!(me["userId"], user_id);
+    assert_eq!(me["email"], email);
+    assert_eq!(me["fullName"], "Test User");
+    assert!(me["avatarUrl"].is_null());
+    assert!(me["preferredLanguage"].is_string());
+    assert!(me["timezone"].is_string());
+    assert_eq!(me["emailVerified"], true);
+    assert_eq!(me["systemAdmin"], false);
+}
+
+#[tokio::test]
+async fn dev_mail_capture_is_opt_in_and_stores_latest_raw_token() {
+    let Ok(url) = std::env::var("REDIS_URL") else {
+        eprintln!("REDIS_URL not set; skipping");
+        return;
+    };
+    assert!(DevMailCapture::from_flag(None, &url).unwrap().is_none());
+    assert!(
+        DevMailCapture::from_flag(Some("true"), &url)
+            .unwrap()
+            .is_none()
+    );
+    let m = DevMailCapture::from_flag(Some("1"), &url).unwrap().unwrap();
+    let email = format!("User-{}@Example.test", uuid::Uuid::new_v4().simple());
+    m.send_verification(&email, "first").await.unwrap();
+    m.send_verification(&email, "second").await.unwrap();
+    let client = redis::Client::open(url).unwrap();
+    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+    let key = format!("dev:mail:verify:{}", email.to_lowercase());
+    assert_eq!(DevMailCapture::key("verify", &email), key);
+    let v: String = redis::AsyncCommands::get(&mut conn, &key).await.unwrap();
+    assert_eq!(v, "second");
+    let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, &key).await.unwrap();
+    assert!(ttl > 3500 && ttl <= 3600);
 }

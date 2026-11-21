@@ -7,8 +7,8 @@ use warptalk_web::{ApiResult, AuthUser};
 use super::AppState;
 use super::dto::{
     AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
-    CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, ListQuery, PageDto,
-    ParticipantDto, RoomDto, RoutesDto,
+    CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, JoinedDto, ListQuery,
+    PageDto, ParticipantDto, RoomDto, RoutesDto,
 };
 use crate::application::ports::RoomRecord;
 use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom};
@@ -68,7 +68,7 @@ pub async fn join_by_code(
     State(s): State<AppState>,
     auth: AuthUser,
     Json(req): Json<JoinByCodeRequest>,
-) -> ApiResult<ParticipantDto> {
+) -> ApiResult<JoinedDto> {
     if req.room_code.trim().chars().count() != 12 {
         return Err(AppError::validation(
             "INVALID_ROOM_CODE",
@@ -95,7 +95,7 @@ pub async fn join_by_id(
     auth: AuthUser,
     Path(id): Path<RoomId>,
     Json(req): Json<JoinByIdRequest>,
-) -> ApiResult<ParticipantDto> {
+) -> ApiResult<JoinedDto> {
     let p = s
         .service
         .join_by_id(

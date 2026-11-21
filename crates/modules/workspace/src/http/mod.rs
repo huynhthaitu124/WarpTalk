@@ -10,11 +10,13 @@ use axum::extract::FromRef;
 use axum::routing::{delete, get, post, put};
 use warptalk_web::JwtKeys;
 
+use crate::application::invitations::InvitationService;
 use crate::application::service::WorkspaceService;
 
 #[derive(Clone)]
 pub struct AppState {
     pub service: Arc<WorkspaceService>,
+    pub invitations: Arc<InvitationService>,
     pub jwt: JwtKeys,
 }
 
@@ -48,6 +50,24 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/workspaces/{id}/transfer-ownership",
             post(handlers::transfer),
+        )
+        .route(
+            "/workspaces/{id}/invitations",
+            post(handlers::invite).get(handlers::list_invitations),
+        )
+        .route(
+            "/workspaces/{id}/invitations/{inv_id}",
+            delete(handlers::revoke_invitation),
+        )
+        .route(
+            "/workspaces/{id}/invitations/{inv_id}/resend",
+            post(handlers::resend_invitation),
+        )
+        .route("/invitations/accept", post(handlers::accept_invitation))
+        .route("/invitations/pending", get(handlers::pending_invitations))
+        .route(
+            "/invitations/{inv_id}/accept",
+            post(handlers::accept_invitation_by_id),
         )
         .with_state(state)
 }

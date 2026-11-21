@@ -32,6 +32,7 @@ pub(crate) fn router(state: HttpState) -> Router {
         .route("/auth/login", post(handlers::login))
         .route("/auth/refresh", post(handlers::refresh))
         .route("/auth/logout", post(handlers::logout))
+        .route("/me", get(handlers::me))
         .route(
             "/me/profile",
             get(handlers::get_profile).put(handlers::put_profile),

@@ -6,10 +6,12 @@ use warptalk_web::{ApiResult, AuthUser};
 
 use super::AppState;
 use super::dto::{
-    ChangeRoleRequest, CreateWorkspaceRequest, MemberDto, TransferRequest, WorkspaceDto,
-    WorkspaceSearchQuery, map_page,
+    AcceptDto, AcceptRequest, ChangeRoleRequest, CreateWorkspaceRequest, InvitationDto,
+    InviteRequest, MemberDto, TransferRequest, WorkspaceDto, WorkspaceSearchQuery, map_page,
 };
+use crate::application::invitations::AcceptBy;
 use crate::domain::WorkspaceSettings;
+use uuid::Uuid;
 
 pub async fn create(
     State(s): State<AppState>,
@@ -129,4 +131,82 @@ pub async fn transfer(
         .transfer_ownership(id, auth.user_id(), req.new_owner_id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn invite(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<WorkspaceId>,
+    Json(req): Json<InviteRequest>,
+) -> AppResult<(StatusCode, Json<InvitationDto>)> {
+    let rec = s
+        .invitations
+        .invite(id, auth.user_id(), &req.email, &req.role)
+        .await?;
+    Ok((StatusCode::CREATED, Json(rec.into())))
+}
+
+pub async fn list_invitations(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<WorkspaceId>,
+) -> ApiResult<Vec<InvitationDto>> {
+    let list = s.invitations.list(id, auth.user_id()).await?;
+    Ok(Json(list.into_iter().map(Into::into).collect()))
+}
+
+pub async fn revoke_invitation(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path((id, inv_id)): Path<(WorkspaceId, Uuid)>,
+) -> AppResult<StatusCode> {
+    s.invitations.revoke(id, auth.user_id(), inv_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn resend_invitation(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path((id, inv_id)): Path<(WorkspaceId, Uuid)>,
+) -> ApiResult<InvitationDto> {
+    Ok(Json(
+        s.invitations
+            .resend(id, auth.user_id(), inv_id)
+            .await?
+            .into(),
+    ))
+}
+
+pub async fn accept_invitation(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<AcceptRequest>,
+) -> ApiResult<AcceptDto> {
+    Ok(Json(
+        s.invitations
+            .accept_token(auth.user_id(), &req.token)
+            .await?
+            .into(),
+    ))
+}
+
+pub async fn accept_invitation_by_id(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(inv_id): Path<Uuid>,
+) -> ApiResult<AcceptDto> {
+    Ok(Json(
+        s.invitations
+            .accept(auth.user_id(), AcceptBy::Id(inv_id))
+            .await?
+            .into(),
+    ))
+}
+
+pub async fn pending_invitations(
+    State(s): State<AppState>,
+    auth: AuthUser,
+) -> ApiResult<Vec<InvitationDto>> {
+    let list = s.invitations.pending_for_user(auth.user_id()).await?;
+    Ok(Json(list.into_iter().map(Into::into).collect()))
 }

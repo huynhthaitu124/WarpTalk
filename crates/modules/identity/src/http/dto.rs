@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use warptalk_kernel::UserId;
 
-use crate::application::AuthSession;
+use crate::application::{AuthSession, MeView};
 use crate::domain::{Profile, Settings};
 
 #[derive(Deserialize)]
@@ -106,6 +106,34 @@ impl From<Settings> for SettingsDto {
             auto_translate_enabled: s.auto_translate_enabled,
             default_speak_language: Some(s.default_speak_language),
             default_listen_language: Some(s.default_listen_language),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeDto {
+    pub user_id: UserId,
+    pub email: String,
+    pub full_name: String,
+    pub avatar_url: Option<String>,
+    pub preferred_language: String,
+    pub timezone: String,
+    pub email_verified: bool,
+    pub system_admin: bool,
+}
+
+impl From<MeView> for MeDto {
+    fn from(m: MeView) -> Self {
+        Self {
+            user_id: m.user_id,
+            email: m.email,
+            full_name: m.profile.full_name,
+            avatar_url: m.profile.avatar_url,
+            preferred_language: m.profile.preferred_language,
+            timezone: m.profile.timezone,
+            email_verified: m.email_verified,
+            system_admin: m.system_admin,
         }
     }
 }

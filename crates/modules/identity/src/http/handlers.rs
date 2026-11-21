@@ -99,3 +99,7 @@ pub async fn put_settings(
         .await?;
     Ok(Json(out.into()))
 }
+
+pub async fn me(State(s): State<HttpState>, u: AuthUser) -> AppResult<Json<MeDto>> {
+    Ok(Json(s.profile.me(u.user_id()).await?.into()))
+}

@@ -1043,3 +1043,86 @@ async fn bridge_endpoints_refuse_native_rooms() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn join_returns_room_summary_and_participants_can_read_room() {
+    let Some(c) = ctx().await else { return };
+    let (ws, users) = members(&c, 1);
+    let host = users[0];
+    let guest = UserId::new(); // not a workspace member
+    let rooms = "/translation-rooms";
+    let (st, v) = c
+        .call(
+            Method::POST,
+            rooms,
+            host,
+            Some(
+                json!({"workspaceId": ws, "title": "Guests", "sourceLanguage": "vi",
+                        "targetLanguages": ["en"]}),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    let code = v["roomCode"].as_str().unwrap().to_owned();
+
+    // before joining the guest cannot see the room
+    let (st, _) = c
+        .call(Method::GET, &format!("{rooms}/{room}"), guest, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // join by code: roomId + summary next to the participant fields
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("{rooms}/join"),
+            guest,
+            Some(json!({"roomCode": code, "speakLanguage": "en", "listenLanguage": "en"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["roomId"], room);
+    assert_eq!(v["room"]["title"], "Guests");
+    assert_eq!(v["room"]["status"], "WAITING");
+    assert_eq!(v["room"]["roomType"], "NATIVE");
+    assert_eq!(v["room"]["sourceLanguage"], "vi");
+    assert_eq!(v["room"]["targetLanguages"], json!(["en"]));
+    assert_eq!(v["status"], "WAITING"); // participant status stays flat
+    let pid = v["id"].as_str().unwrap().to_owned();
+
+    // the participant may now read the room
+    let (st, v) = c
+        .call(Method::GET, &format!("{rooms}/{room}"), guest, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["id"], room);
+
+    // join by id (already a participant, outside the workspace) also answers with the summary
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("{rooms}/{room}/join"),
+            guest,
+            Some(json!({"speakLanguage": "en", "listenLanguage": "en"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["roomId"], room);
+    assert_eq!(v["room"]["title"], "Guests");
+
+    // a kicked participant loses read access
+    let (st, v) = c
+        .call(
+            Method::PUT,
+            &format!("{rooms}/{room}/participants/{pid}/kick"),
+            host,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, _) = c
+        .call(Method::GET, &format!("{rooms}/{room}"), guest, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

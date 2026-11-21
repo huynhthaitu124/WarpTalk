@@ -21,7 +21,7 @@ use warptalk_web::JwtKeys;
 
 pub use application::{IdentityRepository, VerificationMailer};
 pub use domain::{Policy, UserSummary};
-pub use infrastructure::LogMailer;
+pub use infrastructure::{DevMailCapture, LogMailer};
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "identity",

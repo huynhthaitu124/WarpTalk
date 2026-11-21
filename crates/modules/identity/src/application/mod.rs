@@ -7,4 +7,4 @@ pub mod tokens;
 
 pub use auth::{AuthService, AuthSession, RegisterCommand};
 pub use ports::{IdentityRepository, VerificationMailer};
-pub use profile::{ProfileService, SettingsUpdate};
+pub use profile::{MeView, ProfileService, SettingsUpdate};

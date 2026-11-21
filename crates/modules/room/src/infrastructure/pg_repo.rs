@@ -697,7 +697,8 @@ impl RoomRepo for PgRoomRepo {
     async fn has_participant(&self, room: RoomId, user: UserId) -> AppResult<bool> {
         sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM translation_room.translation_room_participants \
-             WHERE translation_room_id = $1 AND user_id = $2)",
+             WHERE translation_room_id = $1 AND user_id = $2 \
+             AND status NOT IN ('KICKED', 'REJECTED'))",
         )
         .bind(room.as_uuid())
         .bind(user.as_uuid())

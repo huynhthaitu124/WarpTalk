@@ -28,6 +28,24 @@ impl ProfileService {
             .ok_or_else(|| AppError::not_found("user not found"))
     }
 
+    /// Own account overview for `GET /me`.
+    pub async fn me(&self, id: UserId) -> AppResult<MeView> {
+        let profile = self.get_profile(id).await?;
+        let auth = self
+            .repo
+            .find_auth_by_id(id)
+            .await?
+            .ok_or_else(|| AppError::not_found("user not found"))?;
+        let system_admin = self.repo.is_system_admin(id).await?;
+        Ok(MeView {
+            user_id: id,
+            email: auth.email,
+            profile,
+            email_verified: auth.flags.email_verified,
+            system_admin,
+        })
+    }
+
     /// `timezone: None` keeps the current value.
     pub async fn update_profile(
         &self,
@@ -87,6 +105,15 @@ impl ProfileService {
             .await?;
         Ok(settings)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MeView {
+    pub user_id: UserId,
+    pub email: String,
+    pub profile: Profile,
+    pub email_verified: bool,
+    pub system_admin: bool,
 }
 
 #[derive(Debug, Clone)]

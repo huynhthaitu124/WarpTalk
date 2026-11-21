@@ -16,9 +16,36 @@ use warptalk_kernel::{AppResult, Clock, SystemClock, UserId, WorkspaceId, Worksp
 use warptalk_web::JwtKeys;
 use warptalk_workspace::domain::role_id;
 use warptalk_workspace::{
-    MIGRATIONS, NoopUserDirectory, UserSummary, WorkspaceDeps, WorkspaceModule,
-    application::ports::UserDirectory,
+    DevInvitationMailCapture, InvitationMail, InvitationMailer, MIGRATIONS, NoopUserDirectory,
+    UserSummary, WorkspaceDeps, WorkspaceModule, application::ports::UserDirectory,
 };
+
+#[derive(Default)]
+struct CaptureMailer(std::sync::Mutex<Vec<(String, String)>>);
+
+#[async_trait]
+impl InvitationMailer for CaptureMailer {
+    async fn send_invitation(&self, m: &InvitationMail<'_>) -> AppResult<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((m.to.to_owned(), m.token.to_owned()));
+        Ok(())
+    }
+}
+
+impl CaptureMailer {
+    fn token_for(&self, email: &str) -> String {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(e, _)| e == email)
+            .map(|(_, t)| t.clone())
+            .unwrap()
+    }
+}
 
 struct Ctx {
     pool: PgPool,
@@ -49,6 +76,13 @@ impl UserDirectory for StubDir {
 }
 
 async fn ctx_with(users: Arc<dyn UserDirectory>) -> Option<Ctx> {
+    ctx_with_mailer(users, Arc::new(CaptureMailer::default())).await
+}
+
+async fn ctx_with_mailer(
+    users: Arc<dyn UserDirectory>,
+    mailer: Arc<dyn InvitationMailer>,
+) -> Option<Ctx> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
         println!("DATABASE_URL unset; skipping");
         return None;
@@ -65,12 +99,16 @@ async fn ctx_with(users: Arc<dyn UserDirectory>) -> Option<Ctx> {
         refresh_ttl_seconds: 3600,
     });
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let module = WorkspaceModule::new(WorkspaceDeps {
-        pool: pool.clone(),
-        jwt: keys.clone(),
-        clock,
-        users,
-    });
+    let module = WorkspaceModule::with_invitations(
+        WorkspaceDeps {
+            pool: pool.clone(),
+            jwt: keys.clone(),
+            clock,
+            users,
+        },
+        mailer,
+        7,
+    );
     Some(Ctx {
         pool,
         router: module.router(),
@@ -555,4 +593,324 @@ async fn delete_by_non_owner_403_then_owner_soft_deletes() {
             .await
             .unwrap();
     assert!(deleted);
+}
+
+// ---------------------------------------------------------------- invitations
+
+async fn inv_ctx() -> Option<(Ctx, Arc<CaptureMailer>)> {
+    let mailer = Arc::new(CaptureMailer::default());
+    let c = ctx_with_mailer(Arc::new(StubDir), mailer.clone()).await?;
+    Some((c, mailer))
+}
+
+fn email_of(u: UserId) -> String {
+    format!("{u}@example.test")
+}
+
+#[tokio::test]
+async fn invitation_full_flow() {
+    let Some((c, mailer)) = inv_ctx().await else {
+        return;
+    };
+    let owner = UserId::new();
+    let guest = UserId::new();
+    let ws = c.create_ws(owner, &uniq("Inv")).await;
+    let base = format!("/workspaces/{ws}/invitations");
+    let email = email_of(guest);
+
+    // invite (mixed-case input is normalised)
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &base,
+            owner,
+            Some(json!({ "email": email.to_uppercase(), "role": "MEMBER" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["status"], "pending");
+    assert_eq!(v["role"], "MEMBER");
+    assert_eq!(v["deliveryStatus"], "Sent");
+    assert!(v.get("token").is_none());
+    let inv_id = v["id"].as_str().unwrap().to_owned();
+    let token = mailer.token_for(&email);
+
+    // stored hashed only, 7-day expiry
+    let (stored, secs): (Option<String>, f64) = sqlx::query_as(
+        "SELECT token_hash, EXTRACT(EPOCH FROM (expires_at - created_at))::float8 \
+         FROM workspace.workspace_invitations WHERE id = $1",
+    )
+    .bind(inv_id.parse::<Uuid>().unwrap())
+    .fetch_one(&c.pool)
+    .await
+    .unwrap();
+    let stored = stored.unwrap();
+    assert_ne!(stored, token);
+    assert_eq!(stored.len(), 64);
+    assert!((secs - 7.0 * 86400.0).abs() < 5.0);
+
+    // duplicate pending -> 409, also different case
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &base,
+            owner,
+            Some(json!({ "email": email, "role": "ADMIN" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["code"], "INVITATION_PENDING");
+
+    // list
+    let (st, v) = c.call(Method::GET, &base, owner, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v.as_array().unwrap().len(), 1);
+
+    // guest sees it as pending, no token leaked
+    let (st, v) = c
+        .call(Method::GET, "/invitations/pending", guest, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v.as_array().unwrap().len(), 1);
+    assert_eq!(v[0]["id"], inv_id);
+    assert!(v[0]["workspaceName"].as_str().is_some());
+
+    // resend replaces the token; the old one stops working
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("{base}/{inv_id}/resend"),
+            owner,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["sentCount"], 2);
+    let new_token = mailer.token_for(&email);
+    assert_ne!(new_token, token);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            "/invitations/accept",
+            guest,
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{v}");
+    assert_eq!(v["code"], "INVITATION_INVALID");
+
+    // wrong user (email mismatch)
+    let stranger = UserId::new();
+    let (st, v) = c
+        .call(
+            Method::POST,
+            "/invitations/accept",
+            stranger,
+            Some(json!({ "token": new_token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(v["code"], "INVITATION_EMAIL_MISMATCH");
+
+    // accept, then accept again (idempotent)
+    for _ in 0..2 {
+        let (st, v) = c
+            .call(
+                Method::POST,
+                "/invitations/accept",
+                guest,
+                Some(json!({ "token": new_token })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+        assert_eq!(v["workspaceId"], ws);
+        assert_eq!(v["role"], "MEMBER");
+    }
+    let (st, v) = c
+        .call(Method::GET, &format!("/workspaces/{ws}"), guest, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["myRole"], "MEMBER");
+    let (_, v) = c
+        .call(Method::GET, "/invitations/pending", guest, None)
+        .await;
+    assert!(v.as_array().unwrap().is_empty());
+
+    // accepted invitations cannot be revoked
+    let (st, _) = c
+        .call(Method::DELETE, &format!("{base}/{inv_id}"), owner, None)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn invitation_authorization_and_validation() {
+    let Some((c, _)) = inv_ctx().await else {
+        return;
+    };
+    let owner = UserId::new();
+    let admin = UserId::new();
+    let member = UserId::new();
+    let outsider = UserId::new();
+    let ws = c.create_ws(owner, &uniq("InvAuth")).await;
+    c.add_member(&ws, admin, WorkspaceRole::Admin).await;
+    c.add_member(&ws, member, WorkspaceRole::Member).await;
+    let base = format!("/workspaces/{ws}/invitations");
+    let body = |e: &str, r: &str| Some(json!({ "email": e, "role": r }));
+
+    let (st, v) = c
+        .call(Method::POST, &base, owner, body("a@example.test", "OWNER"))
+        .await;
+    assert!(st.is_client_error());
+    assert_eq!(v["code"], "INVALID_ROLE");
+    let (st, v) = c
+        .call(Method::POST, &base, owner, body("not-an-email", "MEMBER"))
+        .await;
+    assert!(st.is_client_error());
+    assert_eq!(v["code"], "INVALID_EMAIL");
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &base,
+            member,
+            body("b@example.test", "MEMBER"),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = c.call(Method::GET, &base, member, None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &base,
+            outsider,
+            body("b@example.test", "MEMBER"),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // admin may invite members but not admins (BR-17)
+    let (st, _) = c
+        .call(Method::POST, &base, admin, body("c@example.test", "ADMIN"))
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, v) = c
+        .call(Method::POST, &base, admin, body("c@example.test", "MEMBER"))
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap();
+
+    // revoke, after which the same email may be invited again
+    let (st, _) = c
+        .call(Method::DELETE, &format!("{base}/{id}"), admin, None)
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = c
+        .call(Method::POST, &base, admin, body("c@example.test", "MEMBER"))
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = c
+        .call(
+            Method::DELETE,
+            &format!("{base}/{}", Uuid::new_v4()),
+            admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn invitation_expiry() {
+    let Some((c, mailer)) = inv_ctx().await else {
+        return;
+    };
+    let owner = UserId::new();
+    let guest = UserId::new();
+    let ws = c.create_ws(owner, &uniq("InvExp")).await;
+    let base = format!("/workspaces/{ws}/invitations");
+    let email = email_of(guest);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &base,
+            owner,
+            Some(json!({ "email": email, "role": "MEMBER" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let token = mailer.token_for(&email);
+    sqlx::query("UPDATE workspace.workspace_invitations SET expires_at = now() - interval '1 minute' WHERE id = $1")
+        .bind(id)
+        .execute(&c.pool)
+        .await
+        .unwrap();
+    let (st, v) = c
+        .call(Method::GET, "/invitations/pending", guest, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(v.as_array().unwrap().is_empty());
+    let (st, v) = c
+        .call(
+            Method::POST,
+            "/invitations/accept",
+            guest,
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::GONE, "{v}");
+    assert_eq!(v["code"], "INVITATION_EXPIRED");
+    // an expired invitation does not block re-inviting
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &base,
+            owner,
+            Some(json!({ "email": email, "role": "MEMBER" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn dev_invitation_capture_writes_redis_only_when_enabled() {
+    let Ok(url) = std::env::var("REDIS_URL") else {
+        println!("REDIS_URL unset; skipping");
+        return;
+    };
+    assert!(
+        DevInvitationMailCapture::from_flag(None, &url)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        DevInvitationMailCapture::from_flag(Some("0"), &url)
+            .unwrap()
+            .is_none()
+    );
+    let m = DevInvitationMailCapture::from_flag(Some("1"), &url)
+        .unwrap()
+        .unwrap();
+    let email = format!("{}@Example.test", Uuid::new_v4().simple());
+    m.send_invitation(&InvitationMail {
+        to: &email,
+        workspace_name: "W",
+        inviter_name: "I",
+        role: WorkspaceRole::Member,
+        token: "raw-token",
+        expires_at: chrono::Utc::now(),
+    })
+    .await
+    .unwrap();
+    let client = redis::Client::open(url).unwrap();
+    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+    let key = DevInvitationMailCapture::key(&email);
+    assert_eq!(
+        key,
+        format!("dev:mail:workspace-invite:{}", email.to_lowercase())
+    );
+    let v: String = redis::AsyncCommands::get(&mut conn, &key).await.unwrap();
+    assert_eq!(v, "raw-token");
+    let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, &key).await.unwrap();
+    assert!(ttl > 3500 && ttl <= 3600);
 }

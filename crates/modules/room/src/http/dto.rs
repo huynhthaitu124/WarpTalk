@@ -259,6 +259,42 @@ impl From<ParticipantRecord> for ParticipantDto {
     }
 }
 
+/// Join response: the participant fields (flat, as before) plus `roomId` and a room summary.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinedDto {
+    pub room_id: RoomId,
+    pub room: RoomSummaryDto,
+    #[serde(flatten)]
+    pub participant: ParticipantDto,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomSummaryDto {
+    pub title: String,
+    pub status: &'static str,
+    pub room_type: &'static str,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+}
+
+impl From<(RoomRecord, ParticipantRecord)> for JoinedDto {
+    fn from((r, p): (RoomRecord, ParticipantRecord)) -> Self {
+        Self {
+            room_id: r.id,
+            room: RoomSummaryDto {
+                title: r.title,
+                status: r.status.as_str(),
+                room_type: r.room_type.as_str(),
+                source_language: r.source_language,
+                target_languages: r.target_languages,
+            },
+            participant: p.into(),
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteDto {
