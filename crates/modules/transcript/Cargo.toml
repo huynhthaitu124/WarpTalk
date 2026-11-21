@@ -8,3 +8,24 @@ publish = false
 workspace = true
 
 [dependencies]
+axum = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+warptalk-kernel = { workspace = true, features = ["axum"] }
+warptalk-contracts = { workspace = true }
+warptalk-bus = { workspace = true }
+warptalk-db = { workspace = true }
+warptalk-web = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+jsonwebtoken = { workspace = true }
+warptalk-config = { workspace = true }

@@ -199,3 +199,22 @@ impl SttSession for FakeSession {
         let _ = worker.await;
     }
 }
+
+/// A minimal [`crate::Utterance`] for tests of STT implementations.
+pub fn test_utterance(room: &str, speaker: &str, seq: u64, audio: Vec<f32>) -> crate::Utterance {
+    let ms = (audio.len() as u64 * 1000 / u64::from(SAMPLE_RATE_HZ)) as u32;
+    let mut stamps = crate::Stamps::new(std::time::Instant::now());
+    stamps.stt_commit = Some(std::time::Instant::now());
+    crate::Utterance {
+        room: room.into(),
+        speaker: speaker.into(),
+        seq,
+        lang: None,
+        audio: audio.into(),
+        speech_ms: ms,
+        total_ms: ms,
+        hangover_ms: 0,
+        reason: warptalk_ingress::EndReason::Silence,
+        stamps,
+    }
+}

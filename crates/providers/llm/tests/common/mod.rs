@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use warptalk_llm::*;
 use wiremock::{MockServer, ResponseTemplate};
 

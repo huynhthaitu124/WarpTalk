@@ -1,1 +1,6 @@
-//! Use cases (commands/queries) and ports (traits) implemented elsewhere.
+//! Use cases and ports.
+
+pub mod cache;
+pub mod ingest;
+pub mod ports;
+pub mod service;

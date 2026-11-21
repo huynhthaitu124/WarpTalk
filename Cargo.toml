@@ -80,6 +80,7 @@ warptalk-transcript = { path = "crates/modules/transcript" }
 warptalk-assistant = { path = "crates/modules/assistant" }
 warptalk-billing = { path = "crates/modules/billing" }
 warptalk-notification = { path = "crates/modules/notification" }
+warptalk-knowledge = { path = "crates/modules/knowledge" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use eventsource_stream::Eventsource;
@@ -17,21 +16,16 @@ use crate::config::ProviderConfig;
 use crate::error::LlmError;
 use crate::model::{StreamEvent, Usage};
 
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-/// One shared connection pool; key / base_url / headers travel with each request.
-fn shared_client() -> Result<reqwest::Client, LlmError> {
-    if let Some(c) = CLIENT.get() {
-        return Ok(c.clone());
-    }
-    let c = reqwest::Client::builder()
+/// One client (connection pool) per provider config. Not a process-wide static: a pool is bound
+/// to the runtime that created it.
+fn build_client() -> Result<reqwest::Client, LlmError> {
+    reqwest::Client::builder()
         // Never follow redirects: a redirect could forward credentials to another host.
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .user_agent("warptalk-llm")
         .build()
-        .map_err(|e| LlmError::Transport(e.without_url().to_string()))?;
-    Ok(CLIENT.get_or_init(|| c).clone())
+        .map_err(|e| LlmError::Transport(e.without_url().to_string()))
 }
 
 pub(crate) fn map_reqwest(e: reqwest::Error) -> LlmError {
@@ -119,7 +113,7 @@ impl HttpCore {
             Some((name, value))
         };
         Ok(Self {
-            client: shared_client()?,
+            client: build_client()?,
             base,
             api_key: cfg.api_key.clone(),
             headers,

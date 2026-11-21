@@ -33,12 +33,14 @@ impl std::fmt::Debug for AnthropicProvider {
 /// Claude 4.7+/5.x style models. UNVERIFIED (doc marks it [V] for 5.5 only): forced tool_choice
 /// is rejected and `temperature` below 1 is a 400 on these.
 fn modern(model: &str) -> bool {
-    let m = model.to_lowercase();
-    m.contains("-5-")
-        || m.ends_with("-5")
-        || m.contains("4-7")
-        || m.contains("4-8")
-        || m.contains("4-9")
+    let mut nums = model
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty() && s.len() <= 2)
+        .filter_map(|s| s.parse::<u32>().ok());
+    match (nums.next(), nums.next()) {
+        (Some(major), minor) => major >= 5 || (major == 4 && minor.unwrap_or(0) >= 7),
+        _ => false,
+    }
 }
 
 /// Anthropic structured outputs require `additionalProperties: false` on every object.
@@ -83,7 +85,8 @@ impl AnthropicProvider {
             .map_or(0, |h| h.stable_prefix_messages);
         let mut system = req.system.clone().unwrap_or_default();
         let mut messages: Vec<Value> = Vec::new();
-        let mut cache_idx: Option<usize> = None;
+        // (message index, block index) of the last block of the stable prefix.
+        let mut cache_pos: Option<(usize, usize)> = None;
 
         for (i, m) in req.messages.iter().enumerate() {
             if m.role == Role::System {
@@ -140,15 +143,22 @@ impl AnthropicProvider {
                     messages.push(json!({"role": role, "content": results}));
                 }
             }
-            if prefix > 0 && i + 1 == prefix && !messages.is_empty() {
-                cache_idx = Some(messages.len() - 1);
+            if prefix > 0 && i + 1 == prefix {
+                let n_blocks = messages
+                    .last()
+                    .and_then(|l| l.get("content"))
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                if n_blocks > 0 {
+                    cache_pos = Some((messages.len() - 1, n_blocks - 1));
+                }
             }
         }
-        let last_block = cache_idx.and_then(|ci| {
-            messages[ci]
+        let last_block = cache_pos.and_then(|(mi, bi)| {
+            messages[mi]
                 .get_mut("content")
                 .and_then(Value::as_array_mut)
-                .and_then(|a| a.last_mut())
+                .and_then(|a| a.get_mut(bi))
         });
         if let Some(last) = last_block {
             let ty = last.get("type").and_then(Value::as_str).unwrap_or("");
