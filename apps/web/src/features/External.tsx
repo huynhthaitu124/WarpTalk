@@ -10,7 +10,7 @@ import { useWorkspace } from '@/lib/workspace';
 import { useMeetingJoin, useRoom } from '@/lib/queries';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
 import {
-  PROVIDER_LABEL, freshAccessToken, leaseIsStale, parseMeetingLink, useBridgeAudioMode, useBridgeTakeover, useClaimBridge, useStartBridgeRoom,
+  PROVIDER_LABEL, freshAccessToken, leaseIsStale, leaseRemainingSeconds, parseMeetingLink, useBridgeAudioMode, useBridgeRelease, useBridgeTakeover, useClaimBridge, useStartBridgeRoom,
 } from '@/lib/bridge';
 import {
   nativeErrorCode, nativeErrorMessage, useCaptureLive, useNative,
@@ -66,6 +66,7 @@ export function ExternalPage() {
   const room = useRoom(roomId ?? undefined);
   const claim = useClaimBridge();
   const takeover = useBridgeTakeover(roomId ?? undefined);
+  const release = useBridgeRelease(roomId ?? undefined);
   const audioMode = useBridgeAudioMode(roomId ?? undefined);
   const startRoom = useStartBridgeRoom(roomId ?? undefined);
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null);
@@ -78,8 +79,8 @@ export function ExternalPage() {
   const roomLive = !!r && LIVE.includes(r.status);
   const roomTerminal = !!r && TERMINAL.includes(r.status);
   const running = live.status.state === 'running' || live.status.state === 'starting';
-  const leaseSeconds = claimInfo?.leaseSeconds ?? 45;
-  const stale = !!bridge && leaseIsStale(bridge.capturerLeaseAt, leaseSeconds, now);
+  const leaseLeft = leaseRemainingSeconds(bridge, room.dataUpdatedAt, now);
+  const stale = !!bridge && leaseIsStale(bridge, room.dataUpdatedAt, now);
 
   const voiceReady = !!caps?.voiceMode && (caps?.outputDevices.length ?? 0) > 0;
   const outputDevices = useMemo(() => caps?.outputDevices ?? [], [caps]);
@@ -134,6 +135,7 @@ export function ExternalPage() {
         displayName: profile.data?.fullName,
         sourceLanguage: far,
         targetLanguages: [listen],
+        listenLanguage: listen,
       });
       setRoomId(res.id);
       setClaimInfo({ created: res.created, heartbeatIntervalSeconds: res.heartbeatIntervalSeconds, leaseSeconds: res.leaseSeconds });
@@ -185,7 +187,11 @@ export function ExternalPage() {
   async function stopCapture() {
     if (!native) return;
     setBusy('stop');
-    try { apply(await native.stopExternalCapture()); } catch (e) { pushError({ code: nativeErrorCode(e), message: nativeErrorMessage(e) }); } finally { setBusy(null); }
+    try {
+      apply(await native.stopExternalCapture());
+      // Hand the capturer role back right away instead of letting the lease run out (best effort).
+      if (isCapturer) await release.mutateAsync().catch(() => undefined);
+    } catch (e) { pushError({ code: nativeErrorCode(e), message: nativeErrorMessage(e) }); } finally { setBusy(null); }
   }
 
   // ---- auth-required -> refresh the session -> updateAuth
@@ -414,7 +420,7 @@ export function ExternalPage() {
                         <KeyValue label="Audio mode" testId="bridge-audio-mode">{bridge.audioMode === 'voice' ? 'Voice (dubbed into the call)' : 'Text only'}</KeyValue>
                         <KeyValue label="Capturer heartbeat" testId="bridge-lease">
                           {bridge.capturerUserId ? (
-                            <span className="flex items-center gap-2">{ago(bridge.capturerLeaseAt, now)}{stale && <Badge tone="warning" data-testid="lease-stale">Stale</Badge>}</span>
+                            <span className="flex items-center gap-2">{ago(bridge.capturerLeaseAt, now)}{!stale && leaseLeft !== null && <span className="text-body-sm text-ink-subtle" data-testid="lease-left">lease ends in {leaseLeft}s</span>}{stale && <Badge tone="warning" data-testid="lease-stale">Stale</Badge>}</span>
                           ) : 'No capturer'}
                         </KeyValue>
                         <KeyValue label="Server audio flag" testId="bridge-audio-flag">{bridge.audioFlowing == null ? 'Unknown' : bridge.audioFlowing ? 'Audio flowing' : 'No audio'}</KeyValue>

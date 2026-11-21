@@ -81,7 +81,7 @@ export function useProfile() {
   return useQuery({
     queryKey: ['profile', userId],
     enabled: !!userId,
-    queryFn: () => api('/me/profile', { schema: profile }),
+    queryFn: () => api('/me', { schema: profile }),
     staleTime: 60_000,
   });
 }

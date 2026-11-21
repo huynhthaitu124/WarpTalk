@@ -1,9 +1,13 @@
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
-export function Table({ className, ...p }: HTMLAttributes<HTMLTableElement>) {
+/**
+ * `bare` drops the frame (border + radius + fill): use it inside a `Card`, which already has one.
+ * The wrapper scrolls horizontally on its own, so a wide table never widens the page.
+ */
+export function Table({ className, bare, ...p }: HTMLAttributes<HTMLTableElement> & { bare?: boolean }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-hairline bg-surface-1">
+    <div className={cn('max-w-full overflow-x-auto', !bare && 'rounded-lg border border-hairline bg-surface-1')}>
       <table className={cn('w-full border-collapse text-left text-body', className)} {...p} />
     </div>
   );
@@ -22,5 +26,5 @@ export const TD = ({ className, ...p }: TdHTMLAttributes<HTMLTableCellElement>) 
 
 /** Linear-style list row: used for dense issue-like lists (rooms, meetings). */
 export function ListRow({ className, ...p }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('flex min-h-11 items-center gap-3 border-b border-hairline px-4 py-2 last:border-0 hover:bg-surface-2/60', className)} {...p} />;
+  return <div className={cn('flex min-h-11 items-center gap-3 border-b border-hairline px-4 py-2 last:border-0 hover:bg-surface-2/60 max-sm:flex-wrap', className)} {...p} />;
 }

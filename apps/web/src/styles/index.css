@@ -18,15 +18,17 @@
   --hairline: #232428;
   --hairline-strong: #313338;
   --hairline-tertiary: #3e3e44;
+  /* Visual boundary of inputs/selects/secondary buttons: >= 3:1 on surface-1..3 (WCAG 1.4.11). */
+  --control-border: #6b7078;
 
   --ink: #f7f8f8;
   --ink-muted: #d0d6e0;
   --ink-subtle: #9a9fa8;
-  --ink-tertiary: #858a93;
+  --ink-tertiary: #8d929b;
 
   --primary: #5e6ad2;
-  --primary-hover: #6e7ae0;
-  --primary-pressed: #5e69d1;
+  --primary-hover: #5a66cc;
+  --primary-pressed: #4f5bbf;
   --primary-ink: #ffffff;
   --link: #8b96ff;
   --focus: #7c86ea;
@@ -62,11 +64,12 @@
   --hairline: #e3e5e9;
   --hairline-strong: #d0d3da;
   --hairline-tertiary: #9ca3af;
+  --control-border: #7c838f;
 
   --ink: #111214;
   --ink-muted: #3b3f47;
   --ink-subtle: #5a606b;
-  --ink-tertiary: #6b7280;
+  --ink-tertiary: #5f6672;
 
   --primary: #5e6ad2;
   --primary-hover: #4f5bc4;
@@ -105,6 +108,7 @@
   --color-hairline: var(--hairline);
   --color-hairline-strong: var(--hairline-strong);
   --color-hairline-tertiary: var(--hairline-tertiary);
+  --color-control: var(--control-border);
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-ink-subtle: var(--ink-subtle);
@@ -130,8 +134,8 @@
   --color-info-text: var(--info-text);
   --color-overlay: var(--overlay);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --font-display: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   --radius-xs: 4px;
@@ -216,6 +220,8 @@
     outline-offset: 2px;
     border-radius: inherit;
   }
+  /* Invalid controls: the focus ring turns danger so a focused invalid field reads as one state. */
+  [aria-invalid="true"]:focus-visible { outline-color: color-mix(in srgb, var(--danger) 80%, transparent); }
   /* Scrollbars */
   * { scrollbar-width: thin; scrollbar-color: var(--surface-4) transparent; }
 }
@@ -225,6 +231,10 @@
     outline: 2px solid color-mix(in srgb, var(--focus) 75%, transparent);
     outline-offset: 2px;
   }
+  /* The brand PNGs are black on an opaque white ground (legacy): multiply drops the white on light,
+     invert + screen turns them white-on-transparent on dark. */
+  .brand-img { mix-blend-mode: multiply; }
+  :root:not([data-theme="light"]) .brand-img { filter: invert(1); mix-blend-mode: screen; }
   .edge-top { box-shadow: var(--edge-highlight), var(--elev-card); }
 }
 

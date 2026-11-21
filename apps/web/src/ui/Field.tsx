@@ -10,14 +10,14 @@ export function useFieldProps() {
 
 /** Label + control + hint/error wiring. Controls inside pick id/aria-* up automatically. */
 export function Field({
-  label, hint, error, children, className,
-}: { label: string; hint?: ReactNode; error?: ReactNode; children: ReactNode; className?: string }) {
+  label, hint, error, children, className, required,
+}: { label: string; hint?: ReactNode; error?: ReactNode; children: ReactNode; className?: string; required?: boolean }) {
   const id = useId();
   const descId = hint || error ? `${id}-desc` : undefined;
   return (
     <FieldCtx.Provider value={{ id, describedBy: descId, invalid: !!error }}>
       <div className={cn('flex flex-col gap-1.5', className)}>
-        <label htmlFor={id} className="text-body-sm font-medium text-ink-muted">{label}</label>
+        <label htmlFor={id} className="text-body-sm font-medium text-ink-muted">{label}{required && <span aria-hidden className="text-danger-text"> *</span>}</label>
         {children}
         {descId && (
           <p id={descId} role={error ? 'alert' : undefined} className={cn('text-caption', error ? 'text-danger-text' : 'text-ink-subtle')}>

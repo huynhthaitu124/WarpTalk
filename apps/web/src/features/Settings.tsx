@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Brain, GearSix, SlidersHorizontal, User } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Switch, Table, TBody, TD, TH, THead, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
+  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
 } from '@/ui';
+import { cn } from '@/lib/cn';
+import { AiSettings } from './AiSettings';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
-  useEffectiveSettings, useMembers, usePutSettings, useResetSettings, useRooms, useScopedSettings, useUpdateWorkspaceSettings, useWorkspaceSettings,
+  useEffectiveSettings, usePutSettings, useResetSettings, useRooms, useScopedSettings, useUpdateWorkspaceSettings, useWorkspaceSettings,
   type Namespace, type ScopeKind,
 } from '@/lib/queries';
 import { useTheme } from '@/lib/theme';
@@ -35,7 +38,7 @@ function WorkspaceTab({ ws }: { ws: Workspace }) {
   }
   return (
     <Card>
-      <CardHeader title={ws.name} description={ws.description || `Slug: ${ws.slug}`} actions={<StatusPill status={ws.myRole} />} />
+      <CardHeader title={ws.name} description={ws.description || undefined} actions={<StatusPill status={ws.myRole} />} />
       <CardBody>
         {!editable && <ReadOnlyNote role={ws.myRole} />}
         <form onSubmit={submit} noValidate className="flex max-w-md flex-col gap-4">
@@ -57,29 +60,9 @@ function WorkspaceTab({ ws }: { ws: Workspace }) {
   );
 }
 
-function MembersTab({ ws }: { ws: Workspace }) {
-  const q = useMembers(ws.id);
-  if (q.isLoading) return <Skeleton className="h-40" />;
-  if (q.isError) return <Alert tone="danger">{errMsg(q.error)}</Alert>;
-  const items = q.data?.items ?? [];
-  return (
-    <Table aria-label="Workspace members">
-      <THead><tr><TH>Member</TH><TH>Email</TH><TH>Role</TH><TH>Joined</TH></tr></THead>
-      <TBody>
-        {items.map((m) => (
-          <tr key={m.userId} className="border-b border-hairline last:border-0">
-            <TD><span className="flex items-center gap-2"><Avatar name={m.fullName || m.email || 'Member'} size="sm" />{m.fullName || '—'}</span></TD>
-            <TD className="text-ink-muted">{m.email ?? '—'}</TD>
-            <TD><StatusPill status={m.role} /></TD>
-            <TD className="text-ink-subtle">{new Date(m.joinedAt).toLocaleDateString()}</TD>
-          </tr>
-        ))}
-      </TBody>
-    </Table>
-  );
-}
-
 // ---- runtime settings (suggestion / pipeline)
+/** The raw JSON editor is developer tooling: dev builds only. */
+const SHOW_RAW = import.meta.env.DEV;
 type Json = Record<string, unknown>;
 type FieldDef = { key: string; label: string; kind: 'bool' | 'number'; step?: number; hint?: string };
 const FIELDS: Record<Namespace, FieldDef[]> = {
@@ -154,7 +137,7 @@ function RuntimeEditor({
       <Tabs value={tab} onValueChange={switchTab}>
         <TabsList aria-label="Editor mode">
           <TabsTrigger value="form">Form</TabsTrigger>
-          <TabsTrigger value="json">Raw JSON</TabsTrigger>
+          {SHOW_RAW && <TabsTrigger value="json">Raw JSON</TabsTrigger>}
         </TabsList>
         <TabsContent value="form">
           <div className="flex max-w-md flex-col gap-4">
@@ -267,29 +250,57 @@ function AccountTab() {
   );
 }
 
+const SECTIONS = [
+  { id: 'account', label: 'Account', icon: User, group: 'Personal', admin: false },
+  { id: 'general', label: 'General', icon: GearSix, group: 'Workspace', admin: false },
+  { id: 'ai', label: 'AI providers', icon: Brain, group: 'Workspace', admin: true },
+  { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal, group: 'Workspace', admin: true },
+] as const;
+
 export function SettingsPage() {
-  const { current, loading } = useWorkspace();
-  const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') ?? 'workspace';
+  const { current, loading, wsPath } = useWorkspace();
+  const { section } = useParams();
+  const [params] = useSearchParams();
+  if (!section) {
+    // Old `?tab=` links.
+    const t = params.get('tab');
+    if (t === 'members') return <Navigate to={wsPath('/members')} replace />;
+    const id = t === 'runtime' ? 'advanced' : t === 'account' ? 'account' : 'general';
+    return <Navigate to={wsPath(`/settings/${id}`)} replace />;
+  }
+  const admin = canAdmin(current);
+  const visible = SECTIONS.filter((s) => !s.admin || admin);
+  const active = visible.find((s) => s.id === section);
   return (
     <>
       <PageHeader title="Settings" description={current ? `Manage ${current.name} and your account.` : 'Manage your account.'} />
-      <Tabs value={tab} onValueChange={(t) => setParams({ tab: t }, { replace: true })}>
-        <TabsList aria-label="Settings sections">
-          <TabsTrigger value="workspace">Workspace</TabsTrigger>
-          <TabsTrigger value="members">Members</TabsTrigger>
-          <TabsTrigger value="runtime">Runtime</TabsTrigger>
-          <TabsTrigger value="account">Account</TabsTrigger>
-        </TabsList>
-        {loading ? <Skeleton className="mt-5 h-40" /> : (
-          <>
-            <TabsContent value="workspace">{current ? <WorkspaceTab ws={current} /> : <EmptyState title="No workspace" description="Create a workspace to configure it." />}</TabsContent>
-            <TabsContent value="members">{current ? <MembersTab ws={current} /> : <EmptyState title="No workspace" />}</TabsContent>
-            <TabsContent value="runtime">{current ? <RuntimeTab ws={current} /> : <EmptyState title="No workspace" />}</TabsContent>
-            <TabsContent value="account"><AccountTab /></TabsContent>
-          </>
-        )}
-      </Tabs>
+      <div className="flex min-w-0 flex-col gap-6 md:flex-row md:gap-8">
+        <nav aria-label="Settings sections" className="md:w-48 md:shrink-0">
+          <ul className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none] md:flex-col md:overflow-visible md:pb-0">
+            {visible.map((s, i) => (
+              <li key={s.id} className="shrink-0">
+                {(i === 0 || visible[i - 1]!.group !== s.group) && <p className="px-2 pb-1 pt-2 text-eyebrow font-medium uppercase tracking-[0.4px] text-ink-subtle max-md:hidden">{s.group}</p>}
+                <Link
+                  to={wsPath(`/settings/${s.id}`)}
+                  aria-current={s.id === section ? 'page' : undefined}
+                  className={cn('flex h-8 items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-body-sm font-medium no-underline hover:no-underline focus-ring', s.id === section ? 'bg-surface-3 text-ink' : 'text-ink-subtle hover:bg-surface-3/60 hover:text-ink')}
+                >
+                  <s.icon size={16} weight="duotone" aria-hidden />{s.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="min-w-0 flex-1">
+          {loading ? <Skeleton className="h-40" /> : !active ? (
+            <EmptyState title="Not available" description="This section needs the workspace owner or admin role." action={<Link to={wsPath('/settings/general')}>Back to settings</Link>} />
+          ) : active.id === 'account' ? <AccountTab />
+            : !current ? <EmptyState title="No workspace" description="Create a workspace to configure it." />
+            : active.id === 'general' ? <WorkspaceTab ws={current} />
+            : active.id === 'ai' ? <AiSettings ws={current} />
+            : <RuntimeTab ws={current} />}
+        </div>
+      </div>
     </>
   );
 }

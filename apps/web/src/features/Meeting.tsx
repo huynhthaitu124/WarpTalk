@@ -1,22 +1,29 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { PlugZap, Video, PhoneOff } from 'lucide-react';
-import { Alert, Button, Card, CardBody, Dialog, DialogClose, DialogContent, Field, Input, PageHeader, Skeleton, StatusPill, useToast } from '@/ui';
+import { Alert, Button, Card, CardBody, PageHeader, Skeleton, StatusPill } from '@/ui';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useEndMeeting, useMeetingJoin, useParticipants, useRoom } from '@/lib/queries';
+import { useJoinById, useMeetingJoin, useParticipants, useRoom } from '@/lib/queries';
 import type { JoinGrant } from '@/lib/schemas';
 import { languageLabel } from '@/lib/languages';
-import { CaptionsPanel, MeetingControls, ParticipantGrid, StatusStrip } from './MeetingParts';
 import { errMsg } from './errors';
+import { EndMeetingDialog } from './meeting/Dialogs';
+import { EndedView, OfflineRoom } from './meeting/Offline';
+import { PreJoin, roomLanguages, type PreJoinValues } from './meeting/PreJoin';
+import { useMediaPreview } from './meeting/useMediaPreview';
+import type { JoinMedia } from './LiveKitStage';
 
 const LiveKitStage = lazy(() => import('./LiveKitStage'));
 
 type Phase =
   | { kind: 'prejoin' }
-  | { kind: 'joined'; grant: JoinGrant }
+  | { kind: 'lobby' }
+  | { kind: 'joined'; grant: JoinGrant; media: JoinMedia; name: string; joinedListen: string }
   | { kind: 'not-configured' }
+  | { kind: 'ended'; title: string; body: string; canRejoin: boolean }
   | { kind: 'error'; message: string };
+
+const TERMINAL = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'];
 
 export function MeetingPage() {
   const { roomId = '' } = useParams();
@@ -24,106 +31,176 @@ export function MeetingPage() {
   const { userId } = useAuth();
   const room = useRoom(roomId);
   const parts = useParticipants(roomId);
-  const joinM = useMeetingJoin(roomId);
-  const endM = useEndMeeting(roomId);
-  const toast = useToast();
+  const roomJoin = useJoinById(roomId);
+  const meetingJoin = useMeetingJoin(roomId);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'prejoin' });
-  const [name, setName] = useState('');
+  const [edits, setEdits] = useState<Partial<PreJoinValues>>({});
+  const [listen, setListen] = useState('original');
+  const leaving = useRef(false);
+  const lastMedia = useRef<JoinMedia>({ mic: false, cam: false });
   const self = parts.data?.find((p) => p.userId === userId);
-  const [listenOverride, setListen] = useState<string | null>(null);
-  const listen = listenOverride ?? self?.listenLanguage ?? 'original';
+  const r = room.data;
 
-  async function join() {
+  const terminal = !!r && TERMINAL.includes(r.status);
+  // The room can be ended by somebody else (or the host from another tab) while we are in it.
+  useEffect(() => {
+    if (terminal && (phase.kind === 'joined' || phase.kind === 'lobby')) {
+      leaving.current = true;
+      setPhase({ kind: 'ended', title: 'This meeting has ended', body: 'The host ended the meeting for everyone.', canRejoin: false });
+    }
+  }, [terminal, phase.kind]);
+
+  async function join(values: PreJoinValues, media: JoinMedia) {
+    lastMedia.current = media;
+    leaving.current = false;
+    const name = values.name.trim();
     try {
-      const grant = await joinM.mutateAsync(name.trim() || undefined);
-      setPhase({ kind: 'joined', grant });
+      // Record speak/listen languages on the participant first (the meeting join takes only a name).
+      // People outside the workspace cannot join by id (404/403): they still get a media token.
+      try {
+        await roomJoin.mutateAsync({ displayName: name || undefined, speakLanguage: values.speak, listenLanguage: values.listen });
+      } catch (e) {
+        if (!(e instanceof ApiError) || ![403, 404].includes(e.status)) throw e;
+      }
+      const grant = await meetingJoin.mutateAsync(name || undefined);
+      setListen(values.listen);
+      setPhase({ kind: 'joined', grant, media, name: name || self?.displayName || 'You', joinedListen: values.listen });
     } catch (e) {
       if (e instanceof ApiError && (e.code === 'LIVEKIT_NOT_CONFIGURED' || e.status === 503)) setPhase({ kind: 'not-configured' });
+      else if (e instanceof ApiError && e.code === 'IN_LOBBY') setPhase({ kind: 'lobby' });
       else setPhase({ kind: 'error', message: errMsg(e) });
     }
   }
-  const leave = () => { setPhase({ kind: 'prejoin' }); nav(`/rooms/${roomId}`); };
-  async function endMeeting() {
-    try {
-      await endM.mutateAsync();
-      setConfirmEnd(false);
-      setPhase({ kind: 'prejoin' });
-      toast({ tone: 'success', title: 'Meeting ended' });
-      nav(`/rooms/${roomId}`);
-    } catch { /* shown inside the dialog */ }
+  const pending = useRef<PreJoinValues | null>(null);
+
+  // Lobby: once the host admits us, join automatically.
+  useEffect(() => {
+    if (phase.kind === 'lobby' && self?.status === 'CONNECTED' && pending.current) void join(pending.current, lastMedia.current);
+    if (phase.kind === 'lobby' && self && ['KICKED', 'REJECTED'].includes(self.status)) setPhase({ kind: 'error', message: 'The host did not admit you to this meeting.' });
+    // join is stable enough for this one-shot reaction to a status change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase.kind, self?.status]);
+
+  const backToRoom = () => nav(`/rooms/${roomId}`);
+  function leave() {
+    leaving.current = true;
+    setPhase({ kind: 'prejoin' });
+    backToRoom();
+  }
+  function ended() {
+    leaving.current = true;
+    setPhase({ kind: 'prejoin' });
+    backToRoom();
   }
 
   if (room.isLoading) return <Skeleton className="h-40" />;
-  if (room.isError || !room.data) return <Alert tone="danger" title="Meeting not found">{errMsg(room.error)} <Link to="/rooms">Back to rooms</Link></Alert>;
-  const r = room.data;
-  const roster = (parts.data ?? []).filter((p) => ['CONNECTED', 'WAITING'].includes(p.status));
+  if (room.isError || !r) return <Alert tone="danger" title="Meeting not found">{errMsg(room.error)} <Link to="/rooms">Back to rooms</Link></Alert>;
+
   const isHost = r.effectiveHostId === userId || r.hostId === userId;
-  const terminal = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'].includes(r.status);
-  const captionLang = listen === 'original' ? (self?.listenLanguage ?? 'original') : listen;
+  const langs = roomLanguages(r);
+  const defaultSpeak = self?.speakLanguage && langs.includes(self.speakLanguage) ? self.speakLanguage : r.sourceLanguage;
+  const defaultListen = self?.listenLanguage && langs.includes(self.listenLanguage) ? self.listenLanguage : (langs.find((l) => l !== defaultSpeak) ?? defaultSpeak);
+  const values: PreJoinValues = { name: '', speak: defaultSpeak, listen: defaultListen, joinMuted: true, ...edits };
+  const roster = (parts.data ?? []).filter((p) => ['CONNECTED', 'WAITING'].includes(p.status));
+
+  if (phase.kind === 'joined') {
+    const captionLang = listen === 'original' ? phase.joinedListen : listen;
+    return (
+      <Suspense fallback={<Skeleton className="h-64" />}>
+        <LiveKitStage
+          grant={phase.grant}
+          media={phase.media}
+          listen={listen}
+          onListen={setListen}
+          onLeave={leave}
+          onEnded={ended}
+          onDisconnected={(kind) => {
+            if (leaving.current) return;
+            setPhase(kind === 'ended'
+              ? { kind: 'ended', title: 'This meeting has ended', body: 'The host ended the meeting for everyone.', canRejoin: false }
+              : kind === 'removed'
+                ? { kind: 'ended', title: 'You were removed from the meeting', body: 'The host removed you from this meeting.', canRejoin: false }
+                : { kind: 'ended', title: 'You were disconnected', body: 'The connection to the meeting was lost. You can rejoin while it is live.', canRejoin: !terminal });
+          }}
+          room={r}
+          captionLang={captionLang}
+          selfUserId={userId}
+          selfName={phase.name}
+        />
+      </Suspense>
+    );
+  }
 
   return (
     <>
       <PageHeader
         title={r.title}
-        description={<span className="flex items-center gap-2"><StatusPill status={r.status} />{languageLabel(r.sourceLanguage)} → {r.targetLanguages.map(languageLabel).join(', ')}</span>}
+        description={<span className="flex flex-wrap items-center gap-2"><StatusPill status={r.status} />{languageLabel(r.sourceLanguage)} → {r.targetLanguages.map(languageLabel).join(', ')}</span>}
         actions={(
           <>
             <Link to={`/rooms/${r.id}`} className="text-body">Room details</Link>
-            {isHost && !terminal && <Button variant="danger" size="sm" onClick={() => setConfirmEnd(true)}><PhoneOff className="size-4" aria-hidden />End meeting</Button>}
+            {isHost && ['IN_PROGRESS', 'PAUSED'].includes(r.status) && <Button variant="ghost" size="sm" className="text-danger-text" onClick={() => setConfirmEnd(true)}>End meeting for everyone</Button>}
           </>
         )}
       />
-      <Dialog open={confirmEnd} onOpenChange={(v) => { if (!endM.isPending) { setConfirmEnd(v); if (!v) endM.reset(); } }}>
-        <DialogContent
-          title="End meeting for everyone?"
-          description="Everyone is disconnected and the room is closed. This cannot be undone."
-          footer={(
-            <>
-              <DialogClose asChild><Button>Cancel</Button></DialogClose>
-              <Button variant="danger" loading={endM.isPending} onClick={() => void endMeeting()}>End meeting</Button>
-            </>
-          )}
-        >
-          {endM.isError && <Alert tone="danger" title="Could not end the meeting">{errMsg(endM.error)}</Alert>}
-        </DialogContent>
-      </Dialog>
-      {phase.kind !== 'joined' && <div className="mb-6"><StatusStrip connection="idle" quality="unknown" room={r} /></div>}
-      {phase.kind === 'joined' ? (
-        <Suspense fallback={<Skeleton className="h-64" />}>
-          <LiveKitStage grant={phase.grant} listen={listen} onListen={setListen} onLeave={leave} room={r} captionLang={captionLang} />
-        </Suspense>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {terminal && <Alert tone="info" title="This meeting has ended">It is closed to new participants. <Link to={`/rooms/${r.id}`}>Back to room details</Link></Alert>}
-          {phase.kind === 'prejoin' && !terminal && (
-            <Card className="max-w-md" data-testid="meeting-prejoin">
-              <CardBody className="flex flex-col gap-4">
-                <div className="flex items-center gap-3"><span className="flex size-10 items-center justify-center rounded-lg bg-surface-2 text-ink-subtle"><Video className="size-5" aria-hidden /></span><div><h2 className="text-title font-semibold">Ready to join?</h2><p className="text-body-sm text-ink-subtle">You will connect with your microphone off.</p></div></div>
-                <Field label="Display name (optional)"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} /></Field>
-                <Button variant="primary" size="lg" loading={joinM.isPending} onClick={() => void join()}>Join meeting</Button>
-              </CardBody>
-            </Card>
-          )}
-          {phase.kind === 'not-configured' && (
-            <Alert tone="warning" title="LiveKit is not configured">
-              <span className="flex items-start gap-2"><PlugZap className="mt-0.5 size-4 shrink-0" aria-hidden /><span data-testid="livekit-not-configured">The server has no LiveKit credentials (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET), so live audio is unavailable. You can still see who is in the room; captions and dubbed audio need a media server.</span></span>
-              <Button size="sm" className="mt-3" onClick={() => setPhase({ kind: 'prejoin' })}>Try again</Button>
-            </Alert>
-          )}
-          {phase.kind === 'error' && (
-            <Alert tone="danger" title="Could not join the meeting">
-              {phase.message}
-              <Button size="sm" className="mt-3" onClick={() => setPhase({ kind: 'prejoin' })}>Back</Button>
-            </Alert>
-          )}
-          <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-            <ParticipantGrid tiles={roster.map((p) => ({ id: p.id, name: p.displayName, note: p.status === 'WAITING' ? 'In lobby' : undefined, isLocal: p.userId === userId }))} empty="Nobody is in the room yet." />
-            <CaptionsPanel lines={[]} translationLang={captionLang} placeholder="Captions are unavailable until you are connected to the meeting." />
-          </div>
-          <MeetingControls micOn={false} onToggleMic={() => undefined} micDisabled micHint="Join the meeting to use your microphone" listen={listen} onListen={setListen} onLeave={leave} />
-        </div>
-      )}
+      <EndMeetingDialog roomId={r.id} open={confirmEnd} onOpenChange={setConfirmEnd} onEnded={ended} />
+      <div className="flex flex-col gap-6">
+        {terminal && phase.kind !== 'ended' && <Alert tone="info" title="This meeting has ended">It is closed to new participants. <Link to={`/rooms/${r.id}`}>Back to room details</Link></Alert>}
+        {phase.kind === 'ended' && <EndedView title={phase.title} body={phase.body} onBack={backToRoom} onRejoin={phase.canRejoin ? () => setPhase({ kind: 'prejoin' }) : undefined} />}
+        {(phase.kind === 'prejoin' || phase.kind === 'error') && !terminal && (
+          <PreJoinStage
+            room={r}
+            values={values}
+            onChange={(v) => setEdits((e) => ({ ...e, ...v }))}
+            joining={roomJoin.isPending || meetingJoin.isPending}
+            notice={phase.kind === 'error' ? { tone: 'danger', title: 'Could not join the meeting', body: phase.message } : null}
+            onJoin={(media) => { pending.current = values; void join(values, media); }}
+          />
+        )}
+        {phase.kind === 'lobby' && (
+          <Card className="mx-auto w-full max-w-md" data-testid="meeting-lobby">
+            <CardBody className="flex flex-col gap-3">
+              <h2 className="text-title font-semibold">Waiting for the host</h2>
+              <p className="text-body text-ink-subtle">The host has to admit you before you can enter. This page joins automatically once you are let in.</p>
+              <Button onClick={() => { setPhase({ kind: 'prejoin' }); }}>Cancel</Button>
+            </CardBody>
+          </Card>
+        )}
+        {phase.kind === 'not-configured' && <OfflineRoom room={r} roster={roster} selfUserId={userId} onRetry={() => setPhase({ kind: 'prejoin' })} />}
+      </div>
     </>
+  );
+}
+
+/** Owns the camera/microphone preview so it is released as soon as the card unmounts (join, leave). */
+function PreJoinStage({ room, values, onChange, joining, notice, onJoin }: {
+  room: Parameters<typeof PreJoin>[0]['room'];
+  values: PreJoinValues;
+  onChange(v: Partial<PreJoinValues>): void;
+  joining: boolean;
+  notice: Parameters<typeof PreJoin>[0]['notice'];
+  onJoin(media: JoinMedia): void;
+}) {
+  const preview = useMediaPreview();
+  const { stop, retry } = preview;
+  useEffect(() => { if (notice) retry(); }, [notice, retry]);
+  return (
+    <PreJoin
+      room={room}
+      values={values}
+      onChange={onChange}
+      preview={preview}
+      joining={joining}
+      notice={notice}
+      onJoin={() => {
+        const mic = !values.joinMuted && preview.hasAudio;
+        const cam = preview.camOn && preview.hasVideo;
+        const micId = preview.micId || preview.stream?.getAudioTracks()[0]?.getSettings().deviceId;
+        const camId = preview.camId || preview.stream?.getVideoTracks()[0]?.getSettings().deviceId;
+        stop();
+        onJoin({ mic, cam, micId, camId });
+      }}
+    />
   );
 }

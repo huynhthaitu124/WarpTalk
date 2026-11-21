@@ -48,6 +48,8 @@ export interface ClaimInput {
   displayName?: string;
   sourceLanguage: string;
   targetLanguages: string[];
+  /** Caption language when this claim joins an existing room as a viewer. */
+  listenLanguage?: string;
 }
 
 export function useClaimBridge() {
@@ -65,6 +67,7 @@ export function useClaimBridge() {
           displayName: i.displayName || undefined,
           sourceLanguage: i.sourceLanguage,
           targetLanguages: i.targetLanguages,
+          listenLanguage: i.listenLanguage,
         },
       }),
     onSuccess: (r) => {
@@ -78,6 +81,15 @@ export function useBridgeTakeover(roomId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api(`/translation-rooms/${roomId}/bridge/capturer/takeover`, { method: 'POST', schema: bridgeStateResponse }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['room', roomId] }),
+  });
+}
+
+/** Gives up the capturer role when capture stops, so a teammate can take over immediately. */
+export function useBridgeRelease(roomId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api(`/translation-rooms/${roomId}/bridge/capturer/release`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['room', roomId] }),
   });
 }
@@ -112,8 +124,23 @@ export async function freshAccessToken(): Promise<string | null> {
   return session.accessToken;
 }
 
-/** The lease is stale when the capturer's last heartbeat is older than `leaseSeconds` (mirrors backend `is_stale`). */
-export function leaseIsStale(leaseAt: string | null | undefined, leaseSeconds: number, now = Date.now()): boolean {
-  if (!leaseAt) return true;
-  return now - Date.parse(leaseAt) > leaseSeconds * 1000;
+/**
+ * Seconds left on the capturer lease, from the server's `leaseExpiresAt` against its `serverTime`
+ * (advanced by the time elapsed since the response arrived), so client clock skew never matters.
+ * `null` when there is no capturer. Negative = expired.
+ */
+export function leaseRemainingSeconds(
+  bridge: { leaseExpiresAt?: string | null; serverTime?: string | null } | undefined,
+  receivedAt: number,
+  now = Date.now(),
+): number | null {
+  if (!bridge?.leaseExpiresAt || !bridge.serverTime) return null;
+  const serverNow = Date.parse(bridge.serverTime) + Math.max(0, now - receivedAt);
+  return Math.ceil((Date.parse(bridge.leaseExpiresAt) - serverNow) / 1000);
+}
+
+/** Stale = no capturer or lease expired (mirrors the backend). */
+export function leaseIsStale(bridge: { leaseExpiresAt?: string | null; serverTime?: string | null } | undefined, receivedAt: number, now = Date.now()): boolean {
+  const left = leaseRemainingSeconds(bridge, receivedAt, now);
+  return left === null || left <= 0;
 }

@@ -1,5 +1,5 @@
 import * as RD from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import { X } from '@phosphor-icons/react';
 import { createContext, useContext, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 

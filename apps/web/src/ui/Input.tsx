@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn';
 import { useFieldProps } from './Field';
 
 export const controlStyles =
-  'w-full rounded-md border border-hairline-strong bg-surface-1 px-3 text-body text-ink placeholder:text-ink-tertiary transition-colors hover:border-hairline-tertiary focus-ring focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-danger';
+  'w-full rounded-md border border-control bg-surface-1 px-3 text-body text-ink placeholder:text-ink-tertiary transition-colors hover:border-ink-subtle focus-ring focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-danger';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest }, ref,

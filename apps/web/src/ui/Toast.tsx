@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
-import { CheckCircle2, Info, TriangleAlert, X, XCircle } from 'lucide-react';
+import { CheckCircle, Info, Warning, X, XCircle } from '@phosphor-icons/react';
 import { cn } from '@/lib/cn';
 
 type Tone = 'info' | 'success' | 'warning' | 'danger';
@@ -7,7 +7,7 @@ interface ToastItem { id: number; title: string; description?: string; tone: Ton
 
 const Ctx = createContext<{ toast(t: Omit<ToastItem, 'id'>): void } | null>(null);
 
-const ICON = { info: Info, success: CheckCircle2, warning: TriangleAlert, danger: XCircle };
+const ICON = { info: Info, success: CheckCircle, warning: Warning, danger: XCircle };
 const COLOR = { info: 'text-info', success: 'text-success', warning: 'text-warning', danger: 'text-danger' };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -28,7 +28,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           const Icon = ICON[t.tone];
           return (
             <div key={t.id} role="status" data-testid="toast" className="pointer-events-auto flex animate-slide-up items-start gap-3 rounded-lg border border-hairline-strong bg-surface-3 p-3 shadow-pop">
-              <Icon className={cn('mt-0.5 size-4 shrink-0', COLOR[t.tone])} aria-hidden />
+              <Icon weight="fill" className={cn('mt-0.5 size-4 shrink-0', COLOR[t.tone])} aria-hidden />
               <div className="min-w-0 flex-1">
                 <p className="text-body font-medium text-ink">{t.title}</p>
                 {t.description && <p className="mt-0.5 text-body-sm text-ink-subtle">{t.description}</p>}

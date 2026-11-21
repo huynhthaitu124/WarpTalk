@@ -52,11 +52,11 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-headline font-semibold tracking-[-0.6px] text-ink">{title}</h1>
-        {description && <p className="mt-1 text-body text-ink-subtle">{description}</p>}
+      <div className="min-w-0 max-w-full">
+        <h1 className="line-clamp-2 break-words text-headline font-semibold tracking-[-0.6px] text-ink max-sm:text-title" title={title}>{title}</h1>
+        {description && <div className="mt-1 text-body text-ink-subtle">{description}</div>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

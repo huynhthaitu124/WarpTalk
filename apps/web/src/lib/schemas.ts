@@ -15,11 +15,16 @@ export type AuthResponse = z.infer<typeof authResponse>;
 
 export const registerResponse = z.object({ userId: uuid });
 
+/** `GET /me`: account + profile in one call. */
 export const profile = z.object({
+  userId: uuid.optional(),
+  email: z.string().optional(),
   fullName: z.string(),
   avatarUrl: z.string().nullable().optional(),
   preferredLanguage: z.string(),
   timezone: z.string().nullable().optional(),
+  emailVerified: z.boolean().optional(),
+  systemAdmin: z.boolean().optional(),
 });
 export type Profile = z.infer<typeof profile>;
 
@@ -48,6 +53,26 @@ export const member = z.object({
 });
 export type Member = z.infer<typeof member>;
 
+export const INVITATION_STATUSES = ['pending', 'expired', 'revoked', 'accepted'] as const;
+export const invitation = z.object({
+  id: uuid,
+  workspaceId: uuid,
+  email: z.string(),
+  role: z.enum(WORKSPACE_ROLES),
+  status: z.string(),
+  expiresAt: ts,
+  acceptedAt: ts.nullable().optional(),
+  deliveryStatus: z.string(),
+  lastSentAt: ts.nullable().optional(),
+  sentCount: z.number(),
+  invitedBy: uuid,
+  createdAt: ts,
+  workspaceName: z.string().optional(),
+  inviterEmail: z.string().optional(),
+});
+export type Invitation = z.infer<typeof invitation>;
+export const acceptResult = z.object({ workspaceId: uuid, workspaceName: z.string(), role: z.enum(WORKSPACE_ROLES) });
+
 export const workspaceSettings = z.object({
   maxParticipantsLimit: z.number(),
   allowGuestAccess: z.boolean(),
@@ -74,6 +99,9 @@ export const bridgeState = z.object({
   lastAudioAt: ts.nullable().optional(),
   audioMode: z.string(),
   epoch: z.number(),
+  /** Server-computed end of the capturer lease; compare with `serverTime`, never the client clock. */
+  leaseExpiresAt: ts.nullable().optional(),
+  serverTime: ts.optional(),
 });
 export type BridgeState = z.infer<typeof bridgeState>;
 
@@ -162,6 +190,8 @@ export const claimResponse = room.extend({
   bridgeRole: z.enum(['capturer', 'viewer']),
   heartbeatIntervalSeconds: z.number(),
   leaseSeconds: z.number(),
+  leaseExpiresAt: ts.nullable().optional(),
+  serverTime: ts.optional(),
 });
 export type ClaimResponse = z.infer<typeof claimResponse>;
 
@@ -172,3 +202,58 @@ export const bridgeStateResponse = bridgeState.extend({
   leaseSeconds: z.number(),
 });
 export type BridgeStateResponse = z.infer<typeof bridgeStateResponse>;
+
+// ---- knowledge search (GET /knowledge/search)
+export const citation = z.object({
+  kind: z.string(),
+  title: z.string(),
+  refId: z.string().optional(),
+  page: z.number().optional(),
+  headingPath: z.array(z.string()).optional(),
+  startMs: z.number().optional(),
+  endMs: z.number().optional(),
+});
+export type Citation = z.infer<typeof citation>;
+export const knowledgeHit = z.object({
+  chunkId: z.string(),
+  score: z.number(),
+  sourceType: z.string(),
+  sourceId: z.string(),
+  text: z.string(),
+  citation,
+});
+export type KnowledgeHit = z.infer<typeof knowledgeHit>;
+export const knowledgeSearch = z.object({ chunks: z.array(knowledgeHit), metrics: z.object({ latencyMs: z.number().optional(), returned: z.number().optional() }).passthrough().optional() });
+
+// ---- bring-your-own AI (ai/workspaces/{id}/config)
+export const AI_PROVIDERS = ['openai', 'anthropic', 'gemini', 'openai_compatible'] as const;
+export type AiProvider = (typeof AI_PROVIDERS)[number];
+export const AI_PURPOSES = ['assistant', 'summary', 'suggestion_decide', 'suggestion_generate', 'embedding'] as const;
+export type AiPurpose = (typeof AI_PURPOSES)[number];
+export const aiPurposeConfig = z.object({
+  provider: z.string(),
+  model: z.string(),
+  baseUrl: z.string().nullable().optional(),
+  reasoning: z.string().nullable().optional(),
+  maxOutputTokens: z.number().nullable().optional(),
+  timeoutMs: z.number().nullable().optional(),
+  dataBoundary: z.string(),
+  fallbackPolicy: z.string(),
+  enabled: z.boolean(),
+  status: z.string(),
+  lastValidatedAt: ts.nullable().optional(),
+  lastErrorCode: z.string().nullable().optional(),
+  version: z.number(),
+});
+export type AiPurposeConfig = z.infer<typeof aiPurposeConfig>;
+/** Credentials never carry key material: only the last four characters. */
+export const aiCredential = z.object({ provider: z.string(), last4: z.string(), createdAt: ts, rotatedAt: ts.nullable().optional(), validatedAt: ts.nullable().optional() });
+export type AiCredential = z.infer<typeof aiCredential>;
+export const aiConfig = z.object({
+  byoEnabled: z.boolean(),
+  purposes: z.record(z.string(), aiPurposeConfig),
+  credentials: z.array(aiCredential),
+  reindexRequired: z.boolean().optional(),
+});
+export type AiConfig = z.infer<typeof aiConfig>;
+export const aiTest = z.object({ ok: z.boolean(), latencyMs: z.number(), errorCode: z.string().nullable().optional() });

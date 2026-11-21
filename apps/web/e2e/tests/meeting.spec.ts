@@ -27,28 +27,41 @@ const msg = (o: Record<string, unknown>, ago?: number) => ({
 });
 
 test.describe('Meeting shell', () => {
-  test('MTG-01 join shows "LiveKit not configured" with roster and disabled mic', async ({ app, tokens, workspace }) => {
+  test('MTG-01 join shows "LiveKit not configured" with room info, roster and transcript; no control bar anywhere before a session exists', async ({ app, tokens, workspace }) => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Standup', displayName: 'Host Hana' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     await app.goto(`/meetings/${room.id}`);
     await expect(app.getByRole('heading', { name: 'Standup', level: 1 })).toBeVisible();
     await expect(app.getByTestId('meeting-prejoin')).toBeVisible();
+    // FN-06: nothing implies a session before joining.
+    await expect(app.getByRole('toolbar', { name: 'Meeting controls' })).toHaveCount(0);
+    await expect(app.getByRole('button', { name: /Unmute|Leave/ })).toHaveCount(0);
     await app.getByRole('button', { name: 'Join meeting' }).click();
     await expect(app.getByText('LiveKit is not configured')).toBeVisible();
     await expect(app.getByTestId('livekit-not-configured')).toContainText('LIVEKIT_URL');
-    await expect(app.getByRole('button', { name: 'Unmute' })).toBeDisabled();
+    await expect(app.getByRole('toolbar', { name: 'Meeting controls' })).toHaveCount(0);
+    await expect(app.getByTestId('people-in-room').getByText('Host Hana').first()).toBeVisible();
+    await app.getByRole('tab', { name: /^Transcript/ }).click();
     await expect(app.getByTestId('captions-log')).toContainText('Captions are unavailable');
-    await expect(app.getByTestId('participant-grid').getByText('Host Hana').first()).toBeVisible();
+    await app.getByRole('tab', { name: /^Chat/ }).click();
+    await expect(app.getByRole('textbox', { name: 'Message' })).toBeDisabled();
   });
 
-  test('MTG-02 listen-language selector', async ({ app, tokens, workspace }) => {
+  test('MTG-02 pre-join: speak/listen language selectors offer the room languages and are sent with the join', async ({ app, tokens, workspace }) => {
     const room = await createRoom(tokens.accessToken, workspace.id);
     await app.goto(`/meetings/${room.id}`);
-    const sel = app.getByRole('combobox', { name: 'Listen language' });
-    await sel.click();
-    await expect(app.getByRole('option')).toHaveText(['Original audio', 'Dubbed: Vietnamese', 'Dubbed: English', 'Dubbed: Japanese']);
-    await app.getByRole('option', { name: 'Dubbed: Japanese' }).click();
-    await expect(sel).toContainText('Dubbed: Japanese');
+    const speak = app.getByRole('combobox', { name: 'I speak' });
+    await expect(speak).toContainText('Vietnamese'); // room source language
+    await speak.click();
+    await expect(app.getByRole('option')).toHaveText(['Vietnamese', 'English', 'Japanese']);
+    await app.getByRole('option', { name: 'English' }).click();
+    const listen = app.getByRole('combobox', { name: 'I listen in' });
+    await listen.click();
+    await app.getByRole('option', { name: 'Japanese' }).click();
+    await expect(listen).toContainText('Japanese');
+    const req = app.waitForRequest((r) => r.url().endsWith(`/translation-rooms/${room.id}/join`) && r.method() === 'POST');
+    await app.getByRole('button', { name: 'Join meeting' }).click();
+    expect((await req).postDataJSON()).toMatchObject({ speakLanguage: 'en', listenLanguage: 'ja' });
   });
 
   test('MTG-03 meetings list shows live rooms only', async ({ app, tokens, workspace }) => {
@@ -77,7 +90,7 @@ test.describe('Meeting shell', () => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Wrap up' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     await app.goto(`/meetings/${room.id}`);
-    await app.getByRole('button', { name: 'End meeting' }).click();
+    await app.getByRole('button', { name: 'End meeting for everyone' }).click();
     const dialog = app.getByRole('dialog', { name: 'End meeting for everyone?' });
     await expect(dialog).toBeVisible();
     // Cancel leaves everything untouched.
@@ -85,7 +98,7 @@ test.describe('Meeting shell', () => {
     await expect(dialog).toHaveCount(0);
     expect((await ok(call<{ status: string }>(`/translation-rooms/${room.id}`, { token: tokens.accessToken }))).status).toBe('IN_PROGRESS');
 
-    await app.getByRole('button', { name: 'End meeting' }).click();
+    await app.getByRole('button', { name: 'End meeting for everyone' }).click();
     // Without LiveKit the meeting-end call answers 404/503; the app still ends the room itself.
     const endMeeting = app.waitForResponse((r) => r.url().includes(`/meetings/${room.id}/end`));
     await app.getByRole('dialog').getByRole('button', { name: 'End meeting' }).click();
@@ -99,7 +112,7 @@ test.describe('Meeting shell', () => {
     await app.goto(`/meetings/${room.id}`);
     await expect(app.getByText('This meeting has ended')).toBeVisible();
     await expect(app.getByRole('button', { name: 'Join meeting' })).toHaveCount(0);
-    await expect(app.getByRole('button', { name: 'End meeting' })).toHaveCount(0);
+    await expect(app.getByRole('button', { name: /End meeting/ })).toHaveCount(0);
   });
 
   test('MTG-07 only the host sees End meeting', async ({ tokens, workspace, browser, baseURL }) => {
@@ -111,27 +124,11 @@ test.describe('Meeting shell', () => {
     try {
       await m.page.goto(`/meetings/${room.id}`);
       await expect(m.page.getByRole('heading', { name: 'Hosted', level: 1 })).toBeVisible();
-      await expect(m.page.getByRole('button', { name: 'End meeting' })).toHaveCount(0);
+      await expect(m.page.getByRole('button', { name: /End meeting/ })).toHaveCount(0);
       await expect(m.page.getByRole('button', { name: 'Join meeting' })).toBeVisible();
     } finally {
       await m.context.close();
     }
-  });
-
-  test('MTG-08 status indicators: connection, network and translation state with text labels', async ({ app, tokens, workspace }) => {
-    const waiting = await createRoom(tokens.accessToken, workspace.id, { title: 'Not live yet' });
-    await app.goto(`/meetings/${waiting.id}`);
-    const strip = app.getByRole('list', { name: 'Meeting status' });
-    await expect(strip.getByTestId('status-connection')).toHaveText('Connection: Not connected');
-    await expect(strip.getByTestId('status-quality')).toHaveText('Network: n/a');
-    await expect(strip.getByTestId('status-translation')).toHaveText('Translation: Not started');
-
-    const live = await createRoom(tokens.accessToken, workspace.id, { title: 'Live translated' });
-    await ok(call(`/translation-rooms/${live.id}/start`, { token: tokens.accessToken, method: 'POST' }));
-    await app.goto(`/meetings/${live.id}`);
-    await expect(app.getByTestId('status-translation')).toHaveAttribute('data-state', /^(Active|Stopped)$/);
-    await ok(call(`/translation-rooms/${live.id}/pause`, { token: tokens.accessToken, method: 'POST' }));
-    await expect(app.getByTestId('status-translation')).toHaveText('Translation: Paused'); // room polls every 3s
   });
 
   test('MTG-09 captions show original + translation per line with latency; translations merge into the same line', async ({ page }) => {

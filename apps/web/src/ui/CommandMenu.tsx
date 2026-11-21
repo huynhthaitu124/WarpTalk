@@ -1,7 +1,7 @@
 import { Command } from 'cmdk';
 import * as RD from '@radix-ui/react-dialog';
-import { Search } from 'lucide-react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { MagnifyingGlass } from '@phosphor-icons/react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Kbd } from './Misc';
 
 export interface CommandItem {
@@ -16,14 +16,33 @@ export interface CommandItem {
 
 const Ctx = createContext<{ open: boolean; setOpen(v: boolean): void } | null>(null);
 
+function isTypingTarget(t: EventTarget | null) {
+  if (!(t instanceof HTMLElement)) return false;
+  return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.getAttribute('role') === 'combobox';
+}
+
 export function CommandMenuProvider({ items, children }: { items: CommandItem[]; children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => {
+    let pending: { key: string; at: number } | null = null;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setOpen((v) => !v);
+        return;
       }
+      // Single-key and "G then X" shortcuts advertised by the items' `shortcut` hints.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1 || isTypingTarget(e.target)) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      const key = e.key.toLowerCase();
+      const first = pending && Date.now() - pending.at < 1200 ? pending.key : null;
+      pending = null;
+      const parsed = itemsRef.current.flatMap((i) => (i.shortcut ? [{ i, keys: i.shortcut.toLowerCase().split(/\s+/) }] : []));
+      const hit = parsed.find((p) => (first ? p.keys.length === 2 && p.keys[0] === first && p.keys[1] === key : p.keys.length === 1 && p.keys[0] === key));
+      if (hit) { e.preventDefault(); hit.i.run(); return; }
+      if (!first && parsed.some((p) => p.keys.length === 2 && p.keys[0] === key)) pending = { key, at: Date.now() };
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -46,11 +65,11 @@ export function CommandMenuProvider({ items, children }: { items: CommandItem[];
             <RD.Description className="sr-only">Type to search commands. Use arrow keys to navigate and Enter to run.</RD.Description>
             <Command label="Search commands" loop>
               <div className="flex items-center gap-2 border-b border-hairline px-4">
-                <Search className="size-4 text-ink-subtle" aria-hidden />
+                <MagnifyingGlass className="size-4 text-ink-subtle" aria-hidden />
                 <Command.Input placeholder="Type a command or search…" className="h-12 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-tertiary" />
                 <Kbd>esc</Kbd>
               </div>
-              <Command.List className="max-h-80 overflow-y-auto p-2">
+              <Command.List className="max-h-[60vh] overflow-y-auto p-2">
                 <Command.Empty className="px-3 py-6 text-center text-body-sm text-ink-subtle">No results.</Command.Empty>
                 {groups.map(([g, list]) => (
                   <Command.Group key={g} heading={g} className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-eyebrow [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.4px] [&_[cmdk-group-heading]]:text-ink-subtle">

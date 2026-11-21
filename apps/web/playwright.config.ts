@@ -34,6 +34,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], launchOptions },
     },
     {
+      // Pre-join camera/mic preview: Chromium's fake devices + auto-granted permission prompt.
+      name: 'meeting-media',
+      testMatch: /meeting-media\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: { ...launchOptions, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
+      },
+    },
+    {
       // The macOS app embeds this UI in a WKWebView at 1280x800; run the shell-level specs there.
       name: 'macos-webview',
       testMatch: /(webview|visual|a11y)\.spec\.ts/,

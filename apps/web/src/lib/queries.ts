@@ -1,9 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { api, ApiError } from './api';
 import {
-  joinGrant, member, page, participant, room, routes, settingsRead, settingsWrite, workspace, workspaceSettings,
-  type WorkspaceSettings,
+  acceptResult, aiConfig, aiCredential, aiTest, invitation, joinGrant, knowledgeSearch, member, page, participant, room, routes, settingsRead,
+  settingsWrite, workspace, workspaceSettings,
+  type AiProvider, type WorkspaceRole, type WorkspaceSettings,
 } from './schemas';
 
 // ---- workspaces
@@ -14,6 +15,112 @@ export function useMembers(wsId: string | undefined) {
     queryFn: () => api(`/workspaces/${wsId}/members`, { query: { pageSize: 100 }, schema: page(member) }),
   });
 }
+
+// ---- invitations (members page)
+export function useInvitations(wsId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['invitations', wsId],
+    enabled: !!wsId && enabled,
+    retry: false,
+    queryFn: () => api(`/workspaces/${wsId}/invitations`, { schema: z.array(invitation) }),
+  });
+}
+export function useInvite(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { email: string; role: Exclude<WorkspaceRole, 'OWNER'> }) =>
+      api(`/workspaces/${wsId}/invitations`, { method: 'POST', body: b, schema: invitation }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations', wsId] }),
+  });
+}
+export function useResendInvitation(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/workspaces/${wsId}/invitations/${id}/resend`, { method: 'POST', schema: invitation }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations', wsId] }),
+  });
+}
+export function useRevokeInvitation(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/workspaces/${wsId}/invitations/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations', wsId] }),
+  });
+}
+/** Invitations addressed to the signed-in user's own email. */
+export function usePendingInvitations(userId: string | null) {
+  return useQuery({
+    queryKey: ['invitations-pending', userId],
+    enabled: !!userId,
+    queryFn: () => api('/invitations/pending', { schema: z.array(invitation) }),
+    staleTime: 15_000,
+  });
+}
+export function useAcceptInvitation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/invitations/${id}/accept`, { method: 'POST', schema: acceptResult }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void qc.invalidateQueries({ queryKey: ['invitations-pending'] });
+    },
+  });
+}
+
+// ---- knowledge
+export function useKnowledgeSearch(wsId: string | undefined, q: string, sourceType?: string) {
+  return useQuery({
+    queryKey: ['knowledge', wsId, q, sourceType ?? 'all'],
+    enabled: !!wsId && q.trim().length > 0,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: () => api('/knowledge/search', { query: { workspaceId: wsId, q: q.trim(), sourceType, limit: 20 }, schema: knowledgeSearch }),
+  });
+}
+
+// ---- bring-your-own AI
+export function useAiConfig(wsId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['ai-config', wsId],
+    enabled: !!wsId && enabled,
+    retry: false,
+    queryFn: () => api(`/ai/workspaces/${wsId}/config`, { schema: aiConfig }),
+  });
+}
+export interface AiPurposeInput {
+  provider: string; model: string; baseUrl?: string | null; reasoning?: string | null; dataBoundary?: string; fallbackPolicy?: string; enabled: boolean;
+}
+export function usePutAiConfig(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { purposes: Record<string, AiPurposeInput | null>; acknowledgeWorkspaceControlled?: boolean }) =>
+      api(`/ai/workspaces/${wsId}/config`, { method: 'PUT', body: b, schema: aiConfig }),
+    onSuccess: (d) => qc.setQueryData(['ai-config', wsId], d),
+  });
+}
+export function usePutCredential(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { provider: AiProvider; apiKey: string; baseUrl?: string }) =>
+      api(`/ai/workspaces/${wsId}/credentials/${v.provider}`, { method: 'PUT', body: { apiKey: v.apiKey, baseUrl: v.baseUrl || undefined }, schema: aiCredential }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-config', wsId] }),
+  });
+}
+export function useDeleteCredential(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: AiProvider) => api(`/ai/workspaces/${wsId}/credentials/${provider}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-config', wsId] }),
+  });
+}
+export function useTestCredential(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: AiProvider) => api(`/ai/workspaces/${wsId}/credentials/${provider}/test`, { method: 'POST', schema: aiTest }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-config', wsId] }),
+  });
+}
+
 export function useCreateWorkspace() {
   const qc = useQueryClient();
   return useMutation({
@@ -45,6 +152,18 @@ export function useRooms(wsId: string | undefined, status?: string) {
     refetchInterval: 8000,
   });
 }
+export const ROOM_PAGE = 50;
+/** Paged room list (newest first): `loadMore` follows `total` so nothing silently disappears. */
+export function useRoomList(wsId: string | undefined, status?: string) {
+  return useInfiniteQuery({
+    queryKey: ['rooms', wsId, 'list', status ?? 'all'],
+    enabled: !!wsId,
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => api('/translation-rooms', { query: { workspaceId: wsId, pageSize: ROOM_PAGE, page: pageParam, status }, schema: page(room) }),
+    getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
+    refetchInterval: 8000,
+  });
+}
 export function useRoom(id: string | undefined) {
   return useQuery({
     queryKey: ['room', id],
@@ -54,19 +173,19 @@ export function useRoom(id: string | undefined) {
     retry: false,
   });
 }
-export function useParticipants(id: string | undefined) {
+export function useParticipants(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ['participants', id],
-    enabled: !!id,
+    enabled: !!id && enabled,
     queryFn: () => api(`/translation-rooms/${id}/participants`, { schema: z.array(participant) }),
     refetchInterval: 3000,
     retry: false,
   });
 }
-export function useRoutes(id: string | undefined) {
+export function useRoutes(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ['routes', id],
-    enabled: !!id,
+    enabled: !!id && enabled,
     queryFn: () => api(`/translation-rooms/${id}/audio-routes`, { schema: routes }),
     refetchInterval: 5000,
     retry: false,
@@ -116,7 +235,10 @@ export function useJoinById(roomId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (b: JoinInput) => api(`/translation-rooms/${roomId}/join`, { method: 'POST', body: b, schema: joinResult }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['participants', roomId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['participants', roomId] });
+      void qc.invalidateQueries({ queryKey: ['room', roomId] });
+    },
   });
 }
 export function useJoinByCode() {
@@ -128,7 +250,10 @@ export function useLeaveRoom(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api(`/translation-rooms/${id}/participants/me/leave`, { method: 'PUT', schema: participant }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['participants', id] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['participants', id] });
+      void qc.invalidateQueries({ queryKey: ['room', id] });
+    },
   });
 }
 
