@@ -19,6 +19,7 @@
 
 use std::collections::VecDeque;
 use std::mem;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -190,9 +191,24 @@ struct TrackerInner {
 /// Segments belong to the oldest committed turn still open, else to the turn being spoken
 /// (early sentences arrive before commit). Valid because the session yields turns in order.
 #[derive(Debug)]
-struct TurnTracker(Mutex<TrackerInner>);
+struct TurnTracker {
+    inner: Mutex<TrackerInner>,
+    /// Early-endpoint hint: the streaming STT produced a sentence terminator for the turn that
+    /// is still being spoken. Set by the relay, consumed by the worker (one atomic, no await).
+    sentence_hint: AtomicBool,
+}
+
+/// Does the text end a sentence (terminator, optionally followed by closing quotes/brackets)?
+/// Pure; covers Latin, CJK and Devanagari terminators plus the ellipsis character.
+pub(crate) fn ends_sentence(text: &str) -> bool {
+    text.trim_end()
+        .trim_end_matches(['"', '\'', ')', ']', '\u{201d}', '\u{2019}', '\u{bb}', '\u{300d}'])
+        .ends_with(['.', '!', '?', '\u{2026}', '\u{3002}', '\u{ff01}', '\u{ff1f}', '\u{0964}'])
+}
 
 struct SegmentInfo {
+    /// The segment belongs to the turn still being spoken (nothing committed ahead of it).
+    uncommitted: bool,
     utterance_seq: u64,
     stamps: Stamps,
     record_first: bool,
@@ -201,15 +217,28 @@ struct SegmentInfo {
 
 impl TurnTracker {
     fn new() -> Self {
-        Self(Mutex::new(TrackerInner {
-            current: Turn::fresh(0, Instant::now()),
-            committed: VecDeque::new(),
-        }))
+        Self {
+            inner: Mutex::new(TrackerInner {
+                current: Turn::fresh(0, Instant::now()),
+                committed: VecDeque::new(),
+            }),
+            sentence_hint: AtomicBool::new(false),
+        }
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, TrackerInner> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    fn set_sentence_hint(&self) {
+        self.sentence_hint.store(true, Ordering::Release);
+    }
+    fn clear_sentence_hint(&self) {
+        self.sentence_hint.store(false, Ordering::Release);
+    }
+    fn sentence_hint_pending(&self) -> bool {
+        self.sentence_hint.load(Ordering::Acquire)
     }
     fn start_turn(&self, arrived: Instant) {
+        self.clear_sentence_hint();
         let mut g = self.lock();
         let seq = g.current.seq;
         g.current = Turn::fresh(seq, arrived);
@@ -218,6 +247,7 @@ impl TurnTracker {
         self.lock().current.seq
     }
     fn commit(&self, speech_end: Instant, commit_at: Instant) {
+        self.clear_sentence_hint();
         let mut g = self.lock();
         let mut t = g.current;
         t.stamps.speech_end = Some(speech_end);
@@ -232,17 +262,20 @@ impl TurnTracker {
         }
     }
     fn discard_current(&self) {
+        self.clear_sentence_hint();
         let mut g = self.lock();
         let seq = g.current.seq;
         g.current = Turn::fresh(seq, Instant::now());
     }
     fn on_segment(&self, is_final: bool, now: Instant) -> SegmentInfo {
         let mut g = self.lock();
+        let uncommitted = g.committed.is_empty();
         let t = match g.committed.front_mut() {
             Some(t) => t,
             None => &mut g.current,
         };
         let mut info = SegmentInfo {
+            uncommitted,
             utterance_seq: t.seq,
             stamps: t.stamps,
             record_first: false,
@@ -292,6 +325,9 @@ async fn relay(
                     continue;
                 }
                 let info = tracker.on_segment(!seg.is_early, now);
+                if info.uncommitted && ends_sentence(&seg.text) {
+                    tracker.set_sentence_hint();
+                }
                 if info.record_first {
                     record_stage_latency(
                         STAGE_STT_FIRST_TEXT,
@@ -433,7 +469,31 @@ impl Worker {
                 self.ring.pop_front();
             }
         }
+        let spoke = events
+            .iter()
+            .any(|e| matches!(e, EndpointEvent::LiveFrame { .. }));
         for e in events {
+            self.handle_event(e, at).await;
+        }
+        self.apply_sentence_hint(spoke, at).await;
+    }
+
+    /// Early endpoint: a sentence terminator reached us from STT for the turn in progress.
+    /// Ignored (and dropped) when the frame carried speech, else forwarded to the endpointer,
+    /// which shortens the hangover (or closes the turn) when the feature is enabled.
+    async fn apply_sentence_hint(&mut self, spoke: bool, at: Instant) {
+        if !self.tracker.sentence_hint_pending() {
+            return;
+        }
+        if spoke {
+            self.tracker.clear_sentence_hint();
+            return;
+        }
+        if !self.endpointer.is_speaking() {
+            return;
+        }
+        self.tracker.clear_sentence_hint();
+        for e in self.endpointer.hint_sentence_complete() {
             self.handle_event(e, at).await;
         }
     }

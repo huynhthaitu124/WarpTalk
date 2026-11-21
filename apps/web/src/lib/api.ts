@@ -30,7 +30,7 @@ function url(path: string, query?: Query) {
   return `/api/v1${path}${s ? `?${s}` : ''}`;
 }
 
-async function send(path: string, o: Opts<undefined>, token: string | null) {
+async function send(path: string, o: Omit<Opts<undefined>, 'schema'>, token: string | null) {
   const headers: Record<string, string> = {};
   if (o.body !== undefined) headers['content-type'] = 'application/json';
   if (token) headers.authorization = `Bearer ${token}`;

@@ -40,3 +40,5 @@ export function StatusPill({ status, className }: { status: string; className?: 
     </Badge>
   );
 }
+
+export const ROOM_STATUS_SAMPLE = ['SCHEDULED', 'WAITING', 'OPEN', 'IN_PROGRESS', 'PAUSED', 'ENDED', 'CANCELLED', 'FAILED'] as const;

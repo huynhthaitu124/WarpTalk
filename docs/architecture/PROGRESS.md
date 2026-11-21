@@ -29,14 +29,14 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [x] W7a `providers/llm` (trait + adapters openai/anthropic/gemini theo byo-llm.md) + workspace AI config (key mã hoá, hot reload)
 - [x] W7b pipeline `runtime` (room actor, per-speaker task, bounded channel, latency stamps) + `stt` (OpenAI Realtime WS, warm pool, flash mode, early sentences)
 - [x] W7c wire `meeting` vào api; platform settings store (runtime config, Redis pub/sub invalidation)
-- [~] W8a pipeline `mt` (realtime first sentence + batch, glossary, speculative, ordering) + `tts` (Cartesia warm pool, cache, isochrony, catch-up, clone ladder, degradation)
-- [ ] W8b `apps/pipeline` binary: LiveKit RTC ingress/egress, room lease, caption stream
-- [~] W8c `apps/worker` + `transcript` consumer (stt/translate/tts results, pause gate, backfill)
-- [~] W9a suggestion engine (spec 09, mọi ngưỡng/category/prompt cấu hình runtime theo workspace/room) + follow-up/action items
-- [~] W9b knowledge/RAG (spec 14 + proposals): structure-aware chunking + citation page/timestamp, score filter + re-rank, purge vectors khi archived/AI-disallowed, embedding retry/DLQ, fact extraction, PII scan transcript, OCR hook, search-quality metrics
+- [x] W8a pipeline `mt` (realtime first sentence + batch, glossary, speculative, ordering) + `tts` (Cartesia warm pool, cache, isochrony, catch-up, clone ladder, degradation)
+- [x] W8b `apps/pipeline` binary: LiveKit RTC ingress/egress, room lease, caption stream
+- [x] W8c `apps/worker` + `transcript` consumer (stt/translate/tts results, pause gate, backfill)
+- [x] W9a suggestion engine (spec 09, mọi ngưỡng/category/prompt cấu hình runtime theo workspace/room) + follow-up/action items
+- [x] W9b knowledge/RAG (spec 14 + proposals): structure-aware chunking + citation page/timestamp, score filter + re-rank, purge vectors khi archived/AI-disallowed, embedding retry/DLQ, fact extraction, PII scan transcript, OCR hook, search-quality metrics
 - [ ] W10 assistant (WarpBot) chat + tools + confirmation gate; billing metering; notification; invitations/series/artifacts
 - [ ] Voice clone (spec 13)
-- [x] W11a External meeting analysis xong; [~] W11b bridge room API + bridge_token fix; [x] far-side dedupe;
+- [x] W11a External meeting analysis xong; [x] W11b bridge room API + bridge_token fix; [x] far-side dedupe;
 - [~] W11 External meeting (Meet/Teams/Zoom) phân tích → `docs/architecture/external-meeting.md`, rồi sửa lỗi + phát triển
 - [ ] W12 Test: functional e2e, failure injection, performance/latency (pipeline bench với fake provider, load test N room, đo mouth-to-ear)
 - [~] W14 `apps/web` (React/Vite/Tailwind 4) theo design system Linear + WarpTalk legacy, Playwright E2E trên backend thật (test plan + visual regression + a11y)
@@ -50,6 +50,10 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - `openai.com`, `ai.google.dev`, `developers.google.com`, `developers.zoom.us`, `learn.microsoft.com` bị chặn → các claim liên quan đánh dấu UNVERIFIED.
 
 ## Nợ kỹ thuật đã biết
+
+- `apps/api` dùng `#[path]` để include `apps/worker/src/{ai,knowledge}.rs` → tách thành crate `crates/shared/ai-plane`
+- Knowledge: member chưa có allowlist meeting/document (fail closed); workspace documents upload chưa làm
+- Pipeline: chưa phát `__MEETING_END__`; isochrony cần `source_ms` trên SttSegment
 
 - `IdentityUserDirectory` gọi từng user một (cần batch query)
 - `workspace` dùng role uuid cố định; BR-31/32 (một membership Internal) chưa enforce

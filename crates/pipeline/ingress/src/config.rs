@@ -23,6 +23,11 @@ pub struct EndpointerConfig {
     pub vad_seek_boundary_after_ms: u32,
     /// Speech-so-far under which the short-turn rung applies.
     pub vad_short_turn_speech_ms: u32,
+    /// Early endpoint (semantic hint path): once the runtime reports that the streaming STT
+    /// already produced a sentence terminator for the turn in progress
+    /// ([`crate::Endpointer::hint_sentence_complete`]) the hangover of that turn is cut to this
+    /// many ms (never lengthened). 0 disables the hint path entirely.
+    pub vad_sentence_hint_hangover_ms: u32,
     /// Hard cap on one chunk (padding included). Platform range 2000..=15000.
     pub chunk_duration_ms: u32,
     /// Absolute energy floor on SPEECH RMS (scaled by sqrt of speech share).
@@ -47,6 +52,7 @@ impl Default for EndpointerConfig {
             vad_short_turn_hangover_ms: 864,
             vad_seek_boundary_after_ms: 4000,
             vad_short_turn_speech_ms: 1500,
+            vad_sentence_hint_hangover_ms: 0,
             chunk_duration_ms: 6000,
             energy_floor_rms: 0.02,
             energy_relative_ratio: 0.4,
@@ -91,6 +97,9 @@ impl EndpointerConfig {
             && self.vad_silence_hangover_ms <= self.vad_short_turn_hangover_ms)
         {
             return Err("hangover ladder must satisfy seek <= silence <= short_turn".into());
+        }
+        if self.vad_sentence_hint_hangover_ms > self.vad_silence_hangover_ms {
+            return Err("vad_sentence_hint_hangover_ms must be <= vad_silence_hangover_ms".into());
         }
         if self.vad_short_turn_hangover_ms >= self.chunk_duration_ms {
             return Err("vad_short_turn_hangover_ms must be < chunk_duration_ms".into());

@@ -140,6 +140,8 @@ pub struct Endpointer {
     seek_hang: usize,
     base_hang: usize,
     short_hang: usize,
+    /// Hangover once a sentence-complete hint arrived (0 = hint path disabled).
+    hint_hang: usize,
 
     /// Stream clock: samples pushed so far.
     now_samples: u64,
@@ -150,6 +152,8 @@ pub struct Endpointer {
     silence_samples: usize,
     last_speech_end_samples: u64,
     published_this_turn: bool,
+    /// The STT reported a finished sentence and no speech frame came since.
+    sentence_hint: bool,
 }
 
 impl Endpointer {
@@ -174,6 +178,7 @@ impl Endpointer {
             seek_hang: ms(cfg.vad_seek_hangover_ms),
             base_hang: ms(cfg.vad_silence_hangover_ms),
             short_hang: ms(cfg.vad_short_turn_hangover_ms),
+            hint_hang: ms(cfg.vad_sentence_hint_hangover_ms),
             buffer: Vec::with_capacity(ms(cfg.chunk_duration_ms) + FRAME_SAMPLES),
             cfg,
             now_samples: 0,
@@ -183,6 +188,7 @@ impl Endpointer {
             silence_samples: 0,
             last_speech_end_samples: 0,
             published_this_turn: false,
+            sentence_hint: false,
         }
     }
 
@@ -221,6 +227,7 @@ impl Endpointer {
                 self.streamed = 0;
                 self.speech_samples = 0;
                 self.published_this_turn = false;
+                self.sentence_hint = false;
                 events.push(EndpointEvent::SpeechStart {
                     t_ms: frame_start / SAMPLES_PER_MS,
                 });
@@ -228,6 +235,8 @@ impl Endpointer {
             self.buffer.extend_from_slice(frame);
             self.speech_samples += frame.len();
             self.silence_samples = 0;
+            // New speech: the finished sentence the hint spoke of is not the end of the turn.
+            self.sentence_hint = false;
             self.last_speech_end_samples = self.now_samples;
             // Everything not yet streamed (pre-speech, any silence since the last speech
             // frame, this frame) goes out ungated.
@@ -242,18 +251,48 @@ impl Endpointer {
         } else if self.speaking {
             self.buffer.extend_from_slice(frame);
             self.silence_samples += frame.len();
-            let hangover = if self.speech_samples >= self.seek_after_samples {
-                self.seek_hang
-            } else if self.speech_samples < self.short_turn_samples {
-                self.short_hang
-            } else {
-                self.base_hang
-            };
+            let hangover = self.current_hangover();
             if self.silence_samples >= hangover {
                 self.finalize(EndReason::Silence, &mut events);
             }
         } else {
             self.pre_ring.push(frame);
+        }
+        events
+    }
+
+    /// Hangover that applies right now: the ladder rung for the speech so far, shortened to the
+    /// hint hangover while a sentence-complete hint is armed (never lengthened).
+    fn current_hangover(&self) -> usize {
+        let rung = if self.speech_samples >= self.seek_after_samples {
+            self.seek_hang
+        } else if self.speech_samples < self.short_turn_samples {
+            self.short_hang
+        } else {
+            self.base_hang
+        };
+        if self.sentence_hint && self.hint_hang > 0 {
+            rung.min(self.hint_hang)
+        } else {
+            rung
+        }
+    }
+
+    /// Semantic endpointing hint: the streaming STT already produced a sentence terminator for
+    /// the turn in progress. While the VAD is in its hangover (the speaker is silent) the
+    /// hangover is cut to `vad_sentence_hint_hangover_ms`; if that much silence has already
+    /// elapsed the turn closes right away and the events are returned. Pure and idempotent:
+    /// ignored when disabled (0 ms), when no turn is open, while the speaker is talking, and
+    /// disarmed by the next speech frame, so a hint about an earlier sentence cannot cut a
+    /// turn that went on.
+    pub fn hint_sentence_complete(&mut self) -> Vec<EndpointEvent> {
+        let mut events = Vec::new();
+        if self.hint_hang == 0 || !self.speaking || self.silence_samples == 0 {
+            return events;
+        }
+        self.sentence_hint = true;
+        if self.silence_samples >= self.current_hangover() {
+            self.finalize(EndReason::Silence, &mut events);
         }
         events
     }
@@ -327,6 +366,7 @@ impl Endpointer {
         self.streamed = 0;
         self.speech_samples = 0;
         self.silence_samples = 0;
+        self.sentence_hint = false;
         if reason == EndReason::Cap {
             // Still mid-utterance: the speaker keeps talking into a fresh chunk.
             self.published_this_turn |= accepted;
@@ -713,6 +753,143 @@ mod tests {
         bad(|c| c.vad_short_turn_speech_ms = 5000);
         bad(|c| c.energy_relative_ratio = 2.0);
         bad(|c| c.energy_baseline_min_chunks = 9);
+    }
+
+    fn hint_cfg(ms: u32) -> EndpointerConfig {
+        EndpointerConfig {
+            vad_sentence_hint_hangover_ms: ms,
+            ..EndpointerConfig::default()
+        }
+    }
+
+    /// Pushes frames one at a time, calling `hint` after `hint_after` silent frames.
+    fn run_with_hint(
+        ep: &mut Endpointer,
+        g: &Gen,
+        hint_after_silent_frames: Option<usize>,
+    ) -> (Vec<EndpointEvent>, bool) {
+        let mut vad = EnergyVad::default();
+        let mut out = Vec::new();
+        let mut silent = 0usize;
+        let mut hinted_in_hangover = false;
+        for f in &g.frames {
+            let p = vad.speech_prob(f);
+            let ev = ep.push(f, p);
+            let ended = !ev.is_empty()
+                && ev
+                    .iter()
+                    .any(|e| matches!(e, EndpointEvent::UtteranceEnd { .. }));
+            out.extend(ev);
+            if ep.is_speaking() && p < 0.2 {
+                silent += 1;
+                if Some(silent) == hint_after_silent_frames {
+                    hinted_in_hangover = true;
+                    out.extend(ep.hint_sentence_complete());
+                }
+            } else if !ended {
+                silent = 0;
+            }
+        }
+        (out, hinted_in_hangover)
+    }
+
+    fn hangover_of(ev: &[EndpointEvent]) -> u64 {
+        let EndpointEvent::UtteranceEnd {
+            decided_at_ms,
+            last_speech_end_ms,
+            ..
+        } = ends(ev)[0]
+        else {
+            unreachable!()
+        };
+        decided_at_ms - last_speech_end_ms
+    }
+
+    #[test]
+    fn hint_shortens_mid_turn_hangover_to_configured_value() {
+        let mut g = Gen::new();
+        g.tone(2016, 0.3).silence(1600);
+        let mut ep = Endpointer::new(hint_cfg(250));
+        // Hint arrives with the first silent frame: end at 250 ms rounded up to frames (256).
+        let (ev, hinted) = run_with_hint(&mut ep, &g, Some(1));
+        assert!(hinted);
+        assert_eq!(ends(&ev).len(), 1);
+        assert_eq!(hangover_of(&ev), 256);
+    }
+
+    #[test]
+    fn hint_after_enough_silence_closes_the_turn_immediately() {
+        let mut g = Gen::new();
+        g.tone(2016, 0.3).silence(1600);
+        let mut ep = Endpointer::new(hint_cfg(250));
+        // 10 silent frames = 320 ms >= 250 ms: the hint itself returns the end.
+        let (ev, _) = run_with_hint(&mut ep, &g, Some(10));
+        assert_eq!(ends(&ev).len(), 1);
+        assert_eq!(hangover_of(&ev), 320);
+    }
+
+    #[test]
+    fn hint_disabled_by_default_and_without_flag_nothing_changes() {
+        let mut g = Gen::new();
+        g.tone(2016, 0.3).silence(1600);
+        let mut ep = Endpointer::new(EndpointerConfig::default());
+        let (ev, _) = run_with_hint(&mut ep, &g, Some(1));
+        assert_eq!(hangover_of(&ev), 576);
+        let mut ep = Endpointer::new(hint_cfg(250));
+        let (ev, _) = run_with_hint(&mut ep, &g, None);
+        assert_eq!(hangover_of(&ev), 576);
+    }
+
+    #[test]
+    fn hint_never_lengthens_the_hangover() {
+        // Long turn: seek rung is 250 already; a 500 ms hint must not stretch it.
+        let mut g = Gen::new();
+        g.tone(4500, 0.3).silence(1600);
+        let mut ep = Endpointer::new(hint_cfg(500));
+        let (ev, _) = run_with_hint(&mut ep, &g, Some(1));
+        assert_eq!(hangover_of(&ev), 256);
+    }
+
+    #[test]
+    fn hint_is_ignored_while_speaking_or_idle_and_disarmed_by_speech() {
+        let mut ep = Endpointer::new(hint_cfg(250));
+        assert!(ep.hint_sentence_complete().is_empty()); // idle
+        let mut g = Gen::new();
+        g.tone(2016, 0.3);
+        let mut vad = EnergyVad::default();
+        for f in &g.frames {
+            ep.push(f, vad.speech_prob(f));
+        }
+        // Speaking, no silence yet: ignored (must not arm).
+        assert!(ep.hint_sentence_complete().is_empty());
+        // A short pause (96 ms), hint armed, then speech resumes: disarmed, ladder applies.
+        let mut g2 = Gen::new();
+        g2.silence(96);
+        for f in &g2.frames {
+            ep.push(f, vad.speech_prob(f));
+        }
+        assert!(ep.hint_sentence_complete().is_empty());
+        let mut g3 = Gen::new();
+        g3.tone(640, 0.3).silence(1600);
+        let mut ev = Vec::new();
+        for f in &g3.frames {
+            ev.extend(ep.push(f, vad.speech_prob(f)));
+        }
+        assert_eq!(ends(&ev).len(), 1);
+        assert_eq!(
+            hangover_of(&ev),
+            576,
+            "stale hint must not cut the continued turn"
+        );
+    }
+
+    #[test]
+    fn hint_config_validation() {
+        let mut c = EndpointerConfig::default();
+        c.vad_sentence_hint_hangover_ms = 577;
+        assert!(c.validate().is_err());
+        c.vad_sentence_hint_hangover_ms = 250;
+        assert!(c.validate().is_ok());
     }
 
     /// Micro benchmark: `cargo test -p warptalk-ingress --release -- --ignored --nocapture`.
