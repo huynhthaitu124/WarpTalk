@@ -13,9 +13,9 @@ use futures::stream::BoxStream;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
-use warptalk_bus::{HandlerError, StreamHandler, StreamMessage};
+use warptalk_bus::{HandlerError, StreamMessage};
 use warptalk_config::JwtConfig;
-use warptalk_kernel::{AppError, AppResult, SystemClock, UserId, WorkspaceId, WorkspaceRole};
+use warptalk_kernel::{AppResult, SystemClock, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_knowledge::application::{
     AccessContext, AccessScope, DocumentAccess, JobStatus, KnowledgeRepository, RelevanceKey,
     ResultPublisher, SearchFilters, run_eval,
@@ -1150,5 +1150,4 @@ async fn redis_consumer_end_to_end() {
         .await
         .unwrap();
     assert_eq!(status.as_deref(), Some("indexed"));
-    let _ = AppError::internal("unused");
 }

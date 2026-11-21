@@ -304,15 +304,6 @@ impl Worker {
         }
     }
 
-    fn abort_context(&mut self) {
-        if let Some(o) = self.open.take() {
-            tokio::spawn(async move {
-                o.ctx.cancel().await;
-                drop(o.permit);
-            });
-        }
-    }
-
     fn chunk(
         &self,
         t: &Translation,

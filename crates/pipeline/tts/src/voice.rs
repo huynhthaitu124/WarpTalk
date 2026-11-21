@@ -191,52 +191,52 @@ impl CloneLadder {
             pcm_16k: pcm,
         };
         let res = self.cloner.clone_voice(&req).await;
-        let mut delete = None;
-        let notify = {
+        let (notify, delete) = {
             let mut states = self.lock();
-            let Some(st) = states.get_mut(&key) else {
+            match states.get_mut(&key) {
                 // Revoked while cloning: the new voice must not survive.
-                drop(states);
-                if let Ok(id) = res {
-                    let _ = self.cloner.delete_voice(&id).await;
-                }
-                return;
-            };
-            st.in_flight = false;
-            st.next_rung += 1;
-            match res {
-                Ok(id) => match &st.current {
-                    None => {
-                        st.current = Some(ClonedVoice {
-                            voice_id: id,
-                            quality: score,
-                        });
-                        st.failed = false;
-                    }
-                    Some(cur) => {
-                        st.upgrades += 1;
-                        if score >= cur.quality + cfg.clone.upgrade_margin {
-                            delete = Some(cur.voice_id.clone());
-                            st.current = Some(ClonedVoice {
-                                voice_id: id,
-                                quality: score,
-                            });
-                        } else {
-                            delete = Some(id);
+                None => (None, res.ok()),
+                Some(st) => {
+                    let mut delete = None;
+                    st.in_flight = false;
+                    st.next_rung += 1;
+                    match res {
+                        Ok(id) => match &st.current {
+                            None => {
+                                st.current = Some(ClonedVoice {
+                                    voice_id: id,
+                                    quality: score,
+                                });
+                                st.failed = false;
+                            }
+                            Some(cur) => {
+                                st.upgrades += 1;
+                                if score >= cur.quality + cfg.clone.upgrade_margin {
+                                    delete = Some(cur.voice_id.clone());
+                                    st.current = Some(ClonedVoice {
+                                        voice_id: id,
+                                        quality: score,
+                                    });
+                                } else {
+                                    delete = Some(id);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            warn!(error = %e, "voice clone rung failed");
+                            st.failed = st.current.is_none();
                         }
                     }
-                },
-                Err(e) => {
-                    warn!(error = %e, "voice clone rung failed");
-                    st.failed = st.current.is_none();
+                    (Some(st.notify.clone()), delete)
                 }
             }
-            st.notify.clone()
         };
         if let Some(id) = delete {
             let _ = self.cloner.delete_voice(&id).await;
         }
-        notify.notify_waiters();
+        if let Some(n) = notify {
+            n.notify_waiters();
+        }
     }
 
     pub fn current(&self, room: &str, speaker: &str) -> Option<ClonedVoice> {
