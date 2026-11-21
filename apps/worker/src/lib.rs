@@ -2,6 +2,8 @@
 //! embeddings, summaries, suggestions, notifications later).
 
 pub mod adapters;
+pub mod ai;
+pub mod knowledge;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,10 +19,37 @@ use warptalk_transcript::application::ports::{AlwaysSaveRoomPolicy, NoopReadAcce
 use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 
-use crate::adapters::{PgRoomDirectory, PgWorkspaceAiPolicy};
+use crate::adapters::{PgRoomDirectory, PgSuggestionRoomDirectory, PgWorkspaceAiPolicy};
+use crate::ai::AiProviders;
+use crate::knowledge::{
+    DenyDocumentAccess, KnowledgeParts, ServiceRetriever, build_knowledge_module,
+};
+use redis::aio::ConnectionManager;
+use warptalk_assistant::suggestion::{
+    EngineDeps, RedisConsentPolicy, RedisRoomSignals, SettingsConfigSource, SuggestionEngine,
+    SuggestionState, SuggestionWorker,
+};
+use warptalk_knowledge::infrastructure::{INDEX_RESULTS_STREAM, RedisResultPublisher};
+use warptalk_knowledge::{KnowledgeModule, index_consumer_config, purge_consumer_config};
+use warptalk_qdrant::VectorStore;
+use warptalk_settings::SettingsStore;
+
+/// Model pipelines the suggestion worker runs at once across rooms.
+const SUGGESTION_MAX_PIPELINES: usize = 8;
 
 /// How long shutdown waits for consumers to stop before giving up.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+
+/// Keys for modules that never serve HTTP in this process.
+fn dummy_jwt() -> JwtKeys {
+    JwtKeys::from_config(&JwtConfig {
+        secret: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
+        issuer: "warptalk-worker".into(),
+        audience: "warptalk-worker".into(),
+        access_ttl_seconds: 1,
+        refresh_ttl_seconds: 1,
+    })
+}
 
 /// Build the transcript module with the worker's simple adapters.
 pub async fn build_transcript_module(
@@ -31,13 +60,7 @@ pub async fn build_transcript_module(
         .await
         .context("connecting to Redis")?;
     // The worker mounts no HTTP routes; the module only needs keys to be constructible.
-    let jwt = JwtKeys::from_config(&JwtConfig {
-        secret: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
-        issuer: "warptalk-worker".into(),
-        audience: "warptalk-worker".into(),
-        access_ttl_seconds: 1,
-        refresh_ttl_seconds: 1,
-    });
+    let jwt = dummy_jwt();
     Ok(TranscriptModule::new(TranscriptDeps {
         pool: pool.clone(),
         redis,
@@ -86,4 +109,87 @@ pub async fn join_consumers(handles: Vec<JoinHandle<()>>) {
     if tokio::time::timeout(SHUTDOWN_GRACE, all).await.is_err() {
         tracing::warn!("consumers did not stop within the grace period");
     }
+}
+
+/// Knowledge consumers (indexing, purge) and the live suggestion worker.
+pub struct AiPlane {
+    pub knowledge: KnowledgeModule,
+    pub suggestion: Arc<SuggestionWorker>,
+    pub ai: Arc<AiProviders>,
+}
+
+/// Build the knowledge module and the suggestion worker with the worker's adapters.
+pub async fn build_ai_plane(
+    pool: PgPool,
+    redis_url: &str,
+    vectors: Arc<dyn VectorStore>,
+    ai: Arc<AiProviders>,
+    settings: SettingsStore,
+) -> anyhow::Result<AiPlane> {
+    let redis = warptalk_bus::connect(redis_url)
+        .await
+        .context("connecting to Redis")?;
+    let knowledge = build_knowledge_module(KnowledgeParts {
+        pool: pool.clone(),
+        jwt: dummy_jwt(),
+        settings: settings.clone(),
+        vectors,
+        ai: ai.clone(),
+        access: Arc::new(DenyDocumentAccess),
+        results: Arc::new(RedisResultPublisher::new(
+            redis.clone(),
+            INDEX_RESULTS_STREAM,
+        )),
+    })
+    .await;
+
+    warptalk_assistant::suggestion::register_config(&settings);
+    let engine = SuggestionEngine::new(EngineDeps {
+        rooms: Arc::new(PgSuggestionRoomDirectory::new(pool)),
+        signals: Arc::new(RedisRoomSignals::new(redis.clone())),
+        consent: Arc::new(RedisConsentPolicy::new(redis.clone())),
+        llm: ai.clone(),
+        knowledge: Arc::new(ServiceRetriever::new(knowledge.service())),
+        config: Arc::new(SettingsConfigSource::new(settings)),
+        clock: Arc::new(SystemClock),
+        state: SuggestionState::new(redis.clone()),
+        redis,
+    });
+    let suggestion = Arc::new(SuggestionWorker::new(
+        Arc::new(engine),
+        SUGGESTION_MAX_PIPELINES,
+    ));
+    Ok(AiPlane {
+        knowledge,
+        suggestion,
+        ai,
+    })
+}
+
+/// Settings store for the worker: platform defaults registered, invalidation listener running.
+pub fn build_settings(pool: PgPool, redis: ConnectionManager, redis_url: &str) -> SettingsStore {
+    let settings = SettingsStore::new(pool, Some(redis));
+    warptalk_settings::namespaces::register_defaults(&settings);
+    settings.spawn_invalidation_listener(redis_url);
+    settings
+}
+
+/// Consumer list for the knowledge module (indexing + purge).
+pub fn knowledge_consumers(k: &KnowledgeModule) -> Vec<(ConsumerConfig, Arc<dyn StreamHandler>)> {
+    vec![
+        (index_consumer_config(), k.index_handler()),
+        (purge_consumer_config(), k.purge_handler()),
+    ]
+}
+
+/// Start the suggestion worker on its own Redis connection.
+pub async fn spawn_suggestion(
+    redis_url: &str,
+    worker: Arc<SuggestionWorker>,
+    shutdown: &watch::Receiver<bool>,
+) -> anyhow::Result<JoinHandle<()>> {
+    let conn = warptalk_bus::connect(redis_url)
+        .await
+        .context("connecting suggestion consumer to Redis")?;
+    Ok(worker.spawn(conn, shutdown.clone()))
 }

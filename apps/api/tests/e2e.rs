@@ -114,6 +114,8 @@ async fn full_flow() {
             warptalk_workspace::MIGRATIONS,
             warptalk_room::MIGRATIONS,
             warptalk_meeting::MIGRATIONS,
+            warptalk_transcript::MIGRATIONS,
+            warptalk_knowledge::MIGRATIONS,
         ],
     )
     .await
@@ -143,8 +145,11 @@ async fn full_flow() {
             }),
             room_service: Some(Arc::new(NoopRoomService)),
             redis_url: None,
+            ai: None,
+            vectors: None,
         },
-    );
+    )
+    .await;
     let unconfigured = warptalk_api::build_router(
         pool.clone(),
         keys,
@@ -153,7 +158,8 @@ async fn full_flow() {
         mailer.clone(),
         None,
         warptalk_api::ApiOptions::default(),
-    );
+    )
+    .await;
 
     let (s, _) = call(&app, "GET", "/health", None, None).await;
     assert_eq!(s, StatusCode::OK);
@@ -327,6 +333,30 @@ async fn full_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Knowledge search: no index yet, so 200 with no chunks; non-members are refused.
+    let (s, b) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/knowledge/search?workspaceId={ws_id}&q=budget"),
+        None,
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["chunks"].as_array().map(Vec::len), Some(0), "{b}");
+    let (s, _) = call(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/knowledge/search?workspaceId={}&q=budget",
+            uuid::Uuid::new_v4()
+        ),
+        None,
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
 
     let (s, b) = call(
         &app,

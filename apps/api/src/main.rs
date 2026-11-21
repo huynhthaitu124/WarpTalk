@@ -62,6 +62,8 @@ async fn main() -> anyhow::Result<()> {
         livekit,
         room_service: None,
         redis_url: Some(redis_cfg.url.clone()),
+        ai: None,
+        vectors: None,
     };
     let jwt = JwtKeys::from_config(&jwt_cfg);
     let app = warptalk_api::build_router(
@@ -72,7 +74,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(LogMailer),
         Some(redis),
         opts,
-    );
+    )
+    .await;
 
     let listener = tokio::net::TcpListener::bind(&http.bind)
         .await

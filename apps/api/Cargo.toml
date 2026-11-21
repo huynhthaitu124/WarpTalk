@@ -40,6 +40,12 @@ warptalk-contracts = { workspace = true }
 warptalk-livekit = { workspace = true }
 warptalk-meeting = { workspace = true }
 warptalk-settings = { workspace = true }
+warptalk-knowledge = { workspace = true }
+warptalk-qdrant = { workspace = true }
+warptalk-assistant = { workspace = true }
+warptalk-llm = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
+warptalk-transcript = { workspace = true }
 tower = { workspace = true, features = ["util"] }

@@ -91,12 +91,14 @@ async fn search(
     let workspace = WorkspaceId::from_uuid(q.workspace_id);
     // Fails closed: not a member or allowlist unavailable -> error, nothing is searched.
     let scope = s.access.access_scope(workspace, user.user_id()).await?;
+    // Owner/Admin are unscoped within their workspace; members are limited to their allowlists.
+    let unscoped = scope.role.rank() >= warptalk_kernel::WorkspaceRole::Admin.rank();
     let ctx = AccessContext {
         workspace,
         user: user.user_id(),
         role: scope.role,
-        allowed_document_ids: Some(scope.allowed_document_ids),
-        allowed_meeting_ids: Some(scope.allowed_meeting_ids),
+        allowed_document_ids: (!unscoped).then_some(scope.allowed_document_ids),
+        allowed_meeting_ids: (!unscoped).then_some(scope.allowed_meeting_ids),
     };
     let r = s
         .service

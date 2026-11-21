@@ -8,11 +8,10 @@ use anyhow::Context;
 use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
-use warptalk_assistant::suggestion::{
-    GroundedSnippet, KnowledgeQuery, KnowledgeRetriever, ports::RetrieveError,
-};
+use warptalk_assistant::suggestion::ports::RetrieveError;
+use warptalk_assistant::suggestion::{GroundedSnippet, KnowledgeQuery, KnowledgeRetriever};
 use warptalk_kernel::{AppError, AppResult, SystemClock, UserId, WorkspaceId, WorkspaceRole};
-use warptalk_knowledge::application::ports::ResultPublisher;
+use warptalk_knowledge::application::ResultPublisher;
 use warptalk_knowledge::domain::CitationKind;
 use warptalk_knowledge::{
     AccessContext, AccessScope, DocumentAccess, KnowledgeDeps, KnowledgeModule, KnowledgeService,

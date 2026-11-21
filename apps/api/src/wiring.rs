@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::ai::AiProviders;
+use crate::knowledge::{KnowledgeParts, build_knowledge_module, build_vector_store};
 use crate::settings_http::{self, SettingsHttpState};
 use async_trait::async_trait;
 use axum::Router;
@@ -22,12 +24,18 @@ use warptalk_identity::{
 use warptalk_kernel::{
     AppError, AppResult, Clock, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole,
 };
+use warptalk_knowledge::application::ResultPublisher;
+use warptalk_knowledge::infrastructure::{
+    INDEX_RESULTS_STREAM, MemoryResultPublisher, RedisResultPublisher,
+};
+use warptalk_knowledge::{AccessScope, DocumentAccess};
 use warptalk_livekit::{LiveKitConfig, NoopRoomService, RoomServiceClient};
 use warptalk_meeting::application::ports::{
     BridgeInfo, MeetingEvent, MeetingEventPublisher, NoopMeetingEventPublisher, ParticipantInfo,
     RoomDirectory, RoomInfo,
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MeetingDeps, MeetingModule, RoomService};
+use warptalk_qdrant::VectorStore;
 use warptalk_room::RoomDeps;
 use warptalk_room::RoomModule;
 use warptalk_room::RoomQueries;
@@ -112,6 +120,30 @@ impl RoomDirectory for RoomDirectoryAdapter {
     }
 }
 
+/// Adapter: knowledge's `DocumentAccess` port backed by workspace roles.
+///
+/// Owners and admins get the role (the knowledge module treats them as unscoped). Members get
+/// empty allowlists (fail closed).
+/// TODO: members' documents once workspace documents exist; members' meetings = rooms they
+/// participated in (needs a `RoomQueries` method listing a user's rooms in a workspace).
+pub struct KnowledgeAccessAdapter(pub WorkspaceQueries);
+
+#[async_trait]
+impl DocumentAccess for KnowledgeAccessAdapter {
+    async fn access_scope(&self, ws: WorkspaceId, user: UserId) -> AppResult<AccessScope> {
+        let role = self
+            .0
+            .member_role(ws, user)
+            .await?
+            .ok_or_else(|| AppError::forbidden("not a member of this workspace"))?;
+        Ok(AccessScope {
+            role,
+            allowed_document_ids: Vec::new(),
+            allowed_meeting_ids: Vec::new(),
+        })
+    }
+}
+
 /// Meeting events on Redis pub/sub; the channel is named by the event type.
 pub struct RedisMeetingEventPublisher {
     conn: ConnectionManager,
@@ -180,6 +212,10 @@ pub struct ApiOptions {
     pub room_service: Option<Arc<dyn RoomService>>,
     /// Redis URL for the settings invalidation listener (`None`: no listener).
     pub redis_url: Option<String>,
+    /// Overrides platform AI provider resolution (tests); default reads env keys + settings.
+    pub ai: Option<Arc<AiProviders>>,
+    /// Overrides the vector store (tests); default is Qdrant when `QDRANT_URL` is set.
+    pub vectors: Option<Arc<dyn VectorStore>>,
 }
 
 /// Rejects the routes that mint LiveKit tokens when LiveKit is not configured.
@@ -196,7 +232,7 @@ async fn livekit_required(req: Request, next: Next) -> Response {
 /// Build the full API router (`/health` plus modules under `/api/v1`).
 ///
 /// `redis` is the event-bus connection; `None` (tests, Redis-less runs) drops room events.
-pub fn build(
+pub async fn build(
     pool: PgPool,
     jwt: JwtKeys,
     jwt_cfg: &JwtConfig,
@@ -205,6 +241,13 @@ pub fn build(
     redis: Option<ConnectionManager>,
     opts: ApiOptions,
 ) -> Router {
+    let results: Arc<dyn ResultPublisher> = match &redis {
+        Some(conn) => Arc::new(RedisResultPublisher::new(
+            conn.clone(),
+            INDEX_RESULTS_STREAM,
+        )),
+        None => Arc::new(MemoryResultPublisher::new()),
+    };
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let refresh_secs = i64::try_from(jwt_cfg.refresh_ttl_seconds).unwrap_or(i64::from(i32::MAX));
     let policy = Policy {
@@ -280,6 +323,25 @@ pub fn build(
     if !configured {
         meeting_router = meeting_router.layer(middleware::from_fn(livekit_required));
     }
+    let ai = opts
+        .ai
+        .unwrap_or_else(|| AiProviders::from_env(settings.clone()));
+    let vectors = opts.vectors.unwrap_or_else(|| {
+        build_vector_store().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "vector store unavailable; using in-memory");
+            Arc::new(warptalk_qdrant::InMemoryVectorStore::new())
+        })
+    });
+    let knowledge = build_knowledge_module(KnowledgeParts {
+        pool: pool.clone(),
+        jwt: jwt.clone(),
+        settings: settings.clone(),
+        vectors,
+        ai,
+        access: Arc::new(KnowledgeAccessAdapter(workspace.queries())),
+        results,
+    })
+    .await;
     let settings_router = settings_http::router(SettingsHttpState {
         store: settings,
         pool,
@@ -293,7 +355,8 @@ pub fn build(
         .merge(workspace.router())
         .merge(room.router())
         .merge(meeting_router)
-        .merge(settings_router);
+        .merge(settings_router)
+        .merge(knowledge.router());
     let router = Router::new()
         .route("/health", get(warptalk_web::health))
         .nest("/api/v1", api);

@@ -2,7 +2,12 @@ use anyhow::{Context, bail};
 use tokio::sync::watch;
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
-use warptalk_worker::{build_transcript_module, join_consumers, spawn_consumers};
+use warptalk_worker::ai::AiProviders;
+use warptalk_worker::knowledge::build_vector_store;
+use warptalk_worker::{
+    build_ai_plane, build_settings, build_transcript_module, join_consumers, knowledge_consumers,
+    spawn_consumers, spawn_suggestion,
+};
 
 /// Resolves on Ctrl-C or SIGTERM.
 async fn shutdown_signal() {
@@ -56,8 +61,25 @@ async fn main() -> anyhow::Result<()> {
 
     let transcript = build_transcript_module(pool.clone(), &redis_cfg.url).await?;
 
+    let redis = warptalk_bus::connect(&redis_cfg.url)
+        .await
+        .context("connecting to Redis")?;
+    let settings = build_settings(pool.clone(), redis, &redis_cfg.url);
+    let ai = AiProviders::from_env(settings.clone());
+    let plane = build_ai_plane(
+        pool.clone(),
+        &redis_cfg.url,
+        build_vector_store()?,
+        ai,
+        settings,
+    )
+    .await?;
+
     let (tx, rx) = watch::channel(false);
-    let handles = spawn_consumers(&redis_cfg.url, transcript.consumers(), &rx).await?;
+    let mut consumers = transcript.consumers();
+    consumers.extend(knowledge_consumers(&plane.knowledge));
+    let mut handles = spawn_consumers(&redis_cfg.url, consumers, &rx).await?;
+    handles.push(spawn_suggestion(&redis_cfg.url, plane.suggestion.clone(), &rx).await?);
     tracing::info!(consumers = handles.len(), "worker started");
 
     shutdown_signal().await;

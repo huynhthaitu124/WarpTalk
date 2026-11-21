@@ -73,3 +73,45 @@ impl WorkspaceAiPolicy for PgWorkspaceAiPolicy {
         self.flag(ws, "externalLlmAllowed").await
     }
 }
+
+/// Suggestion engine's room lookup: workspace, activity (`status = IN_PROGRESS`) and the
+/// `ai_suggest` flag. TEMPORARY cross-schema read like the adapters above.
+///
+/// The flag is read from `workspace.workspaces.settings ->> 'aiSuggestEnabled'`; it defaults to
+/// enabled and only the literal `false` disables it. (The suggestion config's own `enabled`
+/// switch still gates the engine per room.)
+pub struct PgSuggestionRoomDirectory {
+    pool: PgPool,
+}
+
+impl PgSuggestionRoomDirectory {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl warptalk_assistant::suggestion::RoomDirectory for PgSuggestionRoomDirectory {
+    async fn room_info(&self, room: RoomId) -> Option<warptalk_assistant::suggestion::RoomInfo> {
+        let row: Option<(Uuid, String, bool)> = sqlx::query_as(
+            "SELECT r.workspace_id, r.status, \
+                    COALESCE(w.settings ->> 'aiSuggestEnabled', 'true') <> 'false' \
+             FROM translation_room.translation_rooms r \
+             LEFT JOIN workspace.workspaces w ON w.id = r.workspace_id \
+             WHERE r.id = $1",
+        )
+        .bind(room.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| tracing::warn!(%room, error = %e, "suggestion room lookup failed"))
+        .ok()
+        .flatten();
+        row.map(
+            |(ws, status, enabled)| warptalk_assistant::suggestion::RoomInfo {
+                workspace_id: WorkspaceId::from_uuid(ws),
+                active: status == "IN_PROGRESS",
+                ai_suggest_enabled: enabled,
+            },
+        )
+    }
+}

@@ -16,11 +16,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use warptalk_assistant::suggestion::{DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm};
+use warptalk_assistant::suggestion::{
+    DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm,
+};
 use warptalk_kernel::WorkspaceId;
 use warptalk_llm::{
-    Capabilities, EmbeddingProvider, Embeddings, LlmError, LlmProvider, ProviderConfig,
-    ProviderId, ProviderRegistry, Request, Response, StreamEvent,
+    Capabilities, EmbeddingProvider, Embeddings, LlmError, LlmProvider, ProviderConfig, ProviderId,
+    ProviderRegistry, Request, Response, StreamEvent,
 };
 use warptalk_settings::namespaces::AiProvidersSettings;
 use warptalk_settings::{NS_AI_PROVIDERS, ScopeChain, SettingsStore};
@@ -53,7 +55,11 @@ impl PlatformKeys {
         let mut out = Self::default();
         for (kind, key_var, url_var) in [
             (ProviderId::OpenAi, "OPENAI_API_KEY", "OPENAI_BASE_URL"),
-            (ProviderId::Anthropic, "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+            (
+                ProviderId::Anthropic,
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL",
+            ),
             (ProviderId::Gemini, "GEMINI_API_KEY", "GEMINI_BASE_URL"),
         ] {
             if let Some(api_key) = get(key_var) {
@@ -218,7 +224,10 @@ impl EmbeddingProvider for ResolvingEmbedder {
     async fn embed(&self, model: &str, inputs: &[String]) -> Result<Embeddings, LlmError> {
         let choice = self.0.choices().await.embedding;
         let kind = parse_kind(&choice.provider).ok_or_else(|| {
-            LlmError::InvalidRequest(format!("unsupported embedding provider {}", choice.provider))
+            LlmError::InvalidRequest(format!(
+                "unsupported embedding provider {}",
+                choice.provider
+            ))
         })?;
         match self.0.embedding_provider(kind) {
             Ok(p) => p.embed(model, inputs).await,
