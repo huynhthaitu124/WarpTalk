@@ -23,7 +23,7 @@ test.describe('Meetings (rooms)', () => {
     // IA-04: a real breadcrumb with the room title
     const crumb = app.getByRole('navigation', { name: 'Breadcrumb' });
     await expect(crumb.getByRole('link', { name: 'Meetings' })).toBeVisible();
-    await expect(crumb.getByText(title)).toHaveAttribute('aria-current', 'page');
+    await expect(crumb.locator('[aria-current="page"]')).toContainText(title);
   });
 
   test('ROOM-02 list with status pills and status filter kept in the URL', async ({ app, tokens, workspace }) => {

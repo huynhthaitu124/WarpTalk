@@ -6,7 +6,7 @@ Update screenshots: `npx playwright test --update-snapshots`.
 
 Conventions
 - Every test creates fresh random users/workspaces (`e2e-<label>-<hex>@example.com`), so the suite is re-runnable against a dirty DB.
-- Email verification: the API only logs the token length. Fixtures mark users verified with `psql` (`fixtures/db.ts`, **test-only**). The register -> verify screen is still exercised through the UI.
+- Email verification and invitations: the test backend runs with `DEV_MAIL_CAPTURE=1`, which stores the raw token in Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`). Fixtures read it with `redis-cli GET` and call `POST /auth/verify-email` / `POST /invitations/accept` (`fixtures/api.ts`: `verifyEmail`, `inviteAndAccept`). No psql for verification or membership any more (psql remains only for `expireBridgeLease` and the deprecated `addWorkspaceMember` still used by meeting specs).
 - Signed-in state is arranged by seeding the refresh token into localStorage; the app boots through its real silent-refresh path. Auth specs use the real login form.
 - Priority: P0 = must pass for any release, P1 = important, P2 = nice to have / not automated yet (status `todo`).
 - Projects: `chromium` (all specs), `macos-webview` (1280x800, WKWebView-style UA; specs `webview`, `visual`, `a11y`).
@@ -183,6 +183,36 @@ The macOS host is replaced by a scriptable `window.warptalkNative` mock injected
 | EXT-25 | P1 | running, refresh answers 401 | Emit `auth-required` | Session ends (redirect to `/login`), `updateAuth` never called | auto |
 | EXT-26 | P2 | LiveKit server | Captions arrive while overlay is on | `pushOverlayCaption` called per segment (interim then final, same `segmentId`) with the listener's translation | todo (needs a LiveKit server in CI) |
 | EXT-27 | P2 | host already capturing | Reload `/external` | Page resumes the running capture's room from `captureStatus()` | todo (mock cannot pre-seed a running status yet) |
+
+## Audit follow-up: new pages and fixed findings (spec files `pages`, `rooms`, `workspace`, `settings`, `keyboard`, `webview`, `auth`, `a11y`, `visual`)
+
+| ID | Finding | Pri | Expected | Spec |
+|---|---|---|---|---|
+| ROOM-01 | IA-04 | P1 | Breadcrumb `Meetings / <title>` with `aria-current` on the title | rooms |
+| ROOM-02/10/11 | FN-04, IA-02, LY-08 | P0 | Meetings has Active/History/All tabs, search and status filter in the URL; filtered-empty says "No cancelled meetings" with Clear filter; `/rooms` and `/meetings` redirect | rooms |
+| ROOM-03/04 | LY-07, DS-06 | P1 | One primary per state; Stop translation/Cancel/End in "More" with confirm dialogs | rooms |
+| ROOM-05/07 | FN-08 | P1 | Waiting guest sees no room code or roster; a person with no workspace gets a minimal shell | rooms |
+| ROOM-06/14 | FN-07 | P1 | Deny toast says "declined"; Admit all | rooms |
+| ROOM-09 | FN-10 | P2 | Validation messages and required markers in the create dialog | rooms |
+| ROOM-12/13 | FN-09 | P1 | "copied" toast only after the clipboard promise resolves; failure toast otherwise | rooms |
+| ROOM-15 | FN-12 | P2 | Missing room: no `/participants` request | rooms |
+| WS-01/06/07 | FN-02, IA-03 | P0 | Default workspace = the one with meetings, persisted; URL slug wins and becomes the stored choice | workspace |
+| WS-08 | IA-01 | P0 | Home: quick actions, live now, recent history | workspace |
+| MEM-01/02/03 | IA-01 | P0 | Invite, resend, revoke; invitee accepts from pending banner; plain member cannot invite (UI+API 403) | pages |
+| KNOW-01/02/03 | IA-01 | P1 | Knowledge search: empty state, real-API outcome, mocked results with page and meeting+timestamp citations, no-results | pages |
+| AI-01..05 | IA-01, IA-05 | P0 | Provider keys write-only (last4), BYO-off explained, RBAC (member: no section, API 403), per-task config validation and payload | settings |
+| SET-06/07 | IA-05 | P1 | Settings sections, `?tab=` redirects, no slug as description | settings |
+| DS-01/02/03/07/09 | DS-* | P1 | Real logo/favicon, Inter loaded, 30px/13px grouped sidebar, no unadvertised features, bare table in card, truncate+tooltip | pages |
+| A11Y-01..03 | A11Y-01..03 | P1 | Computed contrast of control border, primary hover/pressed, tertiary ink in both themes | pages |
+| A11Y-06 | A11Y-06 | P2 | Focused invalid input draws a danger ring | pages |
+| LY-A..F | LY-01/02/04/05 | P0 | `scrollWidth <= innerWidth` at 390px on every page (signed-in and public, with dialogs, drawer, lobby with long names, 150-char title); rows stack; members list; settings nav scrolls | pages |
+| KBD-07/08/09 | FN-01 | P1 | G-then-M/S/H, C, J work; ignored while typing; menu hints are real | keyboard |
+| WV-03/04/05 | A11Y-04 | P1 | Mobile drawer is a Radix dialog: focus trap, Escape, focus return, close button, overlay | webview |
+| AUTH-10/11/12 | FN-03, IA-06 | P1 | Field-level validation with focus on the first invalid field; show/hide password; INVALID_REQUEST JSON | auth |
+| A11Y-12/13 | | P1 | axe on home, knowledge, join dialog, auth errors, settings AI/members | a11y |
+| VR-04/09 | | P1 | Visual: meetings and home (dark+light), re-baselined login/design/room/settings/external | visual |
+
+Not automated: production-build check that the "Design system" link is absent (DS-11; tests run against the dev server where it is shown), real knowledge hits (the e2e backend has no embedding keys), saving a real AI key (no `AI_KEYS_KEK`; covered with mocked routes).
 
 ## Counts
 

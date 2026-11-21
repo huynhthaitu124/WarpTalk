@@ -161,9 +161,9 @@ test.describe('A11Y signed-in pages', () => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'A11y end' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     await app.goto(`/meetings/${room.id}`);
-    await expect(app.getByTestId('status-strip')).toBeVisible();
-    await scan(app, 'meeting with status strip');
-    await app.getByRole('button', { name: 'End meeting' }).click();
+    await expect(app.getByRole('heading', { name: 'A11y end', level: 1 })).toBeVisible();
+    await scan(app, 'meeting pre-join');
+    await app.getByRole('button', { name: 'End meeting for everyone' }).click();
     await expect(app.getByRole('dialog', { name: 'End meeting for everyone?' })).toBeVisible();
     await scan(app, 'end meeting dialog');
   });

@@ -138,14 +138,14 @@ test.describe('AI providers (bring your own)', () => {
     const row = app.getByTestId('provider-openai');
     await row.getByLabel('OpenAI API key').fill(KEY);
     await expect(row.getByLabel('OpenAI API key')).toHaveAttribute('type', 'password');
-    await row.getByRole('button', { name: 'Save OpenAI key' }).click();
+    await row.getByRole('button', { name: 'Save key for OpenAI' }).click();
     await expect(row.getByText('Key ending 1234')).toBeVisible();
     await expect(app.locator('body')).not.toContainText(KEY);
     expect(await app.evaluate(() => document.documentElement.outerHTML.includes('SECRET-KEY-VALUE'))).toBe(false);
-    await row.getByRole('button', { name: 'Test OpenAI key' }).click();
+    await row.getByRole('button', { name: 'Test key for OpenAI' }).click();
     await expect(row.getByText('Works (87 ms)')).toBeVisible();
-    await row.getByRole('button', { name: 'Remove OpenAI key' }).click();
-    await row.getByRole('button', { name: 'Confirm removing OpenAI key' }).click();
+    await row.getByRole('button', { name: 'Remove key for OpenAI' }).click();
+    await row.getByRole('button', { name: 'Confirm remove key for OpenAI' }).click();
     await expect(row.getByText('No key')).toBeVisible();
   });
 

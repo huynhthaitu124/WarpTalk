@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Keyboard, MagnifyingGlass, Plus, SquaresFour } from '@phosphor-icons/react';
 import {
@@ -34,6 +34,8 @@ export function MeetingsPage() {
   const [params, setParams] = useSearchParams();
   const tab = (TABS.find((t) => t.value === params.get('tab'))?.value ?? 'active') as Tab;
   const q = params.get('q') ?? '';
+  // Typing is local (fast keystrokes must not race the URL); the URL follows.
+  const [typed, setTyped] = useState(q);
   const status = params.get('status') ?? 'all';
   const creating = params.get('new') === '1';
   const joining = params.get('join') === '1';
@@ -67,7 +69,7 @@ export function MeetingsPage() {
 
   let empty: { title: string; description: string; action?: React.ReactNode } | null = null;
   if (items.length === 0 && !rooms.isLoading) {
-    const clear = <Button onClick={() => patch({ q: null, status: null })}>Clear filter{q.trim() && status !== 'all' ? 's' : ''}</Button>;
+    const clear = <Button onClick={() => { setTyped(''); patch({ q: null, status: null }); }}>Clear filter{q.trim() && status !== 'all' ? 's' : ''}</Button>;
     if (all.length === 0 && !filtered) {
       empty = { title: 'No meetings yet', description: 'Create a meeting, share the code, and start translating.', action: <Button variant="primary" onClick={() => patch({ new: '1' })}>Create meeting</Button> };
     } else if (q.trim()) {
@@ -100,7 +102,7 @@ export function MeetingsPage() {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-0 flex-1 basis-56">
             <MagnifyingGlass size={16} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
-            <Input type="search" aria-label="Search meetings" placeholder="Search by title, code or language" className="pl-8" value={q} onChange={(e) => patch({ q: e.target.value })} />
+            <Input type="search" aria-label="Search meetings" placeholder="Search by title, code or language" className="pl-8" value={typed} onChange={(e) => { setTyped(e.target.value); patch({ q: e.target.value }); }} />
           </div>
           <Select aria-label="Filter by status" className="w-40 max-sm:w-full" value={status} onValueChange={(v) => patch({ status: v === 'all' ? null : v })} options={[{ value: 'all', label: 'All statuses' }, ...statusOptions]} />
         </div>

@@ -123,7 +123,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const byUser = useMemo(() => new Map(roster.filter((p) => p.userId).map((p) => [p.userId as string, p])), [roster]);
   const tiles = useMemo<TileInfo[]>(() => session.participants.map((p) => {
     const r = byUser.get(p.identity);
-    return { p, host: p.identity === room.effectiveHostId, hand: !!hands[p.identity], langs: r ? `${r.speakLanguage} → ${r.listenLanguage}` : undefined };
+    return { p, host: p.identity === room.effectiveHostId, hand: !!hands[p.identity], langs: r && r.speakLanguage !== r.listenLanguage ? `${r.speakLanguage} → ${r.listenLanguage}` : undefined };
   }), [session.participants, byUser, hands, room.effectiveHostId]);
   const rows = useMemo<PersonRow[]>(() => roster.map((p) => {
     const live = p.userId ? session.participants.find((s) => s.identity === p.userId) : undefined;

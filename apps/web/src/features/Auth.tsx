@@ -56,7 +56,7 @@ function AuthLayout({ title, subtitle, children, footer }: { title: string; subt
             {children}
           </CardBody>
         </Card>
-        {footer && <p className="text-body text-ink-subtle">{footer}</p>}
+        {footer && <p className="text-body text-ink-subtle [&_a]:underline">{footer}</p>}
       </main>
     </div>
   );

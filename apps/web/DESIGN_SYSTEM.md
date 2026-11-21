@@ -14,6 +14,7 @@ Implementation map
 | Class merging (knows our type scale) | `src/lib/cn.ts` |
 | Theme switching (`data-theme` on `<html>`, persisted in `localStorage["wt.theme"]`) | `src/lib/theme.tsx` |
 | Gallery | `src/features/Design.tsx` -> `/design` |
+| Brand assets, favicon | `public/brand/*`, `public/favicon*.png` |
 
 ## 1. Principles
 
@@ -41,8 +42,9 @@ switching `data-theme` re-colours everything without a rebuild.
 | `--surface-3` | `#25272a` | `#e4e6ea` | Menus/popovers, active nav item, toasts |
 | `--surface-4` | `#2d2f33` | `#d0d3da` | Highlighted menu item, switch track, deepest lift |
 | `--hairline` | `#232428` | `#e3e5e9` | 1px borders on cards, dividers |
-| `--hairline-strong` | `#313338` | `#d0d3da` | Input borders, secondary buttons, popover outline |
-| `--hairline-tertiary` | `#3e3e44` | `#9ca3af` | Hovered input border, checkbox border |
+| `--hairline-strong` | `#313338` | `#d0d3da` | Popover/dialog outline, kbd, dashed empty-state frame (decorative only) |
+| `--hairline-tertiary` | `#3e3e44` | `#9ca3af` | Decorative stronger divider (not a control boundary) |
+| `--control-border` (`border-control`) | `#6b7078` | `#7c838f` | **Visual boundary of inputs, selects, checkboxes, switch track, secondary buttons.** >= 3:1 on surface-1..3 (WCAG 1.4.11): dark 3.7 / 3.4 / 3.0, light 3.8 / 3.4 / 3.1 |
 
 ### 2.2 Ink (text)
 
@@ -51,15 +53,15 @@ switching `data-theme` re-colours everything without a rebuild.
 | `--ink` | `#f7f8f8` | `#111214` | Headlines, body, emphasised text |
 | `--ink-muted` | `#d0d6e0` | `#3b3f47` | Secondary text, labels |
 | `--ink-subtle` | `#9a9fa8` | `#5a606b` | Descriptions, meta, icons |
-| `--ink-tertiary` | `#858a93` | `#6b7280` | Placeholders, hints. Still >= 4.5:1 on surface-1 |
+| `--ink-tertiary` | `#8d929b` | `#5f6672` | Placeholders and hints only. >= 4.5:1 on surface-1, -2 and -3 (dark 5.9 / 5.4 / 4.8, light 5.8 / 5.1 / 4.6). **Never on surface-4** (4.3 / 3.9): use `ink-subtle` there |
 
 ### 2.3 Brand and semantic
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
 | `--primary` | `#5e6ad2` | `#5e6ad2` | Primary button, active controls (white text: 4.7:1) |
-| `--primary-hover` | `#6e7ae0` | `#4f5bc4` | Hover |
-| `--primary-pressed` | `#5e69d1` | `#4651b3` | Active/pressed |
+| `--primary-hover` | `#5a66cc` | `#4f5bc4` | Hover. White text 5.0:1 dark / 5.8:1 light (was 3.8:1 in dark) |
+| `--primary-pressed` | `#4f5bbf` | `#4651b3` | Active/pressed (5.9:1 / 6.6:1) |
 | `--link` | `#8b96ff` | `#4651b3` | Links and tinted primary text |
 | `--focus` | `#7c86ea` | `#5e6ad2` | Focus ring colour (drawn at 75% alpha) |
 | `--success` / `-soft` / `-text` | `#3fbf5f` / `#11291a` / `#5fd47e` | `#1c8a3a` / `#e6f6ea` / `#167030` | Live, connected |
@@ -90,7 +92,7 @@ CTAs are never pill-shaped.
 
 ### 2.6 Type scale
 
-Family: Inter with the SF Pro / system fallback stack (macOS WebView renders SF Pro). Mono for codes and JSON: `ui-monospace, SF Mono`.
+Family: Inter, self-hosted (`@fontsource-variable/inter`, imported in `main.tsx`; family name `Inter Variable`) with the SF Pro / system fallback stack. It is loaded, not assumed to be installed. Mono for codes and JSON: `ui-monospace, SF Mono`.
 Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes track aggressively negative; body tracks -0.05px; the eyebrow is the only positive tracking.
 
 | Utility | Size / line-height | Tracking | Use |
@@ -127,7 +129,7 @@ Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes 
 
 | Component | API | Notes |
 |---|---|---|
-| `Button` | `variant` primary \| secondary \| ghost \| danger, `size` sm \| md \| lg \| icon, `loading` | `loading` sets `aria-busy` and disables. Icon-only buttons **must** pass `aria-label`. |
+| `Button` | `variant` primary \| secondary \| ghost \| danger \| danger-soft, `size` sm (28) \| md (32) \| lg (36, level with inputs) \| icon, `loading` | `loading` sets `aria-busy` and disables. Icon-only buttons **must** pass `aria-label`. |
 | `Field` + `Input` / `Textarea` / `Select` | `<Field label hint error>` wraps one control | Generates the `id`, links label, hint and `aria-describedby`, sets `aria-invalid`. Errors render with `role="alert"`. |
 | `Select` | `value`, `onValueChange`, `options` | Radix Select (role `combobox`, options `option`). Pass `aria-label` when not inside a `Field`. |
 | `Checkbox`, `Switch` | `checked`, `onCheckedChange`, `label`, `description` | Label is bound with `htmlFor`; the whole row is clickable. |
@@ -142,13 +144,17 @@ Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes 
 | `Skeleton`, `EmptyState`, `Alert` | | Empty states explain what belongs there and offer the next step. |
 | `Avatar` | `name`, `size` | Deterministic colour from the name; palette is >= 4.5:1 against white initials. |
 | `Kbd` | | Shortcut hints. |
-| `SidebarNav`, `SidebarLink` | `to`, `icon` | `NavLink` active state = surface-3 + ink. |
-| `Table`, `THead`, `TBody`, `TR`, `TH`, `TD`, `ListRow` | | Tables always get an `aria-label`; `TH` is `scope="col"`. `ListRow` is the dense issue-style row. |
-| `PageHeader`, `Brand` | | |
+| `SidebarNav`, `SidebarLink` | `heading`, `to`, `icon`, `badge`, `actions` | Legacy rows: 30px, 13px/500, icon `ink-muted/80`, active = surface-3 + ink, hover = surface-3/60; hover actions (join by code, new meeting) stay in the tab order. Icons are Phosphor `duotone` 16px. |
+| `Table`, `THead`, `TBody`, `TR`, `TH`, `TD`, `ListRow` | `bare` | Tables always get an `aria-label`; `TH` is `scope="col"`. **Inside a `Card` use `bare`** (no second frame); the wrapper scrolls itself. Below 640px render a stacked list instead of a table. `ListRow` is the dense issue-style row. |
+| `PageHeader`, `Brand` | | `Brand` renders the real legacy PNG (`public/brand/`), recoloured per theme by `.brand-img`. `PageHeader` clamps long titles and exposes the full title as a tooltip. |
 
 ## 4. Usage rules
 
 - Compose class names with `cn()`; never concatenate strings that include Tailwind colour/size tokens.
+- Icons: `@phosphor-icons/react`, `weight="duotone"` for navigation and empty states, `bold`/`regular` for inline glyphs; give them `size`/`size-N`. lucide is retired outside the meeting stage.
+- Tertiary ink usage: placeholders and hints on surface-1..3 only. Control borders use `border-control`; `hairline*` never draws an input boundary.
+- Destructive: solid `danger` only for the confirm button of a dialog; in-page End/Leave/Revoke use `danger-soft`. One primary per region; destructive page actions go in a "More" menu with a confirm dialog.
+- Long text: `truncate` plus a `title` tooltip; rows stack below 640px; no page may scroll horizontally at 390px (asserted in e2e).
 - Use tokens, not hex: `bg-surface-1`, `text-ink-subtle`. The only literals allowed are the avatar palette and the brand SVG.
 - One primary button per view region. Destructive actions use `danger` and live next to a plain cancel.
 - Every control needs an accessible name: visible label (`Field`), visible text (buttons), or `aria-label` (icon buttons). **The accessible name must contain the visible text** (WCAG 2.5.3, enforced by axe `label-content-name-mismatch`).
@@ -175,12 +181,14 @@ Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes 
 
 - Dark (`:root`, default) and light (`:root[data-theme="light"]`).
 - First paint: the inline script in `index.html` reads `localStorage["wt.theme"]` and sets `data-theme` before React mounts.
+- Dev-only: the sidebar "Design system" link and command are shown only when `import.meta.env.DEV`; `/design` stays reachable by URL.
 - Toggles: top bar button, account menu, Settings -> Account, command menu ("Toggle theme").
 - Unsupported on purpose: system-follow. The macOS shell can set `data-theme` itself via `localStorage` if it wants to follow the OS.
 
 ## 7. Accessibility baseline
 
 - axe (WCAG 2.0/2.1 A + AA) reports no serious/critical violations on the main pages in both themes (`e2e/tests/a11y.spec.ts`).
-- Contrast: body text >= 4.5:1 on every surface; primary and danger buttons carry white text at >= 4.7:1.
-- Landmarks: `Skip to content` link, `<aside aria-label="Sidebar">`, `<header>`, `<main id="main">`, `<nav aria-label>`.
-- Keyboard: Cmd/Ctrl+K, dialogs trap focus and restore it, menus use arrow keys, focus ring is visible on every interactive element.
+- Contrast: body text >= 4.5:1 on every surface; primary (rest, hover, pressed) and danger buttons carry white text at >= 4.7:1; control borders >= 3:1.
+- Landmarks: `Skip to content` link, `<aside aria-label="Sidebar">`, `<header>` with a `nav aria-label="Breadcrumb"`, `<main id="main">`, `<nav aria-label>`. The mobile drawer is a Radix dialog named "Navigation" (focus trap, Escape, focus return).
+- Forms: errors are per field (`Field error` -> `aria-invalid`, `role=alert`), the first invalid field is focused; a focused invalid control draws a danger ring.
+- Keyboard: Cmd/Ctrl+K, `G` then `H`/`M`/`P`/`K`/`S`/`E` (go to Home, Meetings, Members, Knowledge, Settings, External), `C` create meeting, `J` join by code (ignored while typing or when a dialog/menu is open; the hints in the command menu are the only source of truth), dialogs trap focus and restore it, menus use arrow keys, focus ring is visible on every interactive element.

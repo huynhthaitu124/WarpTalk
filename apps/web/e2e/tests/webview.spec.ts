@@ -41,7 +41,7 @@ test.describe('macOS WebView shell', () => {
     await app.keyboard.press('Enter');
     const drawer = app.getByRole('dialog', { name: 'Navigation' });
     await expect(drawer).toBeVisible();
-    await expect(drawer).toHaveAttribute('aria-modal', 'true').catch(() => undefined);
+    await expect(drawer.getByRole('button', { name: 'Close menu' })).toBeFocused();
     for (let i = 0; i < 14; i++) {
       await app.keyboard.press('Tab');
       expect(await app.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')), `tab ${i} stays in the drawer`).toBe(true);

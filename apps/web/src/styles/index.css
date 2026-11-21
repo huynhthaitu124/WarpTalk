@@ -231,6 +231,7 @@
     outline: 2px solid color-mix(in srgb, var(--focus) 75%, transparent);
     outline-offset: 2px;
   }
+  .focus-ring[aria-invalid="true"]:focus-visible { outline-color: color-mix(in srgb, var(--danger) 80%, transparent); }
   /* The brand PNGs are black on an opaque white ground (legacy): multiply drops the white on light,
      invert + screen turns them white-on-transparent on dark. */
   .brand-img { mix-blend-mode: multiply; }

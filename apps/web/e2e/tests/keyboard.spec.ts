@@ -25,7 +25,7 @@ raw.describe('Keyboard', () => {
 test.describe('Keyboard (signed in)', () => {
   test('KBD-01 command menu: open, filter, run, escape', async ({ app }) => {
     await app.goto('/');
-    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await expect(app.getByTestId('current-workspace')).not.toHaveText('No workspace');
     await app.keyboard.press('ControlOrMeta+k');
     const dialog = app.getByRole('dialog', { name: 'Command menu' });
     await expect(dialog).toBeVisible();
@@ -42,7 +42,6 @@ test.describe('Keyboard (signed in)', () => {
   });
 
   test('KBD-03 dialog traps focus, Escape restores focus', async ({ app }) => {
-    await app.goto('/');
     await app.goto('/rooms');
     const trigger = app.getByRole('button', { name: 'New meeting' }).first();
     await trigger.focus();
@@ -74,7 +73,7 @@ test.describe('Keyboard (signed in)', () => {
     await app.goto('/');
     const switcher = app.getByTestId('workspace-switcher');
     const current = app.getByTestId('current-workspace');
-    await expect(current).toBeVisible();
+    await expect(current).not.toHaveText('No workspace');
     const shown = (await current.textContent())!.trim();
     const other = shown === workspace.name ? second : workspace;
     await switcher.focus();
@@ -93,7 +92,7 @@ test.describe('Keyboard (signed in)', () => {
 
   test('KBD-06 command menu opens the create-meeting dialog', async ({ app }) => {
     await app.goto('/');
-    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await expect(app.getByTestId('current-workspace')).not.toHaveText('No workspace');
     await app.keyboard.press('ControlOrMeta+k');
     await app.keyboard.type('create meeting');
     await app.keyboard.press('Enter');
@@ -102,19 +101,23 @@ test.describe('Keyboard (signed in)', () => {
 
   test('KBD-07 advertised shortcuts work: G then M/H/S, C, J (FN-01)', async ({ app, workspace }) => {
     await app.goto(`/${workspace.slug}/home`);
-    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await expect(app.getByTestId('current-workspace')).toHaveText(workspace.name);
     await app.keyboard.press('g');
     await app.keyboard.press('m');
     await expect(app).toHaveURL(new RegExp(`/${workspace.slug}/meetings`));
+    await expect(app.getByRole('heading', { name: 'Meetings', level: 1 })).toBeVisible();
     await app.keyboard.press('g');
     await app.keyboard.press('s');
-    await expect(app).toHaveURL(new RegExp(`/${workspace.slug}/settings`));
+    await expect(app).toHaveURL(new RegExp(`/${workspace.slug}/settings/general`));
+    await expect(app.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
     await app.keyboard.press('g');
     await app.keyboard.press('h');
     await expect(app).toHaveURL(new RegExp(`/${workspace.slug}/home`));
+    await expect(app.getByRole('heading', { name: /Welcome back/, level: 1 })).toBeVisible();
     await app.keyboard.press('c');
     await expect(app.getByRole('dialog', { name: 'Create meeting' })).toBeVisible();
     await app.keyboard.press('Escape');
+    await expect(app.getByRole('dialog')).toHaveCount(0);
     await app.keyboard.press('j');
     await expect(app.getByRole('dialog', { name: 'Join a meeting' })).toBeVisible();
   });
@@ -131,6 +134,7 @@ test.describe('Keyboard (signed in)', () => {
 
   test('KBD-09 the command menu shows only real shortcuts', async ({ app }) => {
     await app.goto('/');
+    await expect(app.getByTestId('current-workspace')).not.toHaveText('No workspace');
     await app.keyboard.press('ControlOrMeta+k');
     const dialog = app.getByRole('dialog', { name: 'Command menu' });
     await expect(dialog.getByText('G M')).toBeVisible();

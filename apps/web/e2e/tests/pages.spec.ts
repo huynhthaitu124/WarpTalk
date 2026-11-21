@@ -82,7 +82,7 @@ test.describe('Knowledge search', () => {
     await app.goto(`/${workspace.slug}/knowledge`);
     await expect(app.getByRole('heading', { name: 'Search your workspace knowledge' })).toBeVisible();
     await app.getByLabel('Search knowledge').fill('budget decision');
-    await app.getByRole('button', { name: 'Search' }).click();
+    await app.getByRole('button', { name: 'Search', exact: true }).click();
     await expect(app).toHaveURL(/q=budget(\+|%20)decision/);
     // The e2e backend has no embedding keys: either "no results" or a readable error, never a blank page.
     await expect(app.getByRole('heading', { name: /No results for/ }).or(app.getByRole('alert').filter({ hasText: /Search failed/ })).or(app.getByRole('list', { name: 'Search results' }))).toBeVisible();
@@ -245,7 +245,8 @@ test.describe('Mobile 390px: no horizontal overflow (LY-01, LY-02, LY-05)', () =
       for (const p of pages) {
         await app.goto(p);
         await app.waitForLoadState('networkidle');
-        await expect(app.getByRole('banner')).toBeVisible();
+        if (/[?](new|join|invite)=1/.test(p)) await expect(app.getByRole('dialog')).toBeVisible();
+        else await expect(app.getByRole('banner')).toBeVisible();
         await noOverflow(app, p);
       }
       // the lobby card and the participants list are reachable and fit

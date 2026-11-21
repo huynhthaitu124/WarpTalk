@@ -75,6 +75,8 @@ export function ExternalPage() {
   const r = room.data;
   const bridge = r?.bridge;
   const isCapturer = !!bridge && bridge.capturerUserId === userId;
+  /** After a release nobody holds the lease: this machine may capture again (it takes the role first). */
+  const canCapture = isCapturer || (!!bridge && !bridge.capturerUserId);
   const isHost = !!r && (r.effectiveHostId === userId || r.hostId === userId);
   const roomLive = !!r && LIVE.includes(r.status);
   const roomTerminal = !!r && TERMINAL.includes(r.status);
@@ -160,6 +162,7 @@ export function ExternalPage() {
     setActionError(null);
     setBusy('start');
     try {
+      if (!isCapturer) await takeover.mutateAsync();
       if (!LIVE.includes(r.status) && !TERMINAL.includes(r.status)) await startRoom.mutateAsync();
       if (bridge && bridge.audioMode !== mode) await audioMode.mutateAsync(mode);
       const accessToken = await freshAccessToken();
@@ -348,7 +351,7 @@ export function ExternalPage() {
   const claimed = !!roomId;
   const appOptions = apps.map((a) => ({ value: a.bundleId, label: `${a.name}${a.producingAudio ? ' · playing audio' : ' · silent'}` }));
   const selectedApp = apps.find((a) => a.bundleId === appId);
-  const canStart = !!native && isCapturer && !!appId && !running && !roomTerminal && busy === null && (mode !== 'voice' || voiceReady);
+  const canStart = !!native && canCapture && !!appId && !running && !roomTerminal && busy === null && (mode !== 'voice' || voiceReady);
 
   return (
     <>
@@ -432,7 +435,7 @@ export function ExternalPage() {
                             : 'You are a viewer: captions appear here. Only take over if the capturer left; the server refuses while their heartbeat is fresh.'}
                         </Alert>
                       )}
-                      {!isCapturer && !roomTerminal && (
+                      {!isCapturer && !!bridge?.capturerUserId && !roomTerminal && (
                         <div className="flex flex-wrap items-center gap-2">
                           <Button variant={stale ? 'primary' : 'secondary'} loading={takeover.isPending} onClick={() => takeover.mutate()}><Users className="size-4" aria-hidden />Take over capture</Button>
                         </div>
@@ -455,7 +458,7 @@ export function ExternalPage() {
                 </StepCard>
               )}
 
-              {native && claimed && isCapturer && !roomTerminal && (
+              {native && claimed && canCapture && !roomTerminal && (
                 <StepCard
                   testId="external-capture-card"
                   title="3. Capture"
@@ -499,7 +502,7 @@ export function ExternalPage() {
                 </StepCard>
               )}
 
-              {native && claimed && isCapturer && !roomTerminal && (
+              {native && claimed && canCapture && !roomTerminal && (
                 <StepCard testId="external-live-card" title="Live status" description="Reported by the desktop app" actions={<Badge tone={live.status.state === 'running' ? 'success' : live.status.state === 'error' ? 'danger' : 'neutral'} data-testid="capture-state" data-state={live.status.state}>{stateLabel(live.status.state)}</Badge>}>
                   {errors.map((e) => <ErrorRow key={e.code} error={e} recovery={recoveryFor(e)} onDismiss={() => dismissError(e.code)} />)}
                   <LevelMeter dbfs={live.level} />

@@ -53,15 +53,15 @@ function ProviderRow({ ws, provider, config, disabled }: { ws: Workspace; provid
       </div>
       {cred && !replacing && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" loading={test.isPending} disabled={disabled} onClick={() => test.mutate(provider)} aria-label={`Test ${name} key`}>Test key</Button>
-          <Button size="sm" disabled={disabled} onClick={() => setReplacing(true)} aria-label={`Replace ${name} key`}>Replace key</Button>
+          <Button size="sm" loading={test.isPending} disabled={disabled} onClick={() => test.mutate(provider)} aria-label={`Test key for ${name}`}>Test key</Button>
+          <Button size="sm" disabled={disabled} onClick={() => setReplacing(true)} aria-label={`Replace key for ${name}`}>Replace key</Button>
           {confirmDelete ? (
             <>
-              <Button size="sm" variant="danger" loading={del.isPending} onClick={() => void remove()} aria-label={`Confirm removing ${name} key`}>Confirm remove</Button>
+              <Button size="sm" variant="danger" loading={del.isPending} onClick={() => void remove()} aria-label={`Confirm remove key for ${name}`}>Confirm remove</Button>
               <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>Keep</Button>
             </>
           ) : (
-            <Button size="sm" variant="danger-soft" disabled={disabled} onClick={() => setConfirmDelete(true)} aria-label={`Remove ${name} key`}>Remove</Button>
+            <Button size="sm" variant="danger-soft" disabled={disabled} onClick={() => setConfirmDelete(true)} aria-label={`Remove key for ${name}`}>Remove</Button>
           )}
           {test.data && (test.data.ok
             ? <span role="status" className="flex items-center gap-1 text-body-sm text-success-text"><CheckCircle size={16} weight="fill" aria-hidden />Works ({test.data.latencyMs} ms)</span>
@@ -79,7 +79,7 @@ function ProviderRow({ ws, provider, config, disabled }: { ws: Workspace; provid
           )}
           {put.isError && <Alert tone="danger" title={errCode(put.error) ?? undefined}>{errMsg(put.error)}</Alert>}
           <div className="flex gap-2">
-            <Button type="submit" variant="primary" size="sm" loading={put.isPending} disabled={disabled || !key.trim() || (compat && !baseUrl.trim())} aria-label={`Save ${name} key`}>Save key</Button>
+            <Button type="submit" variant="primary" size="sm" loading={put.isPending} disabled={disabled || !key.trim() || (compat && !baseUrl.trim())} aria-label={`Save key for ${name}`}>Save key</Button>
             {replacing && <Button size="sm" variant="ghost" onClick={() => { setReplacing(false); setKey(''); put.reset(); }}>Cancel</Button>}
           </div>
         </form>

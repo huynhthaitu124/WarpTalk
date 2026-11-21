@@ -9,7 +9,7 @@ import type { RoomAction } from '@/lib/queries';
 import type { RoomStatus } from '@/lib/schemas';
 import { REACTIONS } from './protocol';
 
-const iconBtn = 'size-10 rounded-lg max-sm:size-9';
+const iconBtn = 'size-10 shrink-0 rounded-lg p-0 max-sm:size-9';
 
 function Tip({ label, children }: { label: string; children: ReactNode }) {
   return <Tooltip content={label}>{children as React.ReactElement}</Tooltip>;

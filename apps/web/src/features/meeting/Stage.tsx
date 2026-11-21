@@ -23,7 +23,7 @@ function Video({ source, mirror, label }: { source: VideoSource; mirror?: boolea
   return <video ref={ref} autoPlay playsInline muted aria-label={label} className={cn('absolute inset-0 size-full object-cover', mirror && '-scale-x-100')} />;
 }
 
-function Tile({ t, screen }: { t: TileInfo; screen?: boolean }) {
+function Tile({ t, screen, fill }: { t: TileInfo; screen?: boolean; fill?: boolean }) {
   const { p } = t;
   const source = screen ? p.screen : p.camOn ? p.video : undefined;
   const speaking = p.speaking && !screen;
@@ -36,7 +36,7 @@ function Tile({ t, screen }: { t: TileInfo; screen?: boolean }) {
       aria-label={screen ? `${p.name} screen` : p.name}
       className={cn(
         'relative flex min-h-24 items-center justify-center overflow-hidden rounded-lg border bg-surface-1 transition-shadow',
-        screen ? 'size-full' : 'aspect-video',
+        screen ? 'size-full' : fill ? 'max-sm:aspect-video sm:h-full' : 'aspect-video',
         speaking ? 'border-primary shadow-[0_0_0_2px_var(--primary)]' : 'border-hairline',
       )}
     >
@@ -72,18 +72,17 @@ export function Stage({ tiles }: { tiles: TileInfo[] }) {
     );
   }
   return (
-    <div className="flex min-h-full flex-col justify-center">
+    <div className="flex h-full min-h-0 flex-col">
     <ul
       aria-label="Participants"
       data-testid="participant-grid"
       data-layout="grid"
       className={cn(
-        'mx-auto grid w-full content-center gap-2 sm:gap-3',
-        n <= 1 ? 'max-w-3xl grid-cols-1' : n <= 4 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-4',
-        n > 1 && n <= 4 && 'max-w-5xl',
+        'mx-auto grid w-full flex-1 gap-2 sm:auto-rows-fr sm:gap-3',
+        n <= 1 ? 'max-w-3xl grid-cols-1 content-center' : n <= 4 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-4',
       )}
     >
-      {tiles.map((t) => <Tile key={t.p.identity} t={t} />)}
+      {tiles.map((t) => <Tile key={t.p.identity} t={t} fill={n > 1} />)}
     </ul>
     </div>
   );
