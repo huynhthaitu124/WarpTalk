@@ -9,9 +9,10 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use warptalk_config::JwtConfig;
 use warptalk_identity::VerificationMailer;
-use warptalk_kernel::AppError;
+use warptalk_kernel::{AppError, AppResult};
 use warptalk_livekit::{LiveKitConfig, NoopRoomService};
 use warptalk_web::JwtKeys;
+use warptalk_workspace::{InvitationMail, InvitationMailer};
 
 #[derive(Default)]
 struct CaptureMailer(Mutex<Vec<(String, String)>>);
@@ -23,6 +24,21 @@ impl VerificationMailer for CaptureMailer {
             .lock()
             .unwrap()
             .push((email.to_owned(), token.to_owned()));
+        Ok(())
+    }
+}
+
+/// Captures `(email, raw invitation token)` pairs instead of sending mail.
+#[derive(Default)]
+struct CaptureInvitations(Mutex<Vec<(String, String)>>);
+
+#[async_trait::async_trait]
+impl InvitationMailer for CaptureInvitations {
+    async fn send_invitation(&self, mail: &InvitationMail<'_>) -> AppResult<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((mail.to.to_owned(), mail.token.to_owned()));
         Ok(())
     }
 }
@@ -130,6 +146,7 @@ async fn full_flow() {
         refresh_ttl_seconds: 2_592_000,
     };
     let mailer = Arc::new(CaptureMailer::default());
+    let invitations = Arc::new(CaptureInvitations::default());
     let keys = JwtKeys::from_config(&cfg);
     let app = warptalk_api::build_router(
         pool.clone(),
@@ -156,6 +173,7 @@ async fn full_flow() {
                 .unwrap(),
             )),
             key_validator: None,
+            invitation_mailer: Some(invitations.clone()),
         },
     )
     .await;
@@ -237,6 +255,78 @@ async fn full_flow() {
             .unwrap()
             .iter()
             .any(|w| w["id"] == ws_id.as_str())
+    );
+
+    // GET /me returns the account email.
+    let (s, b) = call(&app, "GET", "/api/v1/me", None, Some(&access)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["email"], email.as_str());
+
+    // Invitation flow: owner invites a second registered user, who sees and accepts it.
+    let (_, invitee_access) = new_user(&app, &mailer, "E2E Invitee").await;
+    let (s, b) = call(&app, "GET", "/api/v1/me", None, Some(&invitee_access)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let invitee_email = b["email"].as_str().unwrap().to_owned();
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/workspaces/{ws_id}/invitations"),
+        Some(json!({"email": invitee_email, "role": "member"})),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert!(
+        invitations
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(e, t)| *e == invitee_email && !t.is_empty()),
+        "invitation mail captured"
+    );
+    let (s, b) = call(
+        &app,
+        "GET",
+        "/api/v1/invitations/pending",
+        None,
+        Some(&invitee_access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let inv = b
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["workspaceId"] == ws_id.as_str())
+        .unwrap_or_else(|| panic!("pending invitation not listed: {b}"));
+    let inv_id = inv["id"].as_str().unwrap().to_owned();
+    let (s, b) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/invitations/{inv_id}/accept"),
+        None,
+        Some(&invitee_access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["workspaceId"], ws_id.as_str());
+    let (s, b) = call(
+        &app,
+        "GET",
+        "/api/v1/workspaces",
+        None,
+        Some(&invitee_access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(
+        b["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["id"] == ws_id.as_str()),
+        "accepted workspace listed for invitee: {b}"
     );
 
     let (s, b) = call(

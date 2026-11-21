@@ -55,7 +55,10 @@ use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_settings::{SettingsStore, namespaces};
 use warptalk_web::JwtKeys;
 use warptalk_workspace::application::ports::UserDirectory;
-use warptalk_workspace::{UserSummary, WorkspaceDeps, WorkspaceModule, WorkspaceQueries};
+use warptalk_workspace::{
+    DEFAULT_INVITATION_TTL_DAYS, InvitationMailer, LogInvitationMailer, UserSummary, WorkspaceDeps,
+    WorkspaceModule, WorkspaceQueries,
+};
 
 /// Adapter: workspace's `UserDirectory` port backed by identity's read facade.
 pub struct IdentityUserDirectory(pub IdentityQueries);
@@ -239,6 +242,8 @@ pub struct ApiOptions {
     /// Overrides BYO key validation (tests); default is the real provider check with the
     /// strict `baseUrl` guard (`AI_ALLOW_INSECURE_BASE_URL` relaxes it).
     pub key_validator: Option<Arc<dyn KeyValidator>>,
+    /// Workspace invitation mailer; `None` uses `LogInvitationMailer` (tokens are not sent).
+    pub invitation_mailer: Option<Arc<dyn InvitationMailer>>,
 }
 
 /// Rejects the routes that mint LiveKit tokens when LiveKit is not configured.
@@ -285,12 +290,19 @@ pub async fn build(
         mailer,
         policy,
     });
-    let workspace = WorkspaceModule::new(WorkspaceDeps {
-        pool: pool.clone(),
-        jwt: jwt.clone(),
-        clock: clock.clone(),
-        users: Arc::new(IdentityUserDirectory(identity.queries())),
-    });
+    let invitation_mailer = opts
+        .invitation_mailer
+        .unwrap_or_else(|| Arc::new(LogInvitationMailer));
+    let workspace = WorkspaceModule::with_invitations(
+        WorkspaceDeps {
+            pool: pool.clone(),
+            jwt: jwt.clone(),
+            clock: clock.clone(),
+            users: Arc::new(IdentityUserDirectory(identity.queries())),
+        },
+        invitation_mailer,
+        DEFAULT_INVITATION_TTL_DAYS,
+    );
 
     let consent: Arc<dyn VoiceConsentDirectory> = Arc::new(NoopVoiceConsentDirectory); // TODO: identity voice consent
     let meeting_events: Arc<dyn MeetingEventPublisher> = match &redis {

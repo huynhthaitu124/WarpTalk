@@ -21,6 +21,8 @@ export HTTP_BIND="${E2E_API_BIND:-127.0.0.1:18080}"
 export JWT_SECRET="$(head -c 48 /dev/urandom | base64 | tr -d '\n=+/' | head -c 64)"
 export CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:5199,http://localhost:5199}"
 export RUST_LOG="${RUST_LOG:-warn}"
+# TEST BACKEND ONLY: raw verification and invitation tokens go to Redis (dev:mail:*) so E2E can read them.
+export DEV_MAIL_CAPTURE=1
 unset LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET METRICS_BIND
 
 if [ "${E2E_SKIP_BUILD:-0}" != "1" ]; then

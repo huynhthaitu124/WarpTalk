@@ -114,7 +114,7 @@ test.describe('External meeting: link parsing', () => {
 });
 
 test.describe('External meeting: claim', () => {
-  test('EXT-05 claim of a new meeting answers 201 and makes the caller capturer', async ({ app, tokens }) => {
+  test('EXT-05 claim of a new meeting answers 201 and makes the caller capturer', async ({ app, tokens, workspace }) => {
     await installNativeMock(app);
     await app.goto('/external');
     const code = meetCode();
@@ -125,7 +125,7 @@ test.describe('External meeting: claim', () => {
     await expect(roomCard(app)).toContainText(code);
     await expect(app.getByTestId('bridge-lease')).toContainText('s ago');
     // Server state agrees.
-    const room = await ok(call<{ items: BridgeRoom[] }>('/translation-rooms?pageSize=100', { token: tokens.accessToken }));
+    const room = await ok(call<{ items: BridgeRoom[] }>(`/translation-rooms?pageSize=100&workspaceId=${workspace.id}`, { token: tokens.accessToken }));
     const mine = room.items.find((r) => r.bridge?.meetingCode === code);
     expect(mine).toMatchObject({ roomType: 'EXTERNAL_BRIDGE', status: 'WAITING', title: `External meeting ${code}` });
   });

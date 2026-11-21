@@ -8,9 +8,16 @@ use warptalk_config::{
     DatabaseConfig, HttpConfig, JwtConfig, LogFormat as ConfigLogFormat, RedisConfig,
     TelemetryConfig,
 };
-use warptalk_identity::LogMailer;
+use warptalk_identity::{DevMailCapture, LogMailer, VerificationMailer};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_web::JwtKeys;
+use warptalk_workspace::{DevInvitationMailCapture, InvitationMailer, LogInvitationMailer};
+
+/// True when `DEV_MAIL_CAPTURE=1` and `REDIS_URL` is set (non-empty).
+fn dev_mail_capture_requested() -> bool {
+    std::env::var("DEV_MAIL_CAPTURE").ok().as_deref() == Some("1")
+        && std::env::var("REDIS_URL").is_ok_and(|v| !v.trim().is_empty())
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -69,14 +76,35 @@ async fn main() -> anyhow::Result<()> {
         vectors: None,
         vault: None,
         key_validator: None,
+        invitation_mailer: None,
     };
+    let (verification_mailer, invitation_mailer): (
+        Arc<dyn VerificationMailer>,
+        Arc<dyn InvitationMailer>,
+    ) = if dev_mail_capture_requested() {
+        tracing::warn!("DEV_MAIL_CAPTURE enabled: raw tokens stored in Redis (dev/test only)");
+        let verify = DevMailCapture::from_flag(Some("1"), &redis_cfg.url)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .context("dev verification mail capture not enabled")?;
+        let invite = DevInvitationMailCapture::from_flag(Some("1"), &redis_cfg.url)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .context("dev invitation mail capture not enabled")?;
+        (Arc::new(verify), Arc::new(invite))
+    } else {
+        (Arc::new(LogMailer), Arc::new(LogInvitationMailer))
+    };
+    let opts = warptalk_api::ApiOptions {
+        invitation_mailer: Some(invitation_mailer),
+        ..opts
+    };
+
     let jwt = JwtKeys::from_config(&jwt_cfg);
     let app = warptalk_api::build_router(
         pool,
         jwt,
         &jwt_cfg,
         &http.cors_origins,
-        Arc::new(LogMailer),
+        verification_mailer,
         Some(redis),
         opts,
     )
