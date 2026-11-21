@@ -41,10 +41,13 @@ test.describe('macOS WebView shell', () => {
     await app.keyboard.press('Enter');
     const drawer = app.getByRole('dialog', { name: 'Navigation' });
     await expect(drawer).toBeVisible();
+    // let the sidebar finish loading (its rows re-render when the workspace list arrives)
+    await expect(drawer.getByTestId('current-workspace')).not.toHaveText('No workspace');
+    await drawer.getByRole('button', { name: 'Close menu' }).focus();
     await expect(drawer.getByRole('button', { name: 'Close menu' })).toBeFocused();
     for (let i = 0; i < 14; i++) {
       await app.keyboard.press('Tab');
-      expect(await app.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')), `tab ${i} stays in the drawer`).toBe(true);
+      expect(await app.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')), `tab ${i} stays in the drawer: ${await app.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))}`).toBe(true);
     }
     await app.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);

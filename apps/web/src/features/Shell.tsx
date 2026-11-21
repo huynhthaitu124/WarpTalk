@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
@@ -177,12 +177,12 @@ function Breadcrumb() {
   );
 }
 
-function TopBar({ onMenu }: { onMenu: () => void }) {
+function TopBar({ onMenu }: { onMenu: (opener: HTMLElement) => void }) {
   const { setOpen } = useCommandMenu();
   const { theme, toggle } = useTheme();
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-canvas px-4">
-      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation" onClick={onMenu}><List className="size-4" aria-hidden /></Button>
+      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation" onClick={(e) => onMenu(e.currentTarget)}><List className="size-4" aria-hidden /></Button>
       <Breadcrumb />
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <button
@@ -206,8 +206,9 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
 }
 
 /** Mobile navigation: a Radix dialog (focus trap, Escape, focus return, scroll lock). */
-function MobileDrawer({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
+function MobileDrawer({ open, onOpenChange, openerRef }: { open: boolean; onOpenChange(v: boolean): void; openerRef: { current: HTMLElement | null } }) {
   const loc = useLocation();
+  const closeRef = useRef<HTMLButtonElement>(null);
   // Navigating (or widening the window to desktop) closes it.
   useEffect(() => { onOpenChange(false); }, [loc.pathname, loc.search, onOpenChange]);
   useEffect(() => {
@@ -220,10 +221,10 @@ function MobileDrawer({ open, onOpenChange }: { open: boolean; onOpenChange(v: b
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
         <RD.Overlay className="fixed inset-0 z-40 animate-fade-in bg-overlay md:hidden" />
-        <RD.Content aria-describedby={undefined} className="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] animate-fade-in border-r border-hairline bg-canvas focus:outline-none md:hidden">
+        <RD.Content aria-describedby={undefined} onOpenAutoFocus={(e) => { e.preventDefault(); closeRef.current?.focus(); }} onCloseAutoFocus={(e) => { if (openerRef.current?.isConnected) { e.preventDefault(); openerRef.current.focus(); } }} className="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] animate-fade-in border-r border-hairline bg-canvas focus:outline-none md:hidden">
           <RD.Title className="sr-only">Navigation</RD.Title>
           <RD.Close asChild>
-            <Button variant="ghost" size="icon" className="absolute right-2 top-2" aria-label="Close menu"><X className="size-4" aria-hidden /></Button>
+            <Button ref={closeRef} variant="ghost" size="icon" className="absolute right-2 top-2" aria-label="Close menu"><X className="size-4" aria-hidden /></Button>
           </RD.Close>
           <Sidebar />
         </RD.Content>
@@ -238,6 +239,7 @@ export function Shell() {
   const { workspaces, current, select, wsPath } = useWorkspace();
   const { toggle } = useTheme();
   const [drawer, setDrawer] = useState(false);
+  const openerRef = useRef<HTMLElement | null>(null);
   const admin = canAdmin(current);
 
   const items = useMemo<CommandItem[]>(() => {
@@ -272,9 +274,9 @@ export function Shell() {
         <aside className="hidden w-60 shrink-0 border-r border-hairline bg-canvas md:block" aria-label="Sidebar">
           <Sidebar />
         </aside>
-        <MobileDrawer open={drawer} onOpenChange={setDrawer} />
+        <MobileDrawer open={drawer} onOpenChange={setDrawer} openerRef={openerRef} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar onMenu={() => setDrawer(true)} />
+          <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
           <main id="main" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-panel">
             <div className="mx-auto min-w-0 max-w-6xl px-6 py-8 max-sm:px-4 max-sm:py-6">
               <Outlet />
