@@ -38,3 +38,6 @@ impl <Name>Module {
 - No cross-schema foreign keys (ids from other modules are plain uuid columns).
 - Auth: handlers take `warptalk_web::AuthUser`; module state implements `FromRef` for `JwtKeys`.
 - Integration tests build the router and call it with `tower::ServiceExt::oneshot` against the local Postgres; each test uses fresh random emails/names so tests can run repeatedly.
+
+## Upstream source (read-only reference)
+Shallow clones of the original system: `/tmp/claude-0/-home-user-WarpTalk/d227b7da-7786-5638-ae3d-034b3c9aa83f/scratchpad/upstream/{warptalk-ai,warptalk-backend}`. Spec files cite `path:line` there. Read only the files your task names; never copy secrets or hostnames. Port behaviour, not code style; improvements marked "(proposal)" in the spec are wanted.
