@@ -1,0 +1,352 @@
+{
+ "A_default": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.675064268,
+  "cpu_secs": 3.23,
+  "cpu_percent_of_one_core": 3.485295667731514,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 61,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 484.6500849691783,
+    "p50": 460.694706,
+    "p95": 812.985632,
+    "p99": 985.6703150000001,
+    "max": 1324.8018209999998
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 484.6500849691783,
+    "p50": 460.694706,
+    "p95": 812.985632,
+    "p99": 985.6703150000001,
+    "max": 1324.8018209999998
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1373.8915143630138,
+    "p50": 1354.056304,
+    "p95": 1768.1281869999998,
+    "p99": 2034.9316640000002,
+    "max": 2212.660888
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1190.1685322945198,
+    "p50": 1172.43336,
+    "p95": 1569.678189,
+    "p99": 1863.735773,
+    "max": 2044.877955
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1373.8915143630138,
+    "p50": 1354.056304,
+    "p95": 1768.1281869999998,
+    "p99": 2034.9316640000002,
+    "max": 2212.660888
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.0511754770322,
+    "p50": 580.0647260000001,
+    "p95": 860.213109,
+    "p99": 879.5817609999999,
+    "max": 880.522008
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 704.945205479452,
+    "p50": 691.0,
+    "p95": 945.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8424657534247,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007492739726027396,
+    "p50": 0.000722,
+    "p95": 0.001168,
+    "p99": 0.001444,
+    "max": 0.001606
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 818.7657737020546,
+    "p50": 792.3261980000001,
+    "p95": 1302.781153,
+    "p99": 1583.75798,
+    "max": 1663.702894
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 42.588411630136996,
+    "p50": 0.0,
+    "p95": 255.22899999999998,
+    "p99": 567.197453,
+    "max": 744.376838
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.009586465753424657,
+    "p50": 0.008235,
+    "p95": 0.012296000000000001,
+    "p99": 0.038504000000000004,
+    "max": 0.16222599999999998
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 183.69024704794506,
+    "p50": 182.494422,
+    "p95": 259.132722,
+    "p99": 301.321119,
+    "max": 330.889905
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003743219178082193,
+    "p50": 0.00035,
+    "p95": 0.000552,
+    "p99": 0.000705,
+    "max": 0.0038160000000000004
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1228.8738861952047,
+    "p50": 1226.2565160000001,
+    "p95": 1312.073606,
+    "p99": 1361.4651509999999,
+    "max": 1401.4249940000002
+   }
+  }
+ },
+ "B_default": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 94.071314745,
+  "cpu_secs": 5.21,
+  "cpu_percent_of_one_core": 5.538351424260197,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 595,
+  "captions_published": 1187,
+  "chain": {
+   "dub_chunks_published": 13697,
+   "translated_captions": 592,
+   "translate_results": 592,
+   "tts_results": 592,
+   "system_events": 0,
+   "tts_contexts_opened": 419,
+   "tts_cold_opens": 70,
+   "prewarm_started": 419,
+   "prewarm_claimed": 412,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 473.47305419444444,
+    "p50": 446.423171,
+    "p95": 836.765473,
+    "p99": 1109.817955,
+    "max": 1201.8330449999999
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 27.344944923611113,
+    "p50": 0.0,
+    "p95": 192.368896,
+    "p99": 564.832456,
+    "max": 781.3182760000001
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 280.14338365624997,
+    "p50": 65.22734299999999,
+    "p95": 1101.2023339999998,
+    "p99": 1461.837571,
+    "max": 1892.661656
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 193.01306523263887,
+    "p50": 0.0,
+    "p95": 923.810979,
+    "p99": 1310.90934,
+    "max": 1611.1944469999999
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 1671.7015031423603,
+    "p50": 1605.5340199999998,
+    "p95": 2413.439026,
+    "p99": 2789.1585499999997,
+    "max": 3012.555076
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 551.7194442527077,
+    "p50": 579.9664399999999,
+    "p95": 580.9115419999999,
+    "p99": 582.03042,
+    "max": 582.1566329999999
+   },
+   "mt_done": {
+    "count": 592,
+    "mean": 695.6908783783783,
+    "p50": 682.0,
+    "p95": 913.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 592,
+    "mean": 614.5304054054054,
+    "p50": 602.0,
+    "p95": 831.0,
+    "p99": 930.0,
+    "max": 1006.0
+   },
+   "mt_order_wait": {
+    "count": 592,
+    "mean": 0.10186524324324325,
+    "p50": 0.000733,
+    "p95": 0.001104,
+    "p99": 0.001426,
+    "max": 41.654053000000005
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 808.5240096874994,
+    "p50": 756.647078,
+    "p95": 1356.024645,
+    "p99": 1591.587614,
+    "max": 1967.749119
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 11.081104163194444,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 512.1171429999999,
+    "max": 768.921034
+   },
+   "stt_result_publish": {
+    "count": 595,
+    "mean": 0.00914388907563024,
+    "p50": 0.008127,
+    "p95": 0.011184,
+    "p99": 0.032983,
+    "max": 0.229772
+   },
+   "tts_first_audio": {
+    "count": 592,
+    "mean": 185.35690775675675,
+    "p50": 179.55102300000001,
+    "p95": 262.24356900000004,
+    "p99": 323.59227699999997,
+    "max": 348.736687
+   },
+   "tts_slot_wait": {
+    "count": 592,
+    "mean": 0.0004039375000000001,
+    "p50": 0.00030199999999999997,
+    "p95": 0.000551,
+    "p99": 0.000682,
+    "max": 0.087371
+   },
+   "tts_synthesis": {
+    "count": 592,
+    "mean": 1318.569362324325,
+    "p50": 1330.43556,
+    "p95": 1452.4230739999998,
+    "p99": 1499.417813,
+    "max": 1515.509985
+   }
+  }
+ }
+}

@@ -1,0 +1,3152 @@
+{
+ "A_1_a": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": false,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.328839525,
+  "cpu_secs": 3.05,
+  "cpu_percent_of_one_core": 3.268014491043785,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 53,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 488.6877706301369,
+    "p50": 467.226935,
+    "p95": 815.748585,
+    "p99": 1079.348462,
+    "max": 1324.579983
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 488.6877706301369,
+    "p50": 467.226935,
+    "p95": 815.748585,
+    "p99": 1079.348462,
+    "max": 1324.579983
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 2252.674252654109,
+    "p50": 2212.614906,
+    "p95": 2911.12533,
+    "p99": 3216.167311,
+    "max": 3479.423401
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1977.98843810274,
+    "p50": 1953.430308,
+    "p95": 2568.84757,
+    "p99": 2751.967821,
+    "max": 2796.641187
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 2252.674252654109,
+    "p50": 2212.614906,
+    "p95": 2911.12533,
+    "p99": 3216.167311,
+    "max": 3479.423401
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 467.67745228621897,
+    "p50": 479.936874,
+    "p95": 580.6486699999999,
+    "p99": 799.507814,
+    "max": 841.0597640000001
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 704.9486301369863,
+    "p50": 691.0,
+    "p95": 946.0,
+    "p99": 1013.0,
+    "max": 1085.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8869863013699,
+    "p50": 610.0,
+    "p95": 864.0,
+    "p99": 931.0,
+    "max": 1004.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007282602739726032,
+    "p50": 0.0007120000000000001,
+    "p95": 0.001129,
+    "p99": 0.001197,
+    "max": 0.001338
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 816.3595134931505,
+    "p50": 781.167337,
+    "p95": 1326.990412,
+    "p99": 1577.005205,
+    "max": 1659.169136
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 46.09196137671231,
+    "p50": 0.0,
+    "p95": 289.36227399999996,
+    "p99": 633.680521,
+    "max": 744.139548
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.00870146232876712,
+    "p50": 0.007995,
+    "p95": 0.010889000000000001,
+    "p99": 0.03662,
+    "max": 0.082058
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 274.6582161952054,
+    "p50": 195.976963,
+    "p95": 694.277242,
+    "p99": 744.95217,
+    "max": 825.2091750000001
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003443767123287672,
+    "p50": 0.00032,
+    "p95": 0.0005239999999999999,
+    "p99": 0.00074,
+    "max": 0.000794
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1319.9474227020548,
+    "p50": 1240.143083,
+    "p95": 1756.676581,
+    "p99": 1817.3853,
+    "max": 1897.503979
+   }
+  }
+ },
+ "A_2_ab": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": true,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.010912139,
+  "cpu_secs": 3.1,
+  "cpu_percent_of_one_core": 3.332942263126299,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 48,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 488.6880893561645,
+    "p50": 467.448794,
+    "p95": 814.5465320000001,
+    "p99": 1079.021395,
+    "max": 1325.0742340000002
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 488.6880893561645,
+    "p50": 467.448794,
+    "p95": 814.5465320000001,
+    "p99": 1079.021395,
+    "max": 1325.0742340000002
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1461.6307623356167,
+    "p50": 1406.682076,
+    "p95": 2007.02532,
+    "p99": 2444.010986,
+    "max": 2623.477236
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1194.2140593253432,
+    "p50": 1160.6536800000001,
+    "p95": 1627.392129,
+    "p99": 1959.008811,
+    "max": 2045.141634
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1461.6307623356167,
+    "p50": 1406.682076,
+    "p95": 2007.02532,
+    "p99": 2444.010986,
+    "max": 2623.477236
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 467.59899857950495,
+    "p50": 479.92175999999995,
+    "p95": 580.821947,
+    "p99": 800.3635019999999,
+    "max": 839.9566130000001
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.0068493150685,
+    "p50": 692.0,
+    "p95": 944.0,
+    "p99": 1012.0,
+    "max": 1087.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8904109589041,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.000785075342465754,
+    "p50": 0.000699,
+    "p95": 0.001074,
+    "p99": 0.001296,
+    "max": 0.0258
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 816.3322915068492,
+    "p50": 781.920768,
+    "p95": 1328.046042,
+    "p99": 1576.25682,
+    "max": 1658.230261
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 46.13935718493149,
+    "p50": 0.0,
+    "p95": 289.27783,
+    "p99": 633.949393,
+    "max": 744.8394820000001
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.008182462328767126,
+    "p50": 0.007700000000000001,
+    "p95": 0.010348,
+    "p99": 0.028237,
+    "max": 0.035532
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 267.3892974691781,
+    "p50": 196.145871,
+    "p95": 700.022545,
+    "p99": 785.2953580000001,
+    "max": 825.3143269999999
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003791404109589042,
+    "p50": 0.000294,
+    "p95": 0.0005020000000000001,
+    "p99": 0.0009519999999999999,
+    "max": 0.018417
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1312.5952150821915,
+    "p50": 1235.606711,
+    "p95": 1758.408469,
+    "p99": 1817.4124570000001,
+    "max": 1898.6779629999999
+   }
+  }
+ },
+ "A_3_abc": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.597894531,
+  "cpu_secs": 3.06,
+  "cpu_percent_of_one_core": 3.3046107748978795,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 58,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 496.64776498972606,
+    "p50": 471.63403,
+    "p95": 846.86563,
+    "p99": 1080.030785,
+    "max": 1325.821925
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 496.64776498972606,
+    "p50": 471.63403,
+    "p95": 846.86563,
+    "p99": 1080.030785,
+    "max": 1325.821925
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1387.5846225000007,
+    "p50": 1361.9904840000002,
+    "p95": 1794.69007,
+    "p99": 2017.522077,
+    "max": 2210.909689
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1202.2194634143832,
+    "p50": 1177.846673,
+    "p95": 1596.9765830000001,
+    "p99": 1866.816867,
+    "max": 2046.4305299999999
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1387.5846225000007,
+    "p50": 1361.9904840000002,
+    "p95": 1794.69007,
+    "p99": 2017.522077,
+    "max": 2210.909689
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 473.971478169611,
+    "p50": 480.184909,
+    "p95": 580.909494,
+    "p99": 800.3949620000001,
+    "max": 859.96259
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.0171232876712,
+    "p50": 690.0,
+    "p95": 944.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.9657534246576,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 932.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007866746575342469,
+    "p50": 0.000695,
+    "p95": 0.001121,
+    "p99": 0.001462,
+    "max": 0.023536
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 802.3416049178079,
+    "p50": 790.205354,
+    "p95": 1245.609992,
+    "p99": 1465.232147,
+    "max": 1660.088133
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 46.57184496232876,
+    "p50": 0.0,
+    "p95": 346.13835,
+    "p99": 568.347258,
+    "max": 746.5020089999999
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.008420431506849313,
+    "p50": 0.008121999999999999,
+    "p95": 0.011451,
+    "p99": 0.017129000000000002,
+    "max": 0.03211
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 185.3385373630137,
+    "p50": 180.949499,
+    "p95": 260.281909,
+    "p99": 315.733367,
+    "max": 330.573276
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.00038727397260273976,
+    "p50": 0.000275,
+    "p95": 0.000479,
+    "p99": 0.000581,
+    "max": 0.032074
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1230.4803251506846,
+    "p50": 1227.4091620000002,
+    "p95": 1318.830028,
+    "p99": 1362.658279,
+    "max": 1402.142658
+   }
+  }
+ },
+ "A_b_only": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.917034015,
+  "cpu_secs": 3.24,
+  "cpu_percent_of_one_core": 3.486981729826797,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 50,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 479.93291612328784,
+    "p50": 434.98217700000004,
+    "p95": 833.732553,
+    "p99": 1016.9751469999999,
+    "max": 1325.508688
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 479.93291612328784,
+    "p50": 434.98217700000004,
+    "p95": 833.732553,
+    "p99": 1016.9751469999999,
+    "max": 1325.508688
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1454.7142890205473,
+    "p50": 1406.460852,
+    "p95": 2000.800817,
+    "p99": 2374.466694,
+    "max": 2504.755035
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1185.472263883562,
+    "p50": 1150.199129,
+    "p95": 1613.51178,
+    "p99": 1819.416426,
+    "max": 1863.458426
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1454.7142890205473,
+    "p50": 1406.460852,
+    "p95": 2000.800817,
+    "p99": 2374.466694,
+    "max": 2504.755035
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1047718127204,
+    "p50": 580.063084,
+    "p95": 860.316543,
+    "p99": 880.0518229999999,
+    "max": 880.571476
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.0034246575342,
+    "p50": 691.0,
+    "p95": 944.0,
+    "p99": 1012.0,
+    "max": 1087.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8835616438356,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007170753424657534,
+    "p50": 0.0006929999999999999,
+    "p95": 0.001101,
+    "p99": 0.0012389999999999999,
+    "max": 0.001275
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 792.980379023972,
+    "p50": 748.989373,
+    "p95": 1279.034123,
+    "p99": 1513.468326,
+    "max": 1806.33015
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 45.51912348972604,
+    "p50": 0.0,
+    "p95": 291.047735,
+    "p99": 560.754851,
+    "max": 745.454932
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.008840116438356157,
+    "p50": 0.008026,
+    "p95": 0.011892,
+    "p99": 0.032943,
+    "max": 0.046521
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 269.21219758904084,
+    "p50": 193.546626,
+    "p95": 688.40089,
+    "p99": 742.1641890000001,
+    "max": 825.307695
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.00045915068493150666,
+    "p50": 0.000351,
+    "p95": 0.0006010000000000001,
+    "p99": 0.00098,
+    "max": 0.026397
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1314.2994005034236,
+    "p50": 1240.1809939999998,
+    "p95": 1748.294255,
+    "p99": 1812.943725,
+    "max": 1896.71637
+   }
+  }
+ },
+ "A_c_only": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": false,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.896250586,
+  "cpu_secs": 3.21,
+  "cpu_percent_of_one_core": 3.4554677715741584,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 60,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 482.3761837363017,
+    "p50": 439.28838199999996,
+    "p95": 833.803112,
+    "p99": 1140.0904739999999,
+    "max": 1325.298906
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 482.3761837363017,
+    "p50": 439.28838199999996,
+    "p95": 833.803112,
+    "p99": 1140.0904739999999,
+    "max": 1325.298906
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 2287.0998387157524,
+    "p50": 2248.515216,
+    "p95": 2903.771991,
+    "p99": 3135.36604,
+    "max": 3180.331367
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 2099.743721609589,
+    "p50": 2067.44167,
+    "p95": 2702.295826,
+    "p99": 2970.196311,
+    "max": 2986.72184
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 2287.0998387157524,
+    "p50": 2248.515216,
+    "p95": 2903.771991,
+    "p99": 3135.36604,
+    "max": 3180.331367
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1020562862192,
+    "p50": 580.028738,
+    "p95": 860.4011700000001,
+    "p99": 879.965958,
+    "max": 880.387103
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 704.9828767123288,
+    "p50": 691.0,
+    "p95": 944.0,
+    "p99": 1012.0,
+    "max": 1085.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8972602739726,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007643698630136979,
+    "p50": 0.00074,
+    "p95": 0.001207,
+    "p99": 0.001514,
+    "max": 0.001531
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 796.1337419383564,
+    "p50": 760.436039,
+    "p95": 1290.9554509999998,
+    "p99": 1433.563522,
+    "max": 1513.20024
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 43.53868308219179,
+    "p50": 0.0,
+    "p95": 287.22113,
+    "p99": 716.472718,
+    "max": 744.159965
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.008831869863013696,
+    "p50": 0.008268,
+    "p95": 0.012700000000000001,
+    "p99": 0.027839,
+    "max": 0.037558
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 187.3246021335616,
+    "p50": 181.33809200000002,
+    "p95": 266.291366,
+    "p99": 304.345123,
+    "max": 400.10916299999997
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.00043069863013698624,
+    "p50": 0.000367,
+    "p95": 0.0006169999999999999,
+    "p99": 0.000741,
+    "max": 0.013866000000000002
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1232.7278268835612,
+    "p50": 1230.346316,
+    "p95": 1323.98565,
+    "p99": 1377.082866,
+    "max": 1473.8650739999998
+   }
+  }
+ },
+ "A_d_cap4": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 4,
+   "workers": null
+  },
+  "wall_secs": 92.676512539,
+  "cpu_secs": 2.86,
+  "cpu_percent_of_one_core": 3.086003046129362,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 68,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 488.63018981164373,
+    "p50": 471.874055,
+    "p95": 813.323755,
+    "p99": 1133.15274,
+    "max": 1376.8220979999999
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 488.63018981164373,
+    "p50": 471.874055,
+    "p95": 813.323755,
+    "p99": 1133.15274,
+    "max": 1376.8220979999999
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1376.4783699520558,
+    "p50": 1354.138333,
+    "p95": 1795.2654699999998,
+    "p99": 2006.1499760000002,
+    "max": 2315.768619
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1194.5940612945212,
+    "p50": 1176.7861580000001,
+    "p95": 1617.080728,
+    "p99": 1830.6951250000002,
+    "max": 2154.497929
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1376.4783699520558,
+    "p50": 1354.138333,
+    "p95": 1795.2654699999998,
+    "p99": 2006.1499760000002,
+    "max": 2315.768619
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1542586925794,
+    "p50": 580.093818,
+    "p95": 860.400128,
+    "p99": 880.3819560000001,
+    "max": 880.889236
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.4691780821918,
+    "p50": 691.0,
+    "p95": 944.0,
+    "p99": 1013.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 624.1369863013699,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.000635267123287671,
+    "p50": 0.000629,
+    "p95": 0.000983,
+    "p99": 0.001183,
+    "max": 0.0012109999999999998
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 799.1572276438363,
+    "p50": 761.621416,
+    "p95": 1253.3798009999998,
+    "p99": 1528.1737770000002,
+    "max": 1687.341914
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 45.55261380821918,
+    "p50": 0.0,
+    "p95": 277.733686,
+    "p99": 633.857777,
+    "max": 804.618874
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.00816584589041096,
+    "p50": 0.007684,
+    "p95": 0.010747999999999999,
+    "p99": 0.021877999999999998,
+    "max": 0.035516
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 181.85526277739731,
+    "p50": 176.586379,
+    "p95": 252.262365,
+    "p99": 320.639454,
+    "max": 400.384193
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0002734109589041097,
+    "p50": 0.00025,
+    "p95": 0.000471,
+    "p99": 0.000612,
+    "max": 0.002297
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1230.9588202191778,
+    "p50": 1224.957001,
+    "p95": 1311.47576,
+    "p99": 1379.2751739999999,
+    "max": 1486.4075930000001
+   }
+  }
+ },
+ "A_d_conc3": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 3,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.673910417,
+  "cpu_secs": 2.85,
+  "cpu_percent_of_one_core": 3.0752991723085845,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 63,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 483.44661966438366,
+    "p50": 443.089413,
+    "p95": 833.239103,
+    "p99": 1079.938981,
+    "max": 1325.704016
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 483.44661966438366,
+    "p50": 443.089413,
+    "p95": 833.239103,
+    "p99": 1079.938981,
+    "max": 1325.704016
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1374.5136101541098,
+    "p50": 1339.889081,
+    "p95": 1781.694294,
+    "p99": 1984.285402,
+    "max": 2211.329573
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1189.3394101678082,
+    "p50": 1147.866778,
+    "p95": 1575.622326,
+    "p99": 1790.9834660000001,
+    "max": 2047.120226
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1374.5136101541098,
+    "p50": 1339.889081,
+    "p95": 1781.694294,
+    "p99": 1984.285402,
+    "max": 2211.329573
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.0673865017667,
+    "p50": 580.053147,
+    "p95": 860.166349,
+    "p99": 879.680316,
+    "max": 880.285559
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.3698630136986,
+    "p50": 691.0,
+    "p95": 944.0,
+    "p99": 1012.0,
+    "max": 1087.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 624.0171232876712,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0006273253424657533,
+    "p50": 0.0006090000000000001,
+    "p95": 0.001006,
+    "p99": 0.001154,
+    "max": 0.001441
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 807.3325533904116,
+    "p50": 781.3740319999999,
+    "p95": 1259.1756489999998,
+    "p99": 1466.597445,
+    "max": 1772.0702830000002
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 44.65558677739725,
+    "p50": 0.0,
+    "p95": 328.58526,
+    "p99": 544.713974,
+    "max": 744.75637
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.008242376712328765,
+    "p50": 0.007611,
+    "p95": 0.010471,
+    "p99": 0.028953,
+    "max": 0.037162
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 185.12621546232882,
+    "p50": 179.75623700000003,
+    "p95": 258.266458,
+    "p99": 330.86819499999996,
+    "max": 701.23596
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 2.3696357226027396,
+    "p50": 0.000221,
+    "p95": 0.000434,
+    "p99": 0.000678,
+    "max": 524.331006
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1233.9571707602745,
+    "p50": 1230.28973,
+    "p95": 1320.9982820000002,
+    "p99": 1403.015627,
+    "max": 1724.9883719999998
+   }
+  }
+ },
+ "A_d_lang2": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 2,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.817719509,
+  "cpu_secs": 3.09,
+  "cpu_percent_of_one_core": 3.329105709928997,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 876,
+  "chain": {
+   "dub_chunks_published": 12528,
+   "translated_captions": 584,
+   "translate_results": 584,
+   "tts_results": 584,
+   "system_events": 0,
+   "tts_contexts_opened": 584,
+   "tts_cold_opens": 109,
+   "prewarm_started": 584,
+   "prewarm_claimed": 584,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 456.9161730239725,
+    "p50": 421.158358,
+    "p95": 798.1586269999999,
+    "p99": 1048.2418659999998,
+    "max": 1241.574895
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 456.9161730239725,
+    "p50": 421.158358,
+    "p95": 798.1586269999999,
+    "p99": 1048.2418659999998,
+    "max": 1241.574895
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1266.4855961541084,
+    "p50": 1239.349204,
+    "p95": 1639.088766,
+    "p99": 1877.317593,
+    "max": 2022.8386509999998
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1085.3671094760275,
+    "p50": 1061.59212,
+    "p95": 1444.140932,
+    "p99": 1672.2831270000001,
+    "max": 1840.2286370000002
+   },
+   "e2e_last_dub_audio": {
+    "count": 584,
+    "mean": 1337.4052456660972,
+    "p50": 1318.0202649999999,
+    "p95": 1716.907259,
+    "p99": 2002.302249,
+    "max": 2143.90877
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1108640777388,
+    "p50": 580.043842,
+    "p95": 860.386946,
+    "p99": 880.316993,
+    "max": 880.545466
+   },
+   "mt_done": {
+    "count": 584,
+    "mean": 695.472602739726,
+    "p50": 683.0,
+    "p95": 910.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 584,
+    "mean": 614.2089041095891,
+    "p50": 601.0,
+    "p95": 829.0,
+    "p99": 930.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 584,
+    "mean": 0.000635414383561644,
+    "p50": 0.0006320000000000001,
+    "p95": 0.0009530000000000001,
+    "p99": 0.0011090000000000002,
+    "max": 0.004114
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 798.1368896883554,
+    "p50": 765.923039,
+    "p95": 1275.7414250000002,
+    "p99": 1593.823336,
+    "max": 1712.651426
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 31.5351069760274,
+    "p50": 0.0,
+    "p95": 247.094966,
+    "p99": 562.045154,
+    "max": 884.444755
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.007760328767123286,
+    "p50": 0.007274,
+    "p95": 0.011061,
+    "p99": 0.017382,
+    "max": 0.022064
+   },
+   "tts_first_audio": {
+    "count": 584,
+    "mean": 184.47124090582201,
+    "p50": 178.898933,
+    "p95": 260.13593000000003,
+    "p99": 301.159882,
+    "max": 400.246488
+   },
+   "tts_slot_wait": {
+    "count": 584,
+    "mean": 0.00026110102739726037,
+    "p50": 0.00024900000000000004,
+    "p95": 0.000432,
+    "p99": 0.000577,
+    "max": 0.000915
+   },
+   "tts_synthesis": {
+    "count": 584,
+    "mean": 1232.8821367842454,
+    "p50": 1227.561612,
+    "p95": 1319.940597,
+    "p99": 1365.85242,
+    "max": 1419.857842
+   }
+  }
+ },
+ "A_d_workers1": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": 1
+  },
+  "wall_secs": 92.676795416,
+  "cpu_secs": 2.51,
+  "cpu_percent_of_one_core": 2.7083370640226794,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 69,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 503.7870099315068,
+    "p50": 460.880872,
+    "p95": 840.302013,
+    "p99": 1139.2058949999998,
+    "max": 1376.319077
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 503.7870099315068,
+    "p50": 460.880872,
+    "p95": 840.302013,
+    "p99": 1139.2058949999998,
+    "max": 1376.319077
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1392.8186341643843,
+    "p50": 1368.6290589999999,
+    "p95": 1799.02982,
+    "p99": 2194.694718,
+    "max": 2315.744103
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1209.6268722123282,
+    "p50": 1174.390099,
+    "p95": 1618.371148,
+    "p99": 1911.178077,
+    "max": 2154.987531
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1392.8186341643843,
+    "p50": 1368.6290589999999,
+    "p95": 1799.02982,
+    "p99": 2194.694718,
+    "max": 2315.744103
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1638169293286,
+    "p50": 580.033484,
+    "p95": 860.295454,
+    "p99": 879.636434,
+    "max": 880.8344030000001
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 705.318493150685,
+    "p50": 690.0,
+    "p95": 945.0,
+    "p99": 1013.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 624.1541095890411,
+    "p50": 610.0,
+    "p95": 864.0,
+    "p99": 932.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.000614664383561644,
+    "p50": 0.00061,
+    "p95": 0.0009490000000000001,
+    "p99": 0.001167,
+    "max": 0.0012490000000000001
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 793.2473365376711,
+    "p50": 775.163464,
+    "p95": 1242.061325,
+    "p99": 1514.278748,
+    "max": 1687.1962270000001
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 53.78599016438356,
+    "p50": 0.0,
+    "p95": 384.115126,
+    "p99": 716.4627310000001,
+    "max": 796.5001550000001
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.00806104794520548,
+    "p50": 0.0073089999999999995,
+    "p95": 0.010920000000000001,
+    "p99": 0.029961,
+    "max": 0.03712
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 183.16753750342457,
+    "p50": 178.690453,
+    "p95": 258.265579,
+    "p99": 320.875482,
+    "max": 400.25156
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003040034246575341,
+    "p50": 0.00028500000000000004,
+    "p95": 0.000511,
+    "p99": 0.000633,
+    "max": 0.000702
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1231.9650130308223,
+    "p50": 1225.573603,
+    "p95": 1314.658575,
+    "p99": 1376.3543750000001,
+    "max": 1501.239654
+   }
+  }
+ },
+ "A_default": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.675064268,
+  "cpu_secs": 3.23,
+  "cpu_percent_of_one_core": 3.485295667731514,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 61,
+   "prewarm_started": 292,
+   "prewarm_claimed": 292,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 484.6500849691783,
+    "p50": 460.694706,
+    "p95": 812.985632,
+    "p99": 985.6703150000001,
+    "max": 1324.8018209999998
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 484.6500849691783,
+    "p50": 460.694706,
+    "p95": 812.985632,
+    "p99": 985.6703150000001,
+    "max": 1324.8018209999998
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 1373.8915143630138,
+    "p50": 1354.056304,
+    "p95": 1768.1281869999998,
+    "p99": 2034.9316640000002,
+    "max": 2212.660888
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 1190.1685322945198,
+    "p50": 1172.43336,
+    "p95": 1569.678189,
+    "p99": 1863.735773,
+    "max": 2044.877955
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 1373.8915143630138,
+    "p50": 1354.056304,
+    "p95": 1768.1281869999998,
+    "p99": 2034.9316640000002,
+    "max": 2212.660888
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.0511754770322,
+    "p50": 580.0647260000001,
+    "p95": 860.213109,
+    "p99": 879.5817609999999,
+    "max": 880.522008
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 704.945205479452,
+    "p50": 691.0,
+    "p95": 945.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8424657534247,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0007492739726027396,
+    "p50": 0.000722,
+    "p95": 0.001168,
+    "p99": 0.001444,
+    "max": 0.001606
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 818.7657737020546,
+    "p50": 792.3261980000001,
+    "p95": 1302.781153,
+    "p99": 1583.75798,
+    "max": 1663.702894
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 42.588411630136996,
+    "p50": 0.0,
+    "p95": 255.22899999999998,
+    "p99": 567.197453,
+    "max": 744.376838
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.009586465753424657,
+    "p50": 0.008235,
+    "p95": 0.012296000000000001,
+    "p99": 0.038504000000000004,
+    "max": 0.16222599999999998
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 183.69024704794506,
+    "p50": 182.494422,
+    "p95": 259.132722,
+    "p99": 301.321119,
+    "max": 330.889905
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003743219178082193,
+    "p50": 0.00035,
+    "p95": 0.000552,
+    "p99": 0.000705,
+    "max": 0.0038160000000000004
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1228.8738861952047,
+    "p50": 1226.2565160000001,
+    "p95": 1312.073606,
+    "p99": 1361.4651509999999,
+    "max": 1401.4249940000002
+   }
+  }
+ },
+ "A_default_seed7": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 7,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 92.582012291,
+  "cpu_secs": 3.41,
+  "cpu_percent_of_one_core": 3.683220871546654,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 303,
+  "captions_published": 606,
+  "chain": {
+   "dub_chunks_published": 6512,
+   "translated_captions": 303,
+   "translate_results": 303,
+   "tts_results": 303,
+   "system_events": 0,
+   "tts_contexts_opened": 303,
+   "tts_cold_opens": 56,
+   "prewarm_started": 303,
+   "prewarm_claimed": 303,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 303,
+    "mean": 476.5024416732673,
+    "p50": 451.975234,
+    "p95": 782.407978,
+    "p99": 967.1597419999999,
+    "max": 1498.894081
+   },
+   "e2e_first_caption": {
+    "count": 303,
+    "mean": 476.5024416732673,
+    "p50": 451.975234,
+    "p95": 782.407978,
+    "p99": 967.1597419999999,
+    "max": 1498.894081
+   },
+   "e2e_first_dub_audio": {
+    "count": 303,
+    "mean": 1354.7586158910892,
+    "p50": 1330.467752,
+    "p95": 1787.1852509999999,
+    "p99": 2002.388036,
+    "max": 2321.5856860000004
+   },
+   "e2e_first_translated_caption": {
+    "count": 303,
+    "mean": 1166.293848211222,
+    "p50": 1140.743397,
+    "p95": 1623.8066259999998,
+    "p99": 1795.8074900000001,
+    "max": 2128.85959
+   },
+   "e2e_last_dub_audio": {
+    "count": 303,
+    "mean": 1354.7586158910892,
+    "p50": 1330.467752,
+    "p95": 1787.1852509999999,
+    "p99": 2002.388036,
+    "max": 2321.5856860000004
+   },
+   "endpoint_decision": {
+    "count": 293,
+    "mean": 610.5940072559724,
+    "p50": 580.052313,
+    "p95": 860.3043299999999,
+    "p99": 880.5025509999999,
+    "max": 880.7783479999999
+   },
+   "mt_done": {
+    "count": 303,
+    "mean": 689.2409240924093,
+    "p50": 670.0,
+    "p95": 906.0,
+    "p99": 995.0,
+    "max": 1082.0
+   },
+   "mt_first_token": {
+    "count": 303,
+    "mean": 608.1320132013201,
+    "p50": 589.0,
+    "p95": 825.0,
+    "p99": 915.0,
+    "max": 1001.0
+   },
+   "mt_order_wait": {
+    "count": 303,
+    "mean": 0.0007273663366336633,
+    "p50": 0.000727,
+    "p95": 0.001097,
+    "p99": 0.001317,
+    "max": 0.00147
+   },
+   "stt_final": {
+    "count": 303,
+    "mean": 804.0719477458744,
+    "p50": 777.232134,
+    "p95": 1284.226946,
+    "p99": 1533.6859120000001,
+    "max": 1727.535032
+   },
+   "stt_first_text": {
+    "count": 303,
+    "mean": 43.49095204950495,
+    "p50": 0.0,
+    "p95": 252.403968,
+    "p99": 646.044084,
+    "max": 918.88161
+   },
+   "stt_result_publish": {
+    "count": 303,
+    "mean": 0.009668422442244218,
+    "p50": 0.008722,
+    "p95": 0.012714000000000001,
+    "p99": 0.025212,
+    "max": 0.149942
+   },
+   "tts_first_audio": {
+    "count": 303,
+    "mean": 188.43663454455432,
+    "p50": 182.055728,
+    "p95": 264.32609099999996,
+    "p99": 296.823174,
+    "max": 305.918702
+   },
+   "tts_slot_wait": {
+    "count": 303,
+    "mean": 0.0003354686468646864,
+    "p50": 0.00025400000000000005,
+    "p95": 0.000558,
+    "p99": 0.000687,
+    "max": 0.015156000000000001
+   },
+   "tts_synthesis": {
+    "count": 303,
+    "mean": 1235.6125562970299,
+    "p50": 1234.257044,
+    "p95": 1322.7220260000001,
+    "p99": 1353.758156,
+    "max": 1472.389518
+   }
+  }
+ },
+ "B_1_a": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": false,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 95.3357911,
+  "cpu_secs": 4.79,
+  "cpu_percent_of_one_core": 5.024345992970945,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 604,
+  "captions_published": 1208,
+  "chain": {
+   "dub_chunks_published": 13985,
+   "translated_captions": 604,
+   "translate_results": 604,
+   "tts_results": 604,
+   "system_events": 0,
+   "tts_contexts_opened": 281,
+   "tts_cold_opens": 46,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 473.7589033333335,
+    "p50": 447.65526500000004,
+    "p95": 803.673667,
+    "p99": 1152.101595,
+    "max": 1296.57561
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 22.485663965277773,
+    "p50": 0.0,
+    "p95": 187.93531,
+    "p99": 512.751854,
+    "max": 743.469246
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 2145.4826740833337,
+    "p50": 2117.390315,
+    "p95": 2811.254866,
+    "p99": 3208.450436,
+    "max": 3330.507687
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 1870.0869517673611,
+    "p50": 1869.7619250000002,
+    "p95": 2430.6364399999998,
+    "p99": 2730.4116719999997,
+    "max": 2894.3405869999997
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 3665.8318200972217,
+    "p50": 3566.316103,
+    "p95": 4743.572082,
+    "p99": 5090.910145999999,
+    "max": 5304.8823729999995
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 430.072615194946,
+    "p50": 440.477538,
+    "p95": 580.4485579999999,
+    "p99": 581.178599,
+    "max": 591.5762209999999
+   },
+   "mt_done": {
+    "count": 604,
+    "mean": 756.6953642384105,
+    "p50": 730.0,
+    "p95": 1063.0,
+    "p99": 1260.0,
+    "max": 1330.0
+   },
+   "mt_first_token": {
+    "count": 294,
+    "mean": 613.2993197278912,
+    "p50": 600.0,
+    "p95": 831.0,
+    "p99": 972.0,
+    "max": 1009.0
+   },
+   "mt_order_wait": {
+    "count": 294,
+    "mean": 0.0006653435374149663,
+    "p50": 0.000648,
+    "p95": 0.0010240000000000002,
+    "p99": 0.001443,
+    "max": 0.001555
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 805.558622517361,
+    "p50": 776.0314109999999,
+    "p95": 1279.799264,
+    "p99": 1591.2382759999998,
+    "max": 1755.396234
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 8.893543357638888,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 377.885328,
+    "max": 741.993773
+   },
+   "stt_result_publish": {
+    "count": 604,
+    "mean": 0.008009546357615895,
+    "p50": 0.0075190000000000005,
+    "p95": 0.010504,
+    "p99": 0.02309,
+    "max": 0.067689
+   },
+   "tts_first_audio": {
+    "count": 604,
+    "mean": 221.72634188576174,
+    "p50": 183.04574300000002,
+    "p95": 663.6048420000001,
+    "p99": 717.7326469999999,
+    "max": 783.630923
+   },
+   "tts_slot_wait": {
+    "count": 604,
+    "mean": 0.00013481788079470192,
+    "p50": 0.0,
+    "p95": 0.00041,
+    "p99": 0.000583,
+    "max": 0.00073
+   },
+   "tts_synthesis": {
+    "count": 602,
+    "mean": 1360.026898347177,
+    "p50": 1340.947841,
+    "p95": 1852.085197,
+    "p99": 1956.8913,
+    "max": 2037.4033279999999
+   }
+  }
+ },
+ "B_2_ab": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": true,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 94.109660759,
+  "cpu_secs": 4.1,
+  "cpu_percent_of_one_core": 4.356619678504052,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 610,
+  "captions_published": 1211,
+  "chain": {
+   "dub_chunks_published": 13893,
+   "translated_captions": 601,
+   "translate_results": 601,
+   "tts_results": 601,
+   "system_events": 0,
+   "tts_contexts_opened": 403,
+   "tts_cold_opens": 71,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 473.38889605902773,
+    "p50": 441.290179,
+    "p95": 795.0337979999999,
+    "p99": 1057.771712,
+    "max": 1173.804796
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 21.695266982638888,
+    "p50": 0.0,
+    "p95": 98.40319699999999,
+    "p99": 613.579032,
+    "max": 744.417404
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 313.90809923958335,
+    "p50": 75.256136,
+    "p95": 1141.341334,
+    "p99": 1569.7618009999999,
+    "max": 1831.835709
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 180.3111539965278,
+    "p50": 0.0,
+    "p95": 877.00627,
+    "p99": 1341.245611,
+    "max": 1495.714491
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 1752.6174283541666,
+    "p50": 1715.8955369999999,
+    "p95": 2554.3237740000004,
+    "p99": 2971.1722489999997,
+    "max": 3037.686849
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 427.36661532851997,
+    "p50": 421.02127700000005,
+    "p95": 580.518595,
+    "p99": 580.906204,
+    "max": 607.99983
+   },
+   "mt_done": {
+    "count": 601,
+    "mean": 695.8901830282862,
+    "p50": 683.0,
+    "p95": 911.0,
+    "p99": 1005.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 601,
+    "mean": 614.3860232945092,
+    "p50": 601.0,
+    "p95": 830.0,
+    "p99": 924.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 601,
+    "mean": 1.0351314026622296,
+    "p50": 0.000655,
+    "p95": 0.001106,
+    "p99": 0.0014449999999999999,
+    "max": 287.30142800000004
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 798.1606451909721,
+    "p50": 768.096254,
+    "p95": 1281.824032,
+    "p99": 1532.079801,
+    "max": 2144.361076
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 9.307204083333334,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 566.285421,
+    "max": 742.5750330000001
+   },
+   "stt_result_publish": {
+    "count": 610,
+    "mean": 0.007967357377049183,
+    "p50": 0.007198,
+    "p95": 0.010749,
+    "p99": 0.034851,
+    "max": 0.105145
+   },
+   "tts_first_audio": {
+    "count": 601,
+    "mean": 241.8394911347755,
+    "p50": 185.211874,
+    "p95": 684.022738,
+    "p99": 738.7773450000001,
+    "max": 822.2865
+   },
+   "tts_slot_wait": {
+    "count": 601,
+    "mean": 0.00031915474209650576,
+    "p50": 0.000223,
+    "p95": 0.000457,
+    "p99": 0.00064,
+    "max": 0.077806
+   },
+   "tts_synthesis": {
+    "count": 601,
+    "mean": 1378.0122825257897,
+    "p50": 1343.776317,
+    "p95": 1878.071311,
+    "p99": 1945.615437,
+    "max": 2049.932511
+   }
+  }
+ },
+ "B_3_abc": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 250,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.197556052,
+  "cpu_secs": 4.36,
+  "cpu_percent_of_one_core": 4.678234263532961,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 595,
+  "captions_published": 1185,
+  "chain": {
+   "dub_chunks_published": 13673,
+   "translated_captions": 590,
+   "translate_results": 590,
+   "tts_results": 590,
+   "system_events": 0,
+   "tts_contexts_opened": 429,
+   "tts_cold_opens": 85,
+   "prewarm_started": 429,
+   "prewarm_claimed": 422,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 475.3955333298611,
+    "p50": 455.57775,
+    "p95": 788.6202410000001,
+    "p99": 888.4702199999999,
+    "max": 1145.405895
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 25.692032142361107,
+    "p50": 0.0,
+    "p95": 124.06425,
+    "p99": 612.735512,
+    "max": 780.140447
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 260.3673484409722,
+    "p50": 0.0,
+    "p95": 1106.4891859999998,
+    "p99": 1538.979226,
+    "max": 1764.444017
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 174.73769943055558,
+    "p50": 0.0,
+    "p95": 931.9759359999999,
+    "p99": 1338.855552,
+    "max": 1542.306297
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 1641.2943195624998,
+    "p50": 1584.9573599999999,
+    "p95": 2339.63395,
+    "p99": 2748.3795999999998,
+    "max": 3234.556932
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 434.08764363898933,
+    "p50": 440.24816,
+    "p95": 580.543227,
+    "p99": 581.563382,
+    "max": 583.3050840000001
+   },
+   "mt_done": {
+    "count": 590,
+    "mean": 695.4627118644067,
+    "p50": 683.0,
+    "p95": 912.0,
+    "p99": 1011.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 590,
+    "mean": 614.1457627118644,
+    "p50": 601.0,
+    "p95": 831.0,
+    "p99": 930.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 590,
+    "mean": 0.9980826423728815,
+    "p50": 0.00065,
+    "p95": 0.001054,
+    "p99": 0.0015710000000000001,
+    "max": 224.622601
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 792.7023827048606,
+    "p50": 770.060002,
+    "p95": 1211.197387,
+    "p99": 1551.253161,
+    "max": 1960.98512
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 11.888741586805557,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 591.961684,
+    "max": 768.215927
+   },
+   "stt_result_publish": {
+    "count": 595,
+    "mean": 0.008225847058823527,
+    "p50": 0.007294,
+    "p95": 0.009633000000000001,
+    "p99": 0.02334,
+    "max": 0.213477
+   },
+   "tts_first_audio": {
+    "count": 590,
+    "mean": 185.67598663050865,
+    "p50": 179.29548,
+    "p95": 262.616816,
+    "p99": 304.146295,
+    "max": 348.000231
+   },
+   "tts_slot_wait": {
+    "count": 590,
+    "mean": 0.000195591525423729,
+    "p50": 0.00022,
+    "p95": 0.00043099999999999996,
+    "p99": 0.0005600000000000001,
+    "max": 0.00076
+   },
+   "tts_synthesis": {
+    "count": 590,
+    "mean": 1323.4436961966107,
+    "p50": 1339.168593,
+    "p95": 1460.723301,
+    "p99": 1508.54747,
+    "max": 1572.716138
+   }
+  }
+ },
+ "B_b_only": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.846025905,
+  "cpu_secs": 5.24,
+  "cpu_percent_of_one_core": 5.5836141695594375,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 607,
+  "captions_published": 1207,
+  "chain": {
+   "dub_chunks_published": 13905,
+   "translated_captions": 600,
+   "translate_results": 600,
+   "tts_results": 600,
+   "system_events": 0,
+   "tts_contexts_opened": 408,
+   "tts_cold_opens": 76,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 464.14704823263895,
+    "p50": 450.072049,
+    "p95": 791.717784,
+    "p99": 912.38585,
+    "max": 957.509563
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 20.05151921180556,
+    "p50": 0.0,
+    "p95": 132.206258,
+    "p99": 507.02612400000004,
+    "max": 799.726429
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 318.2189462152776,
+    "p50": 74.143,
+    "p95": 1223.399353,
+    "p99": 1648.009853,
+    "max": 1673.532453
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 169.65068093402775,
+    "p50": 0.0,
+    "p95": 827.5877830000001,
+    "p99": 1179.2101930000001,
+    "max": 1490.093122
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 1762.6305532673605,
+    "p50": 1723.368347,
+    "p95": 2615.741211,
+    "p99": 2934.169869,
+    "max": 3153.971669
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 551.7265612888085,
+    "p50": 579.837786,
+    "p95": 580.891151,
+    "p99": 581.7658329999999,
+    "max": 582.963398
+   },
+   "mt_done": {
+    "count": 600,
+    "mean": 695.4016666666666,
+    "p50": 683.0,
+    "p95": 912.0,
+    "p99": 1005.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 600,
+    "mean": 614.2233333333334,
+    "p50": 601.0,
+    "p95": 831.0,
+    "p99": 924.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 600,
+    "mean": 0.22917643666666662,
+    "p50": 0.000726,
+    "p95": 0.001097,
+    "p99": 0.001597,
+    "max": 52.745638
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 825.8219691180557,
+    "p50": 787.8208500000001,
+    "p95": 1335.5242380000002,
+    "p99": 1591.091832,
+    "max": 1755.4279589999999
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 9.352857527777779,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 429.339994,
+    "max": 510.37480400000004
+   },
+   "stt_result_publish": {
+    "count": 607,
+    "mean": 0.009436039538714988,
+    "p50": 0.008015,
+    "p95": 0.010791,
+    "p99": 0.030198000000000003,
+    "max": 0.460276
+   },
+   "tts_first_audio": {
+    "count": 600,
+    "mean": 249.2657983816669,
+    "p50": 192.10787,
+    "p95": 672.864064,
+    "p99": 735.005418,
+    "max": 765.470623
+   },
+   "tts_slot_wait": {
+    "count": 600,
+    "mean": 0.00023180666666666679,
+    "p50": 0.000261,
+    "p95": 0.000509,
+    "p99": 0.000675,
+    "max": 0.0007959999999999999
+   },
+   "tts_synthesis": {
+    "count": 600,
+    "mean": 1384.9375610333325,
+    "p50": 1349.577652,
+    "p95": 1874.310295,
+    "p99": 1926.33518,
+    "max": 1974.5980690000001
+   }
+  }
+ },
+ "B_c_only": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": false,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 95.694223986,
+  "cpu_secs": 4.65,
+  "cpu_percent_of_one_core": 4.859227450008156,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 603,
+  "captions_published": 1206,
+  "chain": {
+   "dub_chunks_published": 13944,
+   "translated_captions": 603,
+   "translate_results": 603,
+   "tts_results": 603,
+   "system_events": 0,
+   "tts_contexts_opened": 283,
+   "tts_cold_opens": 53,
+   "prewarm_started": 282,
+   "prewarm_claimed": 275,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 471.5915477187501,
+    "p50": 449.210963,
+    "p95": 820.0618039999999,
+    "p99": 1036.0108850000001,
+    "max": 1144.69056
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 23.67297320138889,
+    "p50": 0.0,
+    "p95": 153.60431799999998,
+    "p99": 579.827922,
+    "max": 1036.0108850000001
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 2156.9079966076392,
+    "p50": 2156.9926929999997,
+    "p95": 2639.506499,
+    "p99": 2875.623797,
+    "max": 3386.9025349999997
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 1955.6351974444422,
+    "p50": 1975.0256450000002,
+    "p95": 2402.358336,
+    "p99": 2593.9553100000003,
+    "max": 2690.2567529999997
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 3657.9270820277784,
+    "p50": 3602.770602,
+    "p95": 4658.114419,
+    "p99": 5316.305521,
+    "max": 6004.402669
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 551.8098945270758,
+    "p50": 579.983515,
+    "p95": 580.9725639999999,
+    "p99": 581.53997,
+    "max": 600.746109
+   },
+   "mt_done": {
+    "count": 603,
+    "mean": 753.5058043117745,
+    "p50": 729.0,
+    "p95": 1060.0,
+    "p99": 1206.0,
+    "max": 1293.0
+   },
+   "mt_first_token": {
+    "count": 295,
+    "mean": 619.0440677966102,
+    "p50": 602.0,
+    "p95": 833.0,
+    "p99": 973.0,
+    "max": 1004.0
+   },
+   "mt_order_wait": {
+    "count": 295,
+    "mean": 0.6919062033898304,
+    "p50": 0.000752,
+    "p95": 0.0010580000000000001,
+    "p99": 0.001255,
+    "max": 203.893871
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 790.3321901458335,
+    "p50": 764.623815,
+    "p95": 1182.898803,
+    "p99": 1477.1582620000001,
+    "max": 1732.9044609999999
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 12.31625295486111,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 578.278455,
+    "max": 1028.287094
+   },
+   "stt_result_publish": {
+    "count": 603,
+    "mean": 0.009301791044776127,
+    "p50": 0.008525000000000001,
+    "p95": 0.011855000000000001,
+    "p99": 0.032988,
+    "max": 0.115859
+   },
+   "tts_first_audio": {
+    "count": 603,
+    "mean": 181.6466318208955,
+    "p50": 179.329246,
+    "p95": 257.085656,
+    "p99": 293.360206,
+    "max": 333.186264
+   },
+   "tts_slot_wait": {
+    "count": 603,
+    "mean": 0.00014796683250414597,
+    "p50": 0.0,
+    "p95": 0.000474,
+    "p99": 0.000577,
+    "max": 0.0007689999999999999
+   },
+   "tts_synthesis": {
+    "count": 600,
+    "mean": 1315.357368681667,
+    "p50": 1332.083556,
+    "p95": 1445.549034,
+    "p99": 1491.073877,
+    "max": 1553.608704
+   }
+  }
+ },
+ "B_default": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 94.071314745,
+  "cpu_secs": 5.21,
+  "cpu_percent_of_one_core": 5.538351424260197,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 595,
+  "captions_published": 1187,
+  "chain": {
+   "dub_chunks_published": 13697,
+   "translated_captions": 592,
+   "translate_results": 592,
+   "tts_results": 592,
+   "system_events": 0,
+   "tts_contexts_opened": 419,
+   "tts_cold_opens": 70,
+   "prewarm_started": 419,
+   "prewarm_claimed": 412,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 473.47305419444444,
+    "p50": 446.423171,
+    "p95": 836.765473,
+    "p99": 1109.817955,
+    "max": 1201.8330449999999
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 27.344944923611113,
+    "p50": 0.0,
+    "p95": 192.368896,
+    "p99": 564.832456,
+    "max": 781.3182760000001
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 280.14338365624997,
+    "p50": 65.22734299999999,
+    "p95": 1101.2023339999998,
+    "p99": 1461.837571,
+    "max": 1892.661656
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 193.01306523263887,
+    "p50": 0.0,
+    "p95": 923.810979,
+    "p99": 1310.90934,
+    "max": 1611.1944469999999
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 1671.7015031423603,
+    "p50": 1605.5340199999998,
+    "p95": 2413.439026,
+    "p99": 2789.1585499999997,
+    "max": 3012.555076
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 551.7194442527077,
+    "p50": 579.9664399999999,
+    "p95": 580.9115419999999,
+    "p99": 582.03042,
+    "max": 582.1566329999999
+   },
+   "mt_done": {
+    "count": 592,
+    "mean": 695.6908783783783,
+    "p50": 682.0,
+    "p95": 913.0,
+    "p99": 1012.0,
+    "max": 1086.0
+   },
+   "mt_first_token": {
+    "count": 592,
+    "mean": 614.5304054054054,
+    "p50": 602.0,
+    "p95": 831.0,
+    "p99": 930.0,
+    "max": 1006.0
+   },
+   "mt_order_wait": {
+    "count": 592,
+    "mean": 0.10186524324324325,
+    "p50": 0.000733,
+    "p95": 0.001104,
+    "p99": 0.001426,
+    "max": 41.654053000000005
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 808.5240096874994,
+    "p50": 756.647078,
+    "p95": 1356.024645,
+    "p99": 1591.587614,
+    "max": 1967.749119
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 11.081104163194444,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 512.1171429999999,
+    "max": 768.921034
+   },
+   "stt_result_publish": {
+    "count": 595,
+    "mean": 0.00914388907563024,
+    "p50": 0.008127,
+    "p95": 0.011184,
+    "p99": 0.032983,
+    "max": 0.229772
+   },
+   "tts_first_audio": {
+    "count": 592,
+    "mean": 185.35690775675675,
+    "p50": 179.55102300000001,
+    "p95": 262.24356900000004,
+    "p99": 323.59227699999997,
+    "max": 348.736687
+   },
+   "tts_slot_wait": {
+    "count": 592,
+    "mean": 0.0004039375000000001,
+    "p50": 0.00030199999999999997,
+    "p95": 0.000551,
+    "p99": 0.000682,
+    "max": 0.087371
+   },
+   "tts_synthesis": {
+    "count": 592,
+    "mean": 1318.569362324325,
+    "p50": 1330.43556,
+    "p95": 1452.4230739999998,
+    "p99": 1499.417813,
+    "max": 1515.509985
+   }
+  }
+ },
+ "B_default_seed7": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 7,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": true,
+   "tts_prewarm": true,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.614329279,
+  "cpu_secs": 5.16,
+  "cpu_percent_of_one_core": 5.511976681071532,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 620,
+  "captions_published": 1223,
+  "chain": {
+   "dub_chunks_published": 13960,
+   "translated_captions": 603,
+   "translate_results": 603,
+   "tts_results": 603,
+   "system_events": 0,
+   "tts_contexts_opened": 422,
+   "tts_cold_opens": 90,
+   "prewarm_started": 422,
+   "prewarm_claimed": 414,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 302,
+    "mean": 459.1657686854304,
+    "p50": 441.053383,
+    "p95": 776.692361,
+    "p99": 878.558026,
+    "max": 1228.6081900000001
+   },
+   "e2e_first_caption": {
+    "count": 302,
+    "mean": 43.3902112218543,
+    "p50": 0.0,
+    "p95": 338.42708100000004,
+    "p99": 555.655371,
+    "max": 773.519342
+   },
+   "e2e_first_dub_audio": {
+    "count": 302,
+    "mean": 374.73933843046353,
+    "p50": 159.16530500000002,
+    "p95": 1206.748532,
+    "p99": 1475.399012,
+    "max": 1632.962783
+   },
+   "e2e_first_translated_caption": {
+    "count": 302,
+    "mean": 274.3397404735099,
+    "p50": 0.0,
+    "p95": 1033.825341,
+    "p99": 1241.3382040000001,
+    "max": 1410.88591
+   },
+   "e2e_last_dub_audio": {
+    "count": 302,
+    "mean": 1666.309947933775,
+    "p50": 1639.046053,
+    "p95": 2527.758365,
+    "p99": 2687.312892,
+    "max": 2974.1204049999997
+   },
+   "endpoint_decision": {
+    "count": 291,
+    "mean": 562.9984564123706,
+    "p50": 579.960624,
+    "p95": 580.8605580000001,
+    "p99": 581.217163,
+    "max": 591.309116
+   },
+   "mt_done": {
+    "count": 603,
+    "mean": 693.7611940298508,
+    "p50": 690.0,
+    "p95": 911.0,
+    "p99": 1002.0,
+    "max": 1081.0
+   },
+   "mt_first_token": {
+    "count": 603,
+    "mean": 612.6583747927032,
+    "p50": 609.0,
+    "p95": 830.0,
+    "p99": 922.0,
+    "max": 1001.0
+   },
+   "mt_order_wait": {
+    "count": 603,
+    "mean": 1.0202298126036484,
+    "p50": 0.0007959999999999999,
+    "p95": 0.00116,
+    "p99": 0.0015480000000000001,
+    "max": 221.576719
+   },
+   "stt_final": {
+    "count": 302,
+    "mean": 834.3471785496686,
+    "p50": 811.085734,
+    "p95": 1375.213489,
+    "p99": 1596.896725,
+    "max": 1798.1854560000002
+   },
+   "stt_first_text": {
+    "count": 302,
+    "mean": 5.685212990066225,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 211.960373,
+    "max": 475.480949
+   },
+   "stt_result_publish": {
+    "count": 620,
+    "mean": 0.00909654516129033,
+    "p50": 0.008123,
+    "p95": 0.011665,
+    "p99": 0.03077,
+    "max": 0.115548
+   },
+   "tts_first_audio": {
+    "count": 603,
+    "mean": 185.1890286417911,
+    "p50": 179.987109,
+    "p95": 261.611539,
+    "p99": 296.269336,
+    "max": 354.948935
+   },
+   "tts_slot_wait": {
+    "count": 603,
+    "mean": 0.0002348623548922054,
+    "p50": 0.000276,
+    "p95": 0.000493,
+    "p99": 0.0006360000000000001,
+    "max": 0.003771
+   },
+   "tts_synthesis": {
+    "count": 603,
+    "mean": 1319.194891414595,
+    "p50": 1333.786492,
+    "p95": 1453.812229,
+    "p99": 1490.5221179999999,
+    "max": 1521.356426
+   }
+  }
+ }
+}

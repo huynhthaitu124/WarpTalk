@@ -79,7 +79,10 @@ async fn sentence_hint_cuts_the_hangover_when_enabled() {
         .iter()
         .map(|s| (s.text.as_str(), s.is_early, s.utterance_end))
         .collect();
-    assert_eq!(texts[0], ("The closing part of turn 0 said here.", true, false));
+    assert_eq!(
+        texts[0],
+        ("The closing part of turn 0 said here.", true, false)
+    );
     assert!(
         segs.last().unwrap().utterance_end,
         "end marker closes the turn"

@@ -43,8 +43,8 @@ use warptalk_telemetry::{LogFormat, init_metrics, init_tracing};
 use warptalk_tts::testing::{FakeCatalog, FakeCloner};
 use warptalk_tts::{
     CartesiaCatalog, CartesiaSynthesizer, CartesiaVoiceCloner, CatalogVoice, CloneRequest,
-    InMemoryTtsCache, RedisTtsCache, TtsCache, TtsConfig, TtsError, VoiceCatalogProvider,
-    VoiceCloner,
+    InMemoryTtsCache, RedisTtsCache, Synthesizer, TtsCache, TtsConfig, TtsError,
+    VoiceCatalogProvider, VoiceCloner,
 };
 
 #[tokio::main]
@@ -257,6 +257,35 @@ impl VoiceCloner for NoCloner {
     }
 }
 
+/// The Cartesia-backed TTS pieces, or inert ones when no key is configured.
+struct TtsParts {
+    synthesizer: Option<Arc<dyn Synthesizer>>,
+    catalog: Arc<dyn VoiceCatalogProvider>,
+    cloner: Arc<dyn VoiceCloner>,
+}
+
+async fn build_tts(app: &AppConfig) -> anyhow::Result<TtsParts> {
+    let Some(key) = &app.cartesia_api_key else {
+        warn!("CARTESIA_API_KEY not set: translated captions only, no dub");
+        return Ok(TtsParts {
+            synthesizer: None,
+            catalog: Arc::new(NoCatalog),
+            cloner: Arc::new(NoCloner),
+        });
+    };
+    let client = Arc::new(
+        CartesiaClient::new(CartesiaConfig::new(key.clone()))
+            .context("building the Cartesia client")?,
+    );
+    let warm = client.warm_up().await;
+    info!(warm_sockets = warm, "Cartesia TTS ready");
+    Ok(TtsParts {
+        synthesizer: Some(Arc::new(CartesiaSynthesizer::new(client.clone()))),
+        catalog: Arc::new(CartesiaCatalog::new(client.clone())),
+        cloner: Arc::new(CartesiaVoiceCloner::new(client)),
+    })
+}
+
 /// Real providers when their keys are present, fakes behind `PIPELINE_FAKE_PROVIDERS`, else
 /// `None` (STT only). MT needs `OPENAI_API_KEY`; the dub additionally needs `CARTESIA_API_KEY`
 /// (without it the chain stops at translated captions).
@@ -285,36 +314,14 @@ async fn build_providers(
             None
         };
         let translator = Arc::new(OpenAiTranslator::new(mt_rx.clone(), realtime, llm));
-        let (synthesizer, catalog, cloner): (
-            Option<Arc<dyn warptalk_tts::Synthesizer>>,
-            Arc<dyn VoiceCatalogProvider>,
-            Arc<dyn VoiceCloner>,
-        ) = match &app.cartesia_api_key {
-            Some(ck) => {
-                let client = Arc::new(
-                    CartesiaClient::new(CartesiaConfig::new(ck.clone()))
-                        .context("building the Cartesia client")?,
-                );
-                let warm = client.warm_up().await;
-                info!(warm_sockets = warm, "Cartesia TTS ready");
-                (
-                    Some(Arc::new(CartesiaSynthesizer::new(client.clone()))),
-                    Arc::new(CartesiaCatalog::new(client.clone())),
-                    Arc::new(CartesiaVoiceCloner::new(client)),
-                )
-            }
-            None => {
-                warn!("CARTESIA_API_KEY not set: translated captions only, no dub");
-                (None, Arc::new(NoCatalog), Arc::new(NoCloner))
-            }
-        };
+        let tts = build_tts(app).await?;
         return Ok(Some(Providers {
             translator,
             glossary: Arc::new(InMemoryGlossary::new()),
             context: Arc::new(NoContext),
-            synthesizer,
-            catalog,
-            cloner,
+            synthesizer: tts.synthesizer,
+            catalog: tts.catalog,
+            cloner: tts.cloner,
             tts_cache: cache(true),
         }));
     }

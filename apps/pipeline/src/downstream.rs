@@ -374,12 +374,11 @@ impl TurnE2e {
         }
         if self.ended
             && let Some(last) = self.last_seg
+            && let Some(&chunk) = self.final_chunk.get(&last)
         {
-            if let Some(&chunk) = self.final_chunk.get(&last) {
-                for ((seg, idx, lang), at) in &self.seg_first_dub {
-                    if *seg == last && *idx == chunk && self.rec_last.insert(lang.clone()) {
-                        record_stage_latency(STAGE_E2E_LAST_DUB, ms(*at));
-                    }
+            for ((seg, idx, lang), at) in &self.seg_first_dub {
+                if *seg == last && *idx == chunk && self.rec_last.insert(lang.clone()) {
+                    record_stage_latency(STAGE_E2E_LAST_DUB, ms(*at));
                 }
             }
         }

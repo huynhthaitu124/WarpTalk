@@ -885,8 +885,10 @@ mod tests {
 
     #[test]
     fn hint_config_validation() {
-        let mut c = EndpointerConfig::default();
-        c.vad_sentence_hint_hangover_ms = 577;
+        let mut c = EndpointerConfig {
+            vad_sentence_hint_hangover_ms: 577,
+            ..EndpointerConfig::default()
+        };
         assert!(c.validate().is_err());
         c.vad_sentence_hint_hangover_ms = 250;
         assert!(c.validate().is_ok());

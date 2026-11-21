@@ -1,0 +1,352 @@
+{
+ "A_0_baseline": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 2000,
+   "pause_ms": 3000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 4000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": false,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 93.323421326,
+  "cpu_secs": 3.06,
+  "cpu_percent_of_one_core": 3.278919650095898,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 292,
+  "captions_published": 584,
+  "chain": {
+   "dub_chunks_published": 6264,
+   "translated_captions": 292,
+   "translate_results": 292,
+   "tts_results": 292,
+   "system_events": 0,
+   "tts_contexts_opened": 292,
+   "tts_cold_opens": 52,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 292,
+    "mean": 488.6759783424659,
+    "p50": 467.615678,
+    "p95": 814.768919,
+    "p99": 1079.1373259999998,
+    "max": 1324.792424
+   },
+   "e2e_first_caption": {
+    "count": 292,
+    "mean": 488.6759783424659,
+    "p50": 467.615678,
+    "p95": 814.768919,
+    "p99": 1079.1373259999998,
+    "max": 1324.792424
+   },
+   "e2e_first_dub_audio": {
+    "count": 292,
+    "mean": 2393.6924840821916,
+    "p50": 2360.862326,
+    "p95": 3079.656107,
+    "p99": 3387.795278,
+    "max": 3553.835222
+   },
+   "e2e_first_translated_caption": {
+    "count": 292,
+    "mean": 2119.9581438184928,
+    "p50": 2111.042768,
+    "p95": 2722.133919,
+    "p99": 2911.4544589999996,
+    "max": 3209.556039
+   },
+   "e2e_last_dub_audio": {
+    "count": 292,
+    "mean": 2393.6924840821916,
+    "p50": 2360.862326,
+    "p95": 3079.656107,
+    "p99": 3387.795278,
+    "max": 3553.835222
+   },
+   "endpoint_decision": {
+    "count": 283,
+    "mean": 614.1342116819789,
+    "p50": 580.094378,
+    "p95": 860.3402570000001,
+    "p99": 880.0892230000001,
+    "max": 880.1564149999999
+   },
+   "mt_done": {
+    "count": 292,
+    "mean": 704.9691780821918,
+    "p50": 691.0,
+    "p95": 944.0,
+    "p99": 1013.0,
+    "max": 1087.0
+   },
+   "mt_first_token": {
+    "count": 292,
+    "mean": 623.8527397260274,
+    "p50": 610.0,
+    "p95": 863.0,
+    "p99": 931.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 292,
+    "mean": 0.0006666883561643833,
+    "p50": 0.00066,
+    "p95": 0.001033,
+    "p99": 0.001163,
+    "max": 0.001597
+   },
+   "stt_final": {
+    "count": 292,
+    "mean": 816.3397981780824,
+    "p50": 781.5799810000001,
+    "p95": 1327.511503,
+    "p99": 1576.550593,
+    "max": 1659.400836
+   },
+   "stt_first_text": {
+    "count": 292,
+    "mean": 46.06230423287673,
+    "p50": 0.0,
+    "p95": 289.980632,
+    "p99": 634.777814,
+    "max": 744.4519750000001
+   },
+   "stt_result_publish": {
+    "count": 292,
+    "mean": 0.00925505821917808,
+    "p50": 0.008539999999999999,
+    "p95": 0.013486,
+    "p99": 0.032735,
+    "max": 0.037506000000000005
+   },
+   "tts_first_audio": {
+    "count": 292,
+    "mean": 273.70847777054786,
+    "p50": 196.175274,
+    "p95": 698.53658,
+    "p99": 745.900956,
+    "max": 824.755134
+   },
+   "tts_slot_wait": {
+    "count": 292,
+    "mean": 0.0003409828767123287,
+    "p50": 0.00032300000000000004,
+    "p95": 0.000538,
+    "p99": 0.000685,
+    "max": 0.000723
+   },
+   "tts_synthesis": {
+    "count": 292,
+    "mean": 1318.8661982431504,
+    "p50": 1240.766018,
+    "p95": 1755.607519,
+    "p99": 1817.847965,
+    "max": 1899.0618929999998
+   }
+  }
+ },
+ "B_0_baseline": {
+  "config": {
+   "rooms": 4,
+   "speakers": 4,
+   "seconds": 90,
+   "seed": 42,
+   "stt_p50_ms": 774.0,
+   "stt_p95_ms": 1300.0,
+   "stt_early_ms": 400,
+   "speech_ms": 3000,
+   "pause_ms": 2000,
+   "sample_rate_hz": 48000,
+   "frame_ms": 20,
+   "chain": true,
+   "target_languages": 1,
+   "speech_jitter": 0.3,
+   "sentence_ms": 2000,
+   "stt_sentence_lag_p50_ms": 450.0,
+   "stt_sentence_lag_p95_ms": 800.0,
+   "mt_p50_ms": 685.0,
+   "mt_p95_ms": 900.0,
+   "mt_batch_p50_ms": 800.0,
+   "tts_warm_p50_ms": 180.0,
+   "tts_cold_extra_ms": 490.0,
+   "tts_cold_probability": 0.2,
+   "tts_concurrency": 16,
+   "early_endpoint_ms": 0,
+   "early_mt": false,
+   "tts_prewarm": false,
+   "stage_capacity": 64,
+   "workers": null
+  },
+  "wall_secs": 95.526947965,
+  "cpu_secs": 4.36,
+  "cpu_percent_of_one_core": 4.5641571230742715,
+  "audio_seconds_total": 1440.0,
+  "frames_dropped": 0,
+  "media_events_dropped": 0,
+  "stt_results_published": 605,
+  "captions_published": 1210,
+  "chain": {
+   "dub_chunks_published": 13988,
+   "translated_captions": 605,
+   "translate_results": 605,
+   "tts_results": 605,
+   "system_events": 0,
+   "tts_contexts_opened": 279,
+   "tts_cold_opens": 40,
+   "prewarm_started": 0,
+   "prewarm_claimed": 0,
+   "prewarm_expired": 0
+  },
+  "stages": {
+   "e2e_final_caption": {
+    "count": 288,
+    "mean": 480.4809929722222,
+    "p50": 454.696265,
+    "p95": 803.09648,
+    "p99": 1110.937625,
+    "max": 1173.84779
+   },
+   "e2e_first_caption": {
+    "count": 288,
+    "mean": 23.556470309027777,
+    "p50": 0.0,
+    "p95": 154.82101600000001,
+    "p99": 609.0340749999999,
+    "max": 780.369157
+   },
+   "e2e_first_dub_audio": {
+    "count": 288,
+    "mean": 2239.306219788194,
+    "p50": 2203.1942080000003,
+    "p95": 2919.6563929999998,
+    "p99": 3224.512394,
+    "max": 3841.386435
+   },
+   "e2e_first_translated_caption": {
+    "count": 288,
+    "mean": 1969.2405652222212,
+    "p50": 1978.645019,
+    "p95": 2537.0163850000004,
+    "p99": 2766.234306,
+    "max": 3015.297173
+   },
+   "e2e_last_dub_audio": {
+    "count": 288,
+    "mean": 3761.239629295142,
+    "p50": 3714.823565,
+    "p95": 4663.788155,
+    "p99": 5242.670078,
+    "max": 5546.28279
+   },
+   "endpoint_decision": {
+    "count": 277,
+    "mean": 551.567497606498,
+    "p50": 579.924863,
+    "p95": 580.834443,
+    "p99": 581.468848,
+    "max": 585.120749
+   },
+   "mt_done": {
+    "count": 605,
+    "mean": 756.9851239669422,
+    "p50": 740.0,
+    "p95": 1038.0,
+    "p99": 1277.0,
+    "max": 1386.0
+   },
+   "mt_first_token": {
+    "count": 294,
+    "mean": 612.8367346938776,
+    "p50": 600.0,
+    "p95": 833.0,
+    "p99": 914.0,
+    "max": 1005.0
+   },
+   "mt_order_wait": {
+    "count": 294,
+    "mean": 0.0006420306122448981,
+    "p50": 0.0006349999999999999,
+    "p95": 0.001064,
+    "p99": 0.001193,
+    "max": 0.001246
+   },
+   "stt_final": {
+    "count": 288,
+    "mean": 800.8322488854162,
+    "p50": 768.865847,
+    "p95": 1274.998771,
+    "p99": 1469.0229000000002,
+    "max": 1596.348872
+   },
+   "stt_first_text": {
+    "count": 288,
+    "mean": 9.517363552083332,
+    "p50": 0.0,
+    "p95": 0.0,
+    "p99": 429.84700999999995,
+    "max": 767.941454
+   },
+   "stt_result_publish": {
+    "count": 605,
+    "mean": 0.008470806611570241,
+    "p50": 0.0076690000000000005,
+    "p95": 0.011079,
+    "p99": 0.026485,
+    "max": 0.174758
+   },
+   "tts_first_audio": {
+    "count": 605,
+    "mean": 217.55948208099167,
+    "p50": 184.29179000000002,
+    "p95": 639.4165429999999,
+    "p99": 729.352199,
+    "max": 766.073788
+   },
+   "tts_slot_wait": {
+    "count": 605,
+    "mean": 0.00014233719008264453,
+    "p50": 0.0,
+    "p95": 0.000422,
+    "p99": 0.000597,
+    "max": 0.000696
+   },
+   "tts_synthesis": {
+    "count": 603,
+    "mean": 1354.4120618374773,
+    "p50": 1341.2054289999999,
+    "p95": 1829.880152,
+    "p99": 1915.38005,
+    "max": 1987.9774189999998
+   }
+  }
+ }
+}
