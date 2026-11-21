@@ -20,9 +20,9 @@ test.describe('macOS WebView shell', () => {
     expect(running).toBe(0);
   });
 
-  test('WV-03 narrow viewport uses a navigation drawer', async ({ app }) => {
+  test('WV-03 narrow viewport uses a navigation drawer', async ({ app, workspace }) => {
     await app.setViewportSize({ width: 390, height: 800 });
-    await app.goto('/rooms');
+    await app.goto(`/${workspace.slug}/meetings`);
     await expect(app.getByRole('complementary', { name: 'Sidebar' })).toBeHidden();
     await app.getByRole('button', { name: 'Open navigation' }).click();
     const drawer = app.getByRole('dialog', { name: 'Navigation' });
@@ -32,9 +32,9 @@ test.describe('macOS WebView shell', () => {
     await expect(drawer).toHaveCount(0);
   });
 
-  test('WV-04 mobile drawer is a real dialog: focus trap, Escape, focus return (A11Y-04)', async ({ app }) => {
+  test('WV-04 mobile drawer is a real dialog: focus trap, Escape, focus return (A11Y-04)', async ({ app, workspace }) => {
     await app.setViewportSize({ width: 390, height: 800 });
-    await app.goto('/');
+    await app.goto(`/${workspace.slug}/home`);
     await expect(app.getByTestId('current-workspace')).toBeHidden();
     const opener = app.getByRole('button', { name: 'Open navigation' });
     await opener.focus();
@@ -54,9 +54,9 @@ test.describe('macOS WebView shell', () => {
     await expect(opener).toBeFocused();
   });
 
-  test('WV-05 mobile drawer closes from its button and on the overlay', async ({ app }) => {
+  test('WV-05 mobile drawer closes from its button and on the overlay', async ({ app, workspace }) => {
     await app.setViewportSize({ width: 390, height: 800 });
-    await app.goto('/');
+    await app.goto(`/${workspace.slug}/home`);
     await app.getByRole('button', { name: 'Open navigation' }).click();
     await app.getByRole('button', { name: 'Close menu' }).click();
     await expect(app.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0);

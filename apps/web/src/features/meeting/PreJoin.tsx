@@ -53,7 +53,7 @@ function Preview({ preview, name }: { preview: MediaPreview; name: string }) {
         onClick={() => preview.setCamOn(!preview.camOn)}
       >
         {preview.camOn ? <Camera className="size-4" aria-hidden /> : <CameraSlash className="size-4" aria-hidden />}
-        {preview.camOn ? 'Camera on' : 'Camera off'}
+        {preview.camOn ? 'Turn camera off' : 'Turn camera on'}
       </Button>
     </div>
   );
