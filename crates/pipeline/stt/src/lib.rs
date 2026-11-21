@@ -28,6 +28,7 @@
 //! Protocol types and the documentation URL: [`protocol`].
 
 mod config;
+pub mod far_side_dedupe;
 mod pool;
 pub mod protocol;
 pub mod sentence;
