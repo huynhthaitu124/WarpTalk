@@ -9,3 +9,4 @@ obj/
 
 # Rust
 target/
+dump.rdb

@@ -21,3 +21,7 @@ warptalk-db = { workspace = true }
 warptalk-bus = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-transcript = { workspace = true }
+
+[dev-dependencies]
+warptalk-workspace = { workspace = true }
+warptalk-room = { workspace = true }
