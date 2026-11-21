@@ -264,7 +264,9 @@ impl TtsConfig {
         }
         let c = &self.catch_up;
         if c.full_lag_ms <= c.on_time_ms || c.max_speed < 1.0 || c.max_speed > self.speed.max {
-            return bad("catch_up: need on_time_ms < full_lag_ms and 1.0 <= max_speed <= speed.max");
+            return bad(
+                "catch_up: need on_time_ms < full_lag_ms and 1.0 <= max_speed <= speed.max",
+            );
         }
         if self.cache.replay_chunk_ms == 0 {
             return bad("cache.replay_chunk_ms must be > 0");

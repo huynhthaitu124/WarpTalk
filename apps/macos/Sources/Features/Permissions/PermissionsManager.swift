@@ -47,6 +47,16 @@ final class PermissionsManager: ObservableObject {
 
     /// Triggers the system "audio recording" prompt by briefly creating a tap on the first available meeting
     /// app (or reports what happened). Real status is only known after an actual start.
+    /// JSON-ready snapshot for the web bridge. Values: granted | denied | notDetermined | unknown.
+    func snapshot() -> [String: String] {
+        refresh()
+        return ["microphone": Self.wire(microphone), "screenRecording": Self.wire(screenRecording), "audioCapture": Self.wire(audioCapture)]
+    }
+
+    static func wire(_ s: PermissionStatus) -> String {
+        switch s { case .granted: return "granted"; case .denied: return "denied"; case .notDetermined: return "notDetermined"; case .unknown: return "unknown" }
+    }
+
     func recordAudioCaptureResult(success: Bool) { audioCapture = success ? .granted : .denied }
 
     // Deep links (System Settings, macOS 13+/14).
@@ -56,6 +66,17 @@ final class PermissionsManager: ObservableObject {
         // VERIFY: pane id for "Audio Recording"/system audio is Privacy_AudioCapture on 14.2+; falls back to Privacy root.
         case audioCapture = "Privacy_AudioCapture"
         case privacy = "Privacy"
+
+        /// Wire names used by the JS bridge: microphone | screenRecording | audioCapture | privacy.
+        static func from(wire: String) -> Pane? {
+            switch wire {
+            case "microphone": return .microphone
+            case "screenRecording": return .screenRecording
+            case "audioCapture": return .audioCapture
+            case "privacy": return .privacy
+            default: return nil
+            }
+        }
     }
 
     func open(_ pane: Pane) {

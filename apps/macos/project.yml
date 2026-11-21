@@ -46,7 +46,8 @@ targets:
         NSMicrophoneUsageDescription: "WarpTalk dùng micro của bạn để gửi giọng nói vào phòng dịch trực tiếp."
         NSAudioCaptureUsageDescription: "WarpTalk ghi lại âm thanh của ứng dụng họp (Chrome, Zoom, Teams...) để dịch cuộc họp bên ngoài."
         NSScreenCaptureUsageDescription: "WarpTalk chỉ dùng quyền Ghi màn hình (phương án dự phòng) để lấy âm thanh của ứng dụng họp, không lưu hình ảnh."
-        # DEMO ONLY: allow plain http/ws to a dev backend / LiveKit. Remove for production (use https/wss).
+        # DEMO ONLY: allow plain http/ws to the Vite dev server (http://localhost:5173), the backend and LiveKit.
+        # Remove for production (https/wss only).
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     entitlements:

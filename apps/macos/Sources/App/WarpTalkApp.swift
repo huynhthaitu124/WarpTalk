@@ -6,18 +6,20 @@ struct WarpTalkApp: App {
 
     var body: some Scene {
         WindowGroup("WarpTalk") {
-            RootView()
-                .environmentObject(app)
-                .environmentObject(app.settings)
-                .environmentObject(app.captions)
-                .environmentObject(app.permissions)
-                .frame(minWidth: 960, minHeight: 640)
+            WebContainerView()
+                .environmentObject(app.web)
+                .frame(minWidth: 1000, minHeight: 680)
         }
         .commands {
-            CommandGroup(after: .windowArrangement) {
-                Button("Bật/tắt Overlay phụ đề") { app.overlay.toggle() }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
+            CommandGroup(after: .toolbar) {
+                Button("Tải lại web") { app.web.reload() }.keyboardShortcut("r", modifiers: .command)
+                Button("Bật/tắt Overlay phụ đề") { app.overlay.toggle() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }
+        }
+        Settings {
+            SettingsView()
+                .environmentObject(app.settings)
+                .environmentObject(app.web)
         }
     }
 }

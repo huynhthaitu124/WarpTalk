@@ -100,7 +100,10 @@ mod tests {
         let mut f = DubFit::NONE;
         assert!((speed_center(f, &c) - 1.0).abs() < 1e-6);
         f = observe(f, 2000, 2600, &c); // 1.3
-        assert!((speed_center(f, &c) - 1.0).abs() < 1e-6, "one sample is not a fit");
+        assert!(
+            (speed_center(f, &c) - 1.0).abs() < 1e-6,
+            "one sample is not a fit"
+        );
         f = observe(f, 2000, 2600, &c);
         assert!((speed_center(f, &c) - 1.25).abs() < 1e-6, "clamped to 1.25");
         let kept = observe(f, 100, 5000, &c);
@@ -108,7 +111,10 @@ mod tests {
         assert_eq!(observe(f, 1000, 9000, &c), f, "implausible: skipped");
         let slow = observe(DubFit::NONE, 2000, 1000, &c);
         let slow = observe(slow, 2000, 1000, &c);
-        assert!((speed_center(slow, &c) - 0.8).abs() < 1e-6, "clamped to 0.8");
+        assert!(
+            (speed_center(slow, &c) - 0.8).abs() < 1e-6,
+            "clamped to 0.8"
+        );
     }
 
     #[test]

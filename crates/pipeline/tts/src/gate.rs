@@ -60,7 +60,11 @@ impl SlotGate {
 
 impl Drop for SlotPermit {
     fn drop(&mut self) {
-        let mut s = self.gate.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut s = self
+            .gate
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         s.1 = s.1.saturating_sub(1);
         drop(s);
         self.gate.notify.notify_waiters();
@@ -86,6 +90,6 @@ mod tests {
         assert!(waited >= Duration::from_millis(30));
         drop(p1);
         tokio::time::sleep(Duration::from_millis(10)).await;
-        assert_eq!(g.in_use(), 0 + usize::from(false));
+        assert_eq!(g.in_use(), 0);
     }
 }

@@ -23,7 +23,11 @@ pub fn cache_key(
     sample_rate: u32,
     cfg: &GenConfig,
 ) -> String {
-    let normalized = text.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut material =
         format!("{speaker}|{target_lang}|{normalized}|{voice_mode}:{voice_id}|sr={sample_rate}");
     if !cfg.is_empty() {
@@ -57,7 +61,10 @@ impl InMemoryTtsCache {
     }
 
     pub fn len(&self) -> usize {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner).len()
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -91,7 +98,10 @@ impl TtsCache for InMemoryTtsCache {
         if s.len() >= self.max_entries {
             s.retain(|_, (exp, _)| *exp > now);
             if s.len() >= self.max_entries
-                && let Some(k) = s.iter().min_by_key(|(_, (e, _))| *e).map(|(k, _)| k.clone())
+                && let Some(k) = s
+                    .iter()
+                    .min_by_key(|(_, (e, _))| *e)
+                    .map(|(k, _)| k.clone())
             {
                 s.remove(&k);
             }
@@ -121,7 +131,11 @@ impl RedisTtsCache {
 impl TtsCache for RedisTtsCache {
     async fn get(&self, key: &str) -> Option<CachedAudio> {
         let mut c = self.conn.clone();
-        match redis::cmd("GET").arg(key).query_async::<Option<Vec<u8>>>(&mut c).await {
+        match redis::cmd("GET")
+            .arg(key)
+            .query_async::<Option<Vec<u8>>>(&mut c)
+            .await
+        {
             Ok(v) => v.and_then(|b| CachedAudio::decode(&b)),
             Err(e) => {
                 warn!(error = %e, "tts cache get failed");
@@ -154,15 +168,30 @@ mod tests {
         let g = GenConfig::default();
         let a = cache_key("s", "vi", "Hello  World", "standard", "v1", 44100, &g);
         assert!(a.starts_with("tts:cache:") && a.len() == "tts:cache:".len() + 64);
-        assert_eq!(a, cache_key("s", "vi", "hello world", "standard", "v1", 44100, &g));
-        assert_ne!(a, cache_key("s", "vi", "hello world", "cloned", "v1", 44100, &g));
-        assert_ne!(a, cache_key("s", "vi", "hello world", "standard", "v2", 44100, &g));
-        assert_ne!(a, cache_key("s", "vi", "hello world", "standard", "v1", 24000, &g));
+        assert_eq!(
+            a,
+            cache_key("s", "vi", "hello world", "standard", "v1", 44100, &g)
+        );
+        assert_ne!(
+            a,
+            cache_key("s", "vi", "hello world", "cloned", "v1", 44100, &g)
+        );
+        assert_ne!(
+            a,
+            cache_key("s", "vi", "hello world", "standard", "v2", 44100, &g)
+        );
+        assert_ne!(
+            a,
+            cache_key("s", "vi", "hello world", "standard", "v1", 24000, &g)
+        );
         let fast = GenConfig {
             speed: Some(1.2),
             ..GenConfig::default()
         };
-        assert_ne!(a, cache_key("s", "vi", "hello world", "standard", "v1", 44100, &fast));
+        assert_ne!(
+            a,
+            cache_key("s", "vi", "hello world", "standard", "v1", 44100, &fast)
+        );
     }
 
     #[test]
