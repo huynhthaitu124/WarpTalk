@@ -212,12 +212,12 @@ pub fn normalize_meeting_ref(
             let digits: String = if is_url {
                 let rest = path_after_host(no_query);
                 let (host, path) = rest.split_once('/').unwrap_or((rest.as_str(), ""));
-                if !(host.eq_ignore_ascii_case("zoom.us") || host.to_ascii_lowercase().ends_with(".zoom.us")) {
+                if !(host.eq_ignore_ascii_case("zoom.us")
+                    || host.to_ascii_lowercase().ends_with(".zoom.us"))
+                {
                     return Err(InvalidMeetingRef("not a Zoom URL"));
                 }
-                path.trim_start_matches("j/")
-                    .trim_matches('/')
-                    .to_owned()
+                path.trim_start_matches("j/").trim_matches('/').to_owned()
             } else {
                 no_query.chars().filter(|c| !c.is_whitespace()).collect()
             };
@@ -252,11 +252,7 @@ mod tests {
         Utc.timestamp_opt(1_800_000_000 + s, 0).unwrap()
     }
 
-    fn lease(
-        lease_at: i64,
-        flowing: Option<bool>,
-        last_audio: Option<i64>,
-    ) -> CapturerLease {
+    fn lease(lease_at: i64, flowing: Option<bool>, last_audio: Option<i64>) -> CapturerLease {
         CapturerLease {
             user_id: Some(Uuid::nil()),
             lease_at: Some(t(lease_at)),
@@ -323,7 +319,12 @@ mod tests {
         ] {
             assert_eq!(normalize_meeting_ref(p, i).unwrap(), "abc-defg-hij", "{i}");
         }
-        for i in ["", "abcdefghij", "https://example.com/abc-defg-hij", "ab-defg-hij"] {
+        for i in [
+            "",
+            "abcdefghij",
+            "https://example.com/abc-defg-hij",
+            "ab-defg-hij",
+        ] {
             assert!(normalize_meeting_ref(p, i).is_err(), "{i}");
         }
     }
@@ -331,7 +332,10 @@ mod tests {
     #[test]
     fn zoom_and_teams_refs() {
         let z = BridgeProvider::Zoom;
-        assert_eq!(normalize_meeting_ref(z, "123 4567 8901").unwrap(), "12345678901");
+        assert_eq!(
+            normalize_meeting_ref(z, "123 4567 8901").unwrap(),
+            "12345678901"
+        );
         assert_eq!(
             normalize_meeting_ref(z, "https://us02web.zoom.us/j/12345678901?pwd=x").unwrap(),
             "12345678901"
@@ -339,8 +343,11 @@ mod tests {
         assert!(normalize_meeting_ref(z, "12").is_err());
         let tm = BridgeProvider::Teams;
         assert_eq!(
-            normalize_meeting_ref(tm, "https://Teams.Microsoft.com/l/meetup-join/19%3Aabc/0?context=1")
-                .unwrap(),
+            normalize_meeting_ref(
+                tm,
+                "https://Teams.Microsoft.com/l/meetup-join/19%3Aabc/0?context=1"
+            )
+            .unwrap(),
             "https://teams.microsoft.com/l/meetup-join/19%3Aabc/0"
         );
         assert!(normalize_meeting_ref(tm, "abc").is_err());

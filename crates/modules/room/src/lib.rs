@@ -20,15 +20,23 @@ use warptalk_web::JwtKeys;
 
 use application::ports::{RoomEventPublisher, RoomRepo, VoiceConsentDirectory, WorkspacePolicy};
 use application::service::RoomService;
+pub use domain::BridgeConfig;
 use infrastructure::pg_repo::PgRoomRepo;
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "room",
-    migrations: &[Migration {
-        version: 1,
-        name: "init",
-        sql: include_str!("../migrations/0001_init.sql"),
-    }],
+    migrations: &[
+        Migration {
+            version: 1,
+            name: "init",
+            sql: include_str!("../migrations/0001_init.sql"),
+        },
+        Migration {
+            version: 2,
+            name: "external_bridge",
+            sql: include_str!("../migrations/0002_external_bridge.sql"),
+        },
+    ],
 };
 
 pub struct RoomDeps {
@@ -44,22 +52,45 @@ pub struct RoomModule {
     service: Arc<RoomService>,
     repo: Arc<dyn RoomRepo>,
     jwt: JwtKeys,
+    clock: Arc<dyn Clock>,
+    workspace: Arc<dyn WorkspacePolicy>,
+    events: Arc<dyn RoomEventPublisher>,
+    bridge: BridgeConfig,
 }
 
 impl RoomModule {
     pub fn new(deps: RoomDeps) -> Self {
         let repo: Arc<dyn RoomRepo> = Arc::new(PgRoomRepo::new(deps.pool, deps.consent));
+        let bridge = BridgeConfig::default();
         let service = Arc::new(RoomService::new(
             repo.clone(),
-            deps.workspace,
-            deps.events,
-            deps.clock,
+            deps.workspace.clone(),
+            deps.events.clone(),
+            deps.clock.clone(),
+            bridge,
         ));
         Self {
             service,
             repo,
             jwt: deps.jwt,
+            clock: deps.clock,
+            workspace: deps.workspace,
+            events: deps.events,
+            bridge,
         }
+    }
+
+    /// Override the bridge timings (defaults: heartbeat 15 s, stale after 45 s).
+    pub fn with_bridge_config(mut self, cfg: BridgeConfig) -> Self {
+        self.bridge = cfg;
+        self.service = Arc::new(RoomService::new(
+            self.repo.clone(),
+            self.workspace.clone(),
+            self.events.clone(),
+            self.clock.clone(),
+            cfg,
+        ));
+        self
     }
 
     /// Routes relative to the API prefix (`/api/v1`), state applied.
@@ -74,6 +105,8 @@ impl RoomModule {
     pub fn queries(&self) -> RoomQueries {
         RoomQueries {
             repo: self.repo.clone(),
+            clock: self.clock.clone(),
+            bridge: self.bridge,
         }
     }
 }
@@ -82,6 +115,8 @@ impl RoomModule {
 #[derive(Clone)]
 pub struct RoomQueries {
     repo: Arc<dyn RoomRepo>,
+    clock: Arc<dyn Clock>,
+    bridge: BridgeConfig,
 }
 
 impl RoomQueries {
@@ -101,6 +136,19 @@ impl RoomQueries {
             host_id: r.host_id,
             effective_host_id: r.effective_host(),
             status: r.status.as_str().to_owned(),
+        }))
+    }
+
+    /// Bridge facts of an `EXTERNAL_BRIDGE` room; `None` for native or unknown rooms.
+    pub async fn bridge_info(&self, room: RoomId) -> AppResult<Option<BridgeInfo>> {
+        let now = self.clock.now();
+        Ok(self.repo.get(room).await?.and_then(|r| {
+            r.bridge.map(|b| BridgeInfo {
+                provider: b.provider.as_str().to_owned(),
+                capturer_user_id: b.lease.user_id.map(UserId::from),
+                capturer_stale: b.lease.is_stale(now, &self.bridge),
+                audio_mode: b.audio_mode.as_str().to_owned(),
+            })
         }))
     }
 
@@ -131,6 +179,15 @@ pub struct RoomSummary {
     /// `COALESCE(active_host_id, host_id)`.
     pub effective_host_id: UserId,
     pub status: String,
+}
+
+/// Read-only bridge facts (`provider`: `google_meet|zoom|teams`; `audio_mode`: `voice|text`).
+#[derive(Debug, Clone)]
+pub struct BridgeInfo {
+    pub provider: String,
+    pub capturer_user_id: Option<UserId>,
+    pub capturer_stale: bool,
+    pub audio_mode: String,
 }
 
 /// Read-only participant facts (`status` is e.g. `WAITING`, `CONNECTED`).

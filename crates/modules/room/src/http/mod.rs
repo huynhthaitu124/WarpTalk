@@ -31,6 +31,22 @@ pub fn router(state: AppState) -> Router {
             post(handlers::create).get(handlers::list),
         )
         .route("/translation-rooms/join", post(handlers::join_by_code))
+        .route(
+            "/translation-rooms/bridge/claim",
+            post(handlers::bridge_claim),
+        )
+        .route(
+            "/translation-rooms/{id}/bridge/capturer/heartbeat",
+            post(handlers::bridge_heartbeat),
+        )
+        .route(
+            "/translation-rooms/{id}/bridge/capturer/takeover",
+            post(handlers::bridge_takeover),
+        )
+        .route(
+            "/translation-rooms/{id}/bridge/audio-mode",
+            put(handlers::bridge_audio_mode),
+        )
         .route("/translation-rooms/{id}", get(handlers::get_one))
         .route("/translation-rooms/{id}/join", post(handlers::join_by_id))
         .route("/translation-rooms/{id}/start", post(handlers::start))

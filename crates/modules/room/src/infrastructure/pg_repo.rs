@@ -18,13 +18,32 @@ use warptalk_kernel::{
 };
 
 use crate::application::ports::{
-    Caller, JoinInput, Mutation, NewRoom, ParticipantRecord, RoomRecord, RoomRepo,
-    VoiceConsentDirectory,
+    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
+    ParticipantRecord, RoomRecord, RoomRepo, VoiceConsentDirectory,
 };
 use crate::domain::{
-    self, DomainError, ExistingRoute, ParticipantStatus, RoomAction, RoomStatus, RouteSpeaker,
-    plan_routes, room_languages,
+    self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
+    ExistingRoute, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction, RoomStatus, RoomType,
+    RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes, room_languages,
 };
+
+/// Name of the partial unique index "one open bridge room per workspace + provider + meeting".
+pub const OPEN_BRIDGE_INDEX: &str = "ux_translation_rooms_open_bridge_meeting";
+pub const OPEN_BRIDGE_CONFLICT: &str = "An open room for this external meeting already exists.";
+
+/// `true` when `e` is a violation of the open-bridge-room unique index.
+pub fn is_open_bridge_violation(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::Database(db)
+        if db.code().as_deref() == Some("23505") && db.constraint() == Some(OPEN_BRIDGE_INDEX))
+}
+
+fn map_bridge_insert_error(e: sqlx::Error) -> AppError {
+    if is_open_bridge_violation(&e) {
+        AppError::conflict("BRIDGE_ROOM_EXISTS", OPEN_BRIDGE_CONFLICT)
+    } else {
+        map_sqlx_error(e)
+    }
+}
 
 pub fn domain_error(e: DomainError) -> AppError {
     match e {
@@ -50,7 +69,10 @@ const ROOM_COLS: &str = "r.id, r.workspace_id, r.host_id, r.active_host_id, r.ti
     r.translation_room_code, r.status, r.source_language, r.target_languages, r.settings, \
     r.scheduled_at, r.started_at, r.ended_at, r.created_at, \
     EXISTS (SELECT 1 FROM translation_room.translation_room_sessions s \
-            WHERE s.translation_room_id = r.id AND s.status = 'ACTIVE') AS has_active_session";
+            WHERE s.translation_room_id = r.id AND s.status = 'ACTIVE') AS has_active_session, \
+    r.translation_room_type, r.bridge_provider, r.bridge_meeting_code, r.bridge_join_url, \
+    r.bridge_capturer_user_id, r.bridge_capturer_since, r.bridge_capturer_lease_at, \
+    r.bridge_audio_flowing, r.bridge_last_audio_at, r.bridge_audio_mode, r.bridge_epoch";
 
 #[derive(sqlx::FromRow)]
 struct RoomRow {
@@ -69,6 +91,17 @@ struct RoomRow {
     ended_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     has_active_session: bool,
+    translation_room_type: String,
+    bridge_provider: Option<String>,
+    bridge_meeting_code: Option<String>,
+    bridge_join_url: Option<String>,
+    bridge_capturer_user_id: Option<Uuid>,
+    bridge_capturer_since: Option<DateTime<Utc>>,
+    bridge_capturer_lease_at: Option<DateTime<Utc>>,
+    bridge_audio_flowing: Option<bool>,
+    bridge_last_audio_at: Option<DateTime<Utc>>,
+    bridge_audio_mode: String,
+    bridge_epoch: i32,
 }
 
 impl RoomRow {
@@ -77,6 +110,29 @@ impl RoomRow {
             .ok_or_else(|| AppError::internal(format!("unknown room status {}", self.status)))?;
         let targets: Vec<String> =
             serde_json::from_value(self.target_languages).unwrap_or_default();
+        let room_type = RoomType::parse(&self.translation_room_type);
+        let bridge = if room_type == RoomType::ExternalBridge {
+            let provider = self
+                .bridge_provider
+                .as_deref()
+                .and_then(BridgeProvider::parse)
+                .ok_or_else(|| AppError::internal("bridge room without a known provider"))?;
+            Some(BridgeState {
+                provider,
+                meeting_code: self.bridge_meeting_code.clone().unwrap_or_default(),
+                join_url: self.bridge_join_url.clone(),
+                lease: CapturerLease {
+                    user_id: self.bridge_capturer_user_id,
+                    lease_at: self.bridge_capturer_lease_at,
+                    audio_flowing: self.bridge_audio_flowing,
+                    last_audio_at: self.bridge_last_audio_at,
+                },
+                audio_mode: AudioMode::parse(&self.bridge_audio_mode).unwrap_or(AudioMode::Voice),
+                epoch: self.bridge_epoch,
+            })
+        } else {
+            None
+        };
         Ok(RoomRecord {
             id: self.id.into(),
             workspace_id: self.workspace_id.into(),
@@ -97,6 +153,8 @@ impl RoomRow {
             ended_at: self.ended_at,
             created_at: self.created_at,
             translation_active: status == RoomStatus::InProgress && self.has_active_session,
+            room_type,
+            bridge,
         })
     }
 }
@@ -489,6 +547,49 @@ fn started_state(room: &RoomRecord, parts: &[ParticipantRecord]) -> RoomStartedS
             })
             .collect(),
     }
+}
+
+fn bridge_of(room: &RoomRecord) -> AppResult<&BridgeState> {
+    room.bridge.as_ref().ok_or_else(|| {
+        AppError::conflict(
+            "NOT_BRIDGE_ROOM",
+            "This room is not an external bridge room.",
+        )
+    })
+}
+
+/// Make `user` the capturer: new lease, epoch + 1, audio assumed flowing until reported otherwise.
+async fn assign_capturer(
+    conn: &mut PgConnection,
+    room: RoomId,
+    user: UserId,
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE translation_room.translation_rooms SET bridge_capturer_user_id = $2, \
+         bridge_capturer_since = $3, bridge_capturer_lease_at = $3, bridge_audio_flowing = true, \
+         bridge_last_audio_at = $3, bridge_epoch = bridge_epoch + 1, updated_at = $3, updated_by = $2 \
+         WHERE id = $1",
+    )
+    .bind(room.as_uuid())
+    .bind(user.as_uuid())
+    .bind(now)
+    .execute(conn)
+    .await
+    .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn refresh_lease(conn: &mut PgConnection, room: RoomId, now: DateTime<Utc>) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE translation_room.translation_rooms SET bridge_capturer_lease_at = $2 WHERE id = $1",
+    )
+    .bind(room.as_uuid())
+    .bind(now)
+    .execute(conn)
+    .await
+    .map_err(map_sqlx_error)?;
+    Ok(())
 }
 
 #[async_trait]
@@ -998,5 +1099,239 @@ impl RoomRepo for PgRoomRepo {
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(m)
+    }
+    async fn claim_bridge(
+        &self,
+        new: NewBridgeRoom,
+        _cfg: BridgeConfig,
+    ) -> AppResult<ClaimOutcome> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Serialise concurrent claims of the same meeting so the loser sees the winner's row.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!(
+                "bridge:{}:{}:{}",
+                new.workspace_id,
+                new.provider.as_str(),
+                new.meeting_code
+            ))
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM translation_room.translation_rooms \
+             WHERE workspace_id = $1 AND translation_room_type = $2 AND bridge_provider = $3 \
+               AND bridge_meeting_code = $4 AND deleted_at IS NULL \
+               AND status NOT IN ('ENDED', 'CANCELLED', 'EXPIRED', 'FAILED')",
+        )
+        .bind(new.workspace_id.as_uuid())
+        .bind(ROOM_TYPE_EXTERNAL_BRIDGE)
+        .bind(new.provider.as_str())
+        .bind(&new.meeting_code)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if let Some(id) = existing {
+            let id = RoomId::from(id);
+            let rec = lock_room(&mut tx, id).await?;
+            let lease = &bridge_of(&rec)?.lease;
+            let is_capturer = match lease.user_id {
+                None => {
+                    assign_capturer(&mut tx, id, new.creator, new.now).await?;
+                    true
+                }
+                Some(u) if u == new.creator.as_uuid() => {
+                    refresh_lease(&mut tx, id, new.now).await?;
+                    true
+                }
+                Some(_) => false,
+            };
+            let room = fetch_room(&mut tx, id)
+                .await?
+                .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
+            tx.commit().await.map_err(map_sqlx_error)?;
+            return Ok(ClaimOutcome {
+                room,
+                created: false,
+                is_capturer,
+            });
+        }
+
+        sqlx::query(
+            "INSERT INTO translation_room.translation_rooms \
+             (id, workspace_id, host_id, title, translation_room_code, status, translation_room_type, \
+              max_participants, source_language, target_languages, settings, created_at, created_by, \
+              bridge_provider, bridge_meeting_code, bridge_join_url) \
+             VALUES ($1, $2, $3, $4, $5, 'WAITING', $6, 20, $7, $8, $9, $10, $3, $11, $12, $13)",
+        )
+        .bind(new.id.as_uuid())
+        .bind(new.workspace_id.as_uuid())
+        .bind(new.creator.as_uuid())
+        .bind(&new.title)
+        .bind(&new.code)
+        .bind(ROOM_TYPE_EXTERNAL_BRIDGE)
+        .bind(&new.source_language)
+        .bind(serde_json::json!(new.target_languages))
+        .bind(serde_json::json!({ "requires_approval": false }))
+        .bind(new.now)
+        .bind(new.provider.as_str())
+        .bind(&new.meeting_code)
+        .bind(&new.join_url)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_bridge_insert_error)?;
+        for (user, name, role, conn_type) in [
+            (
+                new.creator.as_uuid(),
+                new.creator_display_name.as_str(),
+                "host",
+                "webrtc",
+            ),
+            (STAND_IN_USER_ID, STAND_IN_DISPLAY_NAME, "bridge", "bridge"),
+        ] {
+            sqlx::query(
+                "INSERT INTO translation_room.translation_room_participants \
+                 (id, translation_room_id, user_id, display_name, role, listen_language, \
+                  speak_language, status, connection_type, joined_at, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $6, 'CONNECTED', $7, $8, $8, $8)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(new.id.as_uuid())
+            .bind(user)
+            .bind(name)
+            .bind(role)
+            .bind(&new.source_language)
+            .bind(conn_type)
+            .bind(new.now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        assign_capturer(&mut tx, new.id, new.creator, new.now).await?;
+        let room = fetch_room(&mut tx, new.id)
+            .await?
+            .ok_or_else(|| AppError::internal("room vanished after insert"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(ClaimOutcome {
+            room,
+            created: true,
+            is_capturer: true,
+        })
+    }
+
+    async fn bridge_heartbeat(
+        &self,
+        room: RoomId,
+        user: UserId,
+        hb: Heartbeat,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, room).await?;
+        let state = bridge_of(&rec)?;
+        ensure_open(&rec)?;
+        if state.lease.user_id != Some(user.as_uuid()) {
+            return Err(AppError::conflict(
+                "CAPTURER_LEASE_LOST",
+                "You are not the capturer of this bridge room.",
+            ));
+        }
+        let reported = hb.last_audio_at.map(|t| t.min(now));
+        let last_audio = if hb.audio_flowing {
+            Some(reported.unwrap_or(now))
+        } else {
+            reported.or(state.lease.last_audio_at)
+        };
+        sqlx::query(
+            "UPDATE translation_room.translation_rooms SET bridge_capturer_lease_at = $2, \
+             bridge_audio_flowing = $3, bridge_last_audio_at = $4 WHERE id = $1",
+        )
+        .bind(room.as_uuid())
+        .bind(now)
+        .bind(hb.audio_flowing)
+        .bind(last_audio)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let out = fetch_room(&mut tx, room)
+            .await?
+            .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(out)
+    }
+
+    async fn bridge_takeover(
+        &self,
+        room: RoomId,
+        caller: Caller,
+        cfg: BridgeConfig,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, room).await?;
+        let state = bridge_of(&rec)?;
+        ensure_open(&rec)?;
+        let me = caller.user.as_uuid();
+        if state.lease.user_id == Some(me) {
+            refresh_lease(&mut tx, room, now).await?;
+        } else {
+            let is_host = caller.user == rec.effective_host() || caller.user == rec.host_id;
+            if !(is_host || state.lease.user_id.is_none() || state.lease.is_stale(now, &cfg)) {
+                return Err(AppError::conflict(
+                    "CAPTURER_ACTIVE",
+                    "Another participant is currently capturing this meeting.",
+                ));
+            }
+            assign_capturer(&mut tx, room, caller.user, now).await?;
+        }
+        let out = fetch_room(&mut tx, room)
+            .await?
+            .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(out)
+    }
+
+    async fn set_bridge_audio_mode(
+        &self,
+        room: RoomId,
+        caller: Caller,
+        mode: AudioMode,
+        now: DateTime<Utc>,
+    ) -> AppResult<RoomRecord> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, room).await?;
+        let state = bridge_of(&rec)?;
+        ensure_open(&rec)?;
+        let allowed = caller.user == rec.effective_host()
+            || caller.user == rec.host_id
+            || state.lease.user_id == Some(caller.user.as_uuid());
+        if !allowed {
+            return Err(AppError::forbidden(
+                "Only the host or the capturer can change the audio mode",
+            ));
+        }
+        if mode == AudioMode::Voice && state.audio_mode == AudioMode::Text && rec.translation_active
+        {
+            return Err(AppError::conflict(
+                "BRIDGE_AUDIO_MODE_LOCKED",
+                "Text-only mode cannot return to voice while translation is running.",
+            ));
+        }
+        sqlx::query(
+            "UPDATE translation_room.translation_rooms SET bridge_audio_mode = $2, \
+             updated_at = $3, updated_by = $4 WHERE id = $1",
+        )
+        .bind(room.as_uuid())
+        .bind(mode.as_str())
+        .bind(now)
+        .bind(caller.user.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let out = fetch_room(&mut tx, room)
+            .await?
+            .ok_or_else(|| AppError::not_found("TranslationRoom not found"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(out)
     }
 }

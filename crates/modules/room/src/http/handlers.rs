@@ -6,11 +6,13 @@ use warptalk_web::{ApiResult, AuthUser};
 
 use super::AppState;
 use super::dto::{
-    CreateRoomRequest, JoinByCodeRequest, JoinByIdRequest, ListQuery, PageDto, ParticipantDto,
-    RoomDto, RoutesDto,
+    AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
+    CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, ListQuery, PageDto,
+    ParticipantDto, RoomDto, RoutesDto,
 };
-use crate::application::service::{CreateRoom, JoinRoom};
-use crate::domain::{RoomAction, RoomStatus};
+use crate::application::ports::RoomRecord;
+use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom};
+use crate::domain::{AudioMode, RoomAction, RoomStatus};
 
 pub async fn create(
     State(s): State<AppState>,
@@ -212,4 +214,85 @@ pub async fn routes(
     Path(id): Path<RoomId>,
 ) -> ApiResult<RoutesDto> {
     Ok(Json(s.service.routes(id, auth.user_id()).await?.into()))
+}
+
+fn bridge_state(s: &AppState, room: RoomRecord) -> AppResult<Json<BridgeStateResponse>> {
+    BridgeStateResponse::new(room, s.service.bridge_config())
+        .map(Json)
+        .ok_or_else(|| AppError::internal("bridge room without bridge state"))
+}
+
+pub async fn bridge_claim(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ClaimBridgeRequest>,
+) -> AppResult<(StatusCode, Json<ClaimBridgeResponse>)> {
+    let out = s
+        .service
+        .claim_bridge(
+            auth.user_id(),
+            ClaimBridge {
+                workspace_id: req.workspace_id,
+                provider: req.provider,
+                meeting_url: req.meeting_url,
+                code: req.code,
+                title: req.title,
+                display_name: req.display_name,
+                source_language: req.source_language,
+                target_languages: req.target_languages,
+            },
+        )
+        .await?;
+    let status = if out.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((
+        status,
+        Json(ClaimBridgeResponse::new(out, s.service.bridge_config())),
+    ))
+}
+
+pub async fn bridge_heartbeat(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+    body: Option<Json<HeartbeatRequest>>,
+) -> AppResult<Json<BridgeStateResponse>> {
+    let b = body.map(|Json(b)| b).unwrap_or_default();
+    let room = s
+        .service
+        .bridge_heartbeat(
+            id,
+            auth.user_id(),
+            b.audio_flowing.unwrap_or(true),
+            b.last_audio_at,
+        )
+        .await?;
+    bridge_state(&s, room)
+}
+
+pub async fn bridge_takeover(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+) -> AppResult<Json<BridgeStateResponse>> {
+    let room = s.service.bridge_takeover(id, auth.user_id()).await?;
+    bridge_state(&s, room)
+}
+
+pub async fn bridge_audio_mode(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+    Json(req): Json<AudioModeRequest>,
+) -> AppResult<Json<BridgeStateResponse>> {
+    let mode = AudioMode::parse(req.mode.trim())
+        .ok_or_else(|| AppError::validation("INVALID_AUDIO_MODE", "mode must be voice or text"))?;
+    let room = s
+        .service
+        .set_bridge_audio_mode(id, auth.user_id(), mode)
+        .await?;
+    bridge_state(&s, room)
 }

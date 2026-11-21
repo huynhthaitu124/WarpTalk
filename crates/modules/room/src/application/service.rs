@@ -9,10 +9,25 @@ use warptalk_kernel::{
 };
 
 use super::ports::{
-    Caller, JoinInput, Mutation, NewRoom, ParticipantRecord, RoomEventPublisher, RoomRecord,
-    RoomRepo, WorkspacePolicy,
+    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
+    ParticipantRecord, RoomEventPublisher, RoomRecord, RoomRepo, WorkspacePolicy,
 };
-use crate::domain::{RoomAction, RoomStatus, generate_room_code, valid_language};
+use crate::domain::{
+    AudioMode, BridgeConfig, BridgeProvider, RoomAction, RoomStatus, generate_room_code,
+    normalize_meeting_ref, valid_language,
+};
+
+pub struct ClaimBridge {
+    pub workspace_id: WorkspaceId,
+    /// `google_meet | zoom | teams`.
+    pub provider: String,
+    pub meeting_url: Option<String>,
+    pub code: Option<String>,
+    pub title: Option<String>,
+    pub display_name: Option<String>,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+}
 
 pub struct CreateRoom {
     pub workspace_id: WorkspaceId,
@@ -35,6 +50,7 @@ pub struct RoomService {
     workspace: Arc<dyn WorkspacePolicy>,
     events: Arc<dyn RoomEventPublisher>,
     clock: Arc<dyn Clock>,
+    bridge: BridgeConfig,
 }
 
 fn not_found() -> AppError {
@@ -51,13 +67,19 @@ impl RoomService {
         workspace: Arc<dyn WorkspacePolicy>,
         events: Arc<dyn RoomEventPublisher>,
         clock: Arc<dyn Clock>,
+        bridge: BridgeConfig,
     ) -> Self {
         Self {
             repo,
             workspace,
             events,
             clock,
+            bridge,
         }
+    }
+
+    pub fn bridge_config(&self) -> BridgeConfig {
+        self.bridge
     }
 
     /// Room plus caller context. Outsiders (neither workspace member nor participant) get NotFound.
@@ -342,5 +364,140 @@ impl RoomService {
     pub async fn routes(&self, id: RoomId, user: UserId) -> AppResult<AudioRoutesSnapshot> {
         self.access(id, user).await?;
         self.repo.routes_snapshot(id, self.clock.now()).await
+    }
+
+    // ------------------------------------------------------------ external bridge (D2)
+
+    /// Find-or-create the open bridge room for a meeting; the caller becomes capturer when the
+    /// room is new or has none.
+    pub async fn claim_bridge(&self, user: UserId, req: ClaimBridge) -> AppResult<ClaimOutcome> {
+        let provider = BridgeProvider::parse(req.provider.trim()).ok_or_else(|| {
+            validation(
+                "INVALID_PROVIDER",
+                "provider must be google_meet, zoom or teams",
+            )
+        })?;
+        let raw = req
+            .meeting_url
+            .as_deref()
+            .or(req.code.as_deref())
+            .unwrap_or("");
+        let meeting_code = normalize_meeting_ref(provider, raw)
+            .map_err(|e| validation("INVALID_MEETING_REF", &e.to_string()))?;
+        let join_url = req
+            .meeting_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(str::to_owned);
+        if join_url.as_ref().is_some_and(|u| u.chars().count() > 1000) {
+            return Err(validation("INVALID_MEETING_REF", "meetingUrl is too long"));
+        }
+        if !valid_language(&req.source_language)
+            || req.target_languages.is_empty()
+            || req.target_languages.len() > 20
+            || !req.target_languages.iter().all(|l| valid_language(l))
+        {
+            return Err(validation(
+                "INVALID_LANGUAGE",
+                "sourceLanguage and at least one valid targetLanguage are required",
+            ));
+        }
+        let title = match req.title.as_deref().map(str::trim) {
+            Some(t) if !t.is_empty() => t.to_owned(),
+            _ => format!("External meeting {meeting_code}"),
+        };
+        if title.chars().count() > 255 {
+            return Err(validation(
+                "INVALID_TITLE",
+                "title must be 1-255 characters",
+            ));
+        }
+        if self
+            .workspace
+            .member_role(req.workspace_id, user)
+            .await?
+            .is_none()
+        {
+            return Err(AppError::forbidden("Not a member of this workspace"));
+        }
+        if !self.workspace.is_active(req.workspace_id).await? {
+            return Err(AppError::conflict(
+                "WORKSPACE_INACTIVE",
+                "The workspace is not available",
+            ));
+        }
+        let mut targets: Vec<String> = Vec::new();
+        for t in req.target_languages {
+            if !targets.contains(&t) {
+                targets.push(t);
+            }
+        }
+        for _ in 0..8 {
+            let new = NewBridgeRoom {
+                id: RoomId::new(),
+                workspace_id: req.workspace_id,
+                creator: user,
+                creator_display_name: req
+                    .display_name
+                    .clone()
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or_else(|| "Host".into()),
+                title: title.clone(),
+                code: generate_room_code(&mut rand::thread_rng()),
+                provider,
+                meeting_code: meeting_code.clone(),
+                join_url: join_url.clone(),
+                source_language: req.source_language.clone(),
+                target_languages: targets.clone(),
+                now: self.clock.now(),
+            };
+            match self.repo.claim_bridge(new, self.bridge).await {
+                Err(AppError::Conflict { code, .. }) if code == "DUPLICATE" => continue,
+                other => return other,
+            }
+        }
+        Err(AppError::internal("could not allocate a unique room code"))
+    }
+
+    /// Capturer heartbeat (every `heartbeat_interval`).
+    pub async fn bridge_heartbeat(
+        &self,
+        id: RoomId,
+        user: UserId,
+        audio_flowing: bool,
+        last_audio_at: Option<DateTime<Utc>>,
+    ) -> AppResult<RoomRecord> {
+        self.access(id, user).await?;
+        self.repo
+            .bridge_heartbeat(
+                id,
+                user,
+                Heartbeat {
+                    audio_flowing,
+                    last_audio_at,
+                },
+                self.clock.now(),
+            )
+            .await
+    }
+
+    pub async fn bridge_takeover(&self, id: RoomId, user: UserId) -> AppResult<RoomRecord> {
+        let (_, caller) = self.access(id, user).await?;
+        self.repo
+            .bridge_takeover(id, caller, self.bridge, self.clock.now())
+            .await
+    }
+
+    pub async fn set_bridge_audio_mode(
+        &self,
+        id: RoomId,
+        user: UserId,
+        mode: AudioMode,
+    ) -> AppResult<RoomRecord> {
+        let (_, caller) = self.access(id, user).await?;
+        self.repo
+            .set_bridge_audio_mode(id, caller, mode, self.clock.now())
+            .await
     }
 }

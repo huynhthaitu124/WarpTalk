@@ -13,8 +13,8 @@ use warptalk_kernel::{
 };
 
 use crate::domain::{
-    AudioMode, BridgeConfig, BridgeProvider, BridgeState, ParticipantStatus, RoomAction, RoomStatus,
-    RoomType,
+    AudioMode, BridgeConfig, BridgeProvider, BridgeState, ParticipantStatus, RoomAction,
+    RoomStatus, RoomType,
 };
 
 // ---------------------------------------------------------------- outbound ports

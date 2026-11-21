@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"query": "quarterly budget approval", "relevant": ["a", "b"]},
+    {"query": "vendor contract renewal", "relevant": ["c"]},
+    {"query": "office move date", "relevant": ["d"]}
+  ]
+}

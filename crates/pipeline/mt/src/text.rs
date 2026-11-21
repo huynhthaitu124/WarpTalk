@@ -36,7 +36,7 @@ pub fn split_sentences(text: &str) -> Vec<String> {
             let next = chars.get(i + 1).copied();
             let boundary = match next {
                 None => true,
-                Some(n) if is_cjk_terminator(c) => !n.is_alphanumeric() || n.is_whitespace() || true,
+                Some(_) if is_cjk_terminator(c) => true,
                 Some(n) if n.is_whitespace() => !holds_back(&cur, &chars[i + 1..]),
                 Some(_) => false,
             };
@@ -115,7 +115,10 @@ mod tests {
 
     #[test]
     fn key_ignores_case_space_and_trailing_punct() {
-        assert_eq!(normalize_key("  Hello   World. "), normalize_key("hello world"));
+        assert_eq!(
+            normalize_key("  Hello   World. "),
+            normalize_key("hello world")
+        );
         assert_ne!(normalize_key("hello"), normalize_key("hello world"));
     }
 }

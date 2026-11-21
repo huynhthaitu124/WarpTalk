@@ -4,7 +4,8 @@ use uuid::Uuid;
 use warptalk_contracts::events::AudioRoutesSnapshot;
 use warptalk_kernel::{Page, PageRequest, ParticipantId, RoomId, UserId, WorkspaceId};
 
-use crate::application::ports::{ParticipantRecord, RoomRecord};
+use crate::application::ports::{ClaimOutcome, ParticipantRecord, RoomRecord};
+use crate::domain::{BridgeConfig, BridgeState};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,6 +74,40 @@ pub struct RoomDto {
     pub ended_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub translation_active: bool,
+    /// `NATIVE` or `EXTERNAL_BRIDGE`.
+    pub room_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<BridgeDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeDto {
+    pub provider: &'static str,
+    pub meeting_code: String,
+    pub join_url: Option<String>,
+    pub capturer_user_id: Option<UserId>,
+    pub capturer_lease_at: Option<DateTime<Utc>>,
+    pub audio_flowing: Option<bool>,
+    pub last_audio_at: Option<DateTime<Utc>>,
+    pub audio_mode: &'static str,
+    pub epoch: i32,
+}
+
+impl From<BridgeState> for BridgeDto {
+    fn from(b: BridgeState) -> Self {
+        Self {
+            provider: b.provider.as_str(),
+            meeting_code: b.meeting_code,
+            join_url: b.join_url,
+            capturer_user_id: b.lease.user_id.map(Into::into),
+            capturer_lease_at: b.lease.lease_at,
+            audio_flowing: b.lease.audio_flowing,
+            last_audio_at: b.lease.last_audio_at,
+            audio_mode: b.audio_mode.as_str(),
+            epoch: b.epoch,
+        }
+    }
 }
 
 impl From<RoomRecord> for RoomDto {
@@ -94,7 +129,81 @@ impl From<RoomRecord> for RoomDto {
             ended_at: r.ended_at,
             created_at: r.created_at,
             translation_active: r.translation_active,
+            room_type: r.room_type.as_str(),
+            bridge: r.bridge.map(Into::into),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimBridgeRequest {
+    pub workspace_id: WorkspaceId,
+    pub provider: String,
+    pub meeting_url: Option<String>,
+    pub code: Option<String>,
+    pub title: Option<String>,
+    pub display_name: Option<String>,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatRequest {
+    /// Defaults to `true` for clients that do not report audio liveness.
+    pub audio_flowing: Option<bool>,
+    pub last_audio_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+pub struct AudioModeRequest {
+    pub mode: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimBridgeResponse {
+    #[serde(flatten)]
+    pub room: RoomDto,
+    pub created: bool,
+    /// `capturer` or `viewer`.
+    pub bridge_role: &'static str,
+    pub heartbeat_interval_seconds: u64,
+    pub lease_seconds: u64,
+}
+
+impl ClaimBridgeResponse {
+    pub fn new(o: ClaimOutcome, cfg: BridgeConfig) -> Self {
+        Self {
+            room: o.room.into(),
+            created: o.created,
+            bridge_role: if o.is_capturer { "capturer" } else { "viewer" },
+            heartbeat_interval_seconds: cfg.heartbeat_interval.as_secs(),
+            lease_seconds: cfg.stale_after.as_secs(),
+        }
+    }
+}
+
+/// Capturer state after heartbeat/takeover/audio-mode.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeStateResponse {
+    pub room_id: RoomId,
+    #[serde(flatten)]
+    pub bridge: BridgeDto,
+    pub heartbeat_interval_seconds: u64,
+    pub lease_seconds: u64,
+}
+
+impl BridgeStateResponse {
+    pub fn new(r: RoomRecord, cfg: BridgeConfig) -> Option<Self> {
+        Some(Self {
+            room_id: r.id,
+            bridge: r.bridge?.into(),
+            heartbeat_interval_seconds: cfg.heartbeat_interval.as_secs(),
+            lease_seconds: cfg.stale_after.as_secs(),
+        })
     }
 }
 
