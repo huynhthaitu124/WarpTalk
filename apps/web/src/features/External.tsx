@@ -493,7 +493,7 @@ export function ExternalPage() {
                 </StepCard>
               )}
 
-              {native && claimed && isCapturer && (live.status.state !== 'idle' || errors.length > 0) && (
+              {native && claimed && isCapturer && !roomTerminal && (
                 <StepCard testId="external-live-card" title="Live status" description="Reported by the desktop app" actions={<Badge tone={live.status.state === 'running' ? 'success' : live.status.state === 'error' ? 'danger' : 'neutral'} data-testid="capture-state" data-state={live.status.state}>{stateLabel(live.status.state)}</Badge>}>
                   {errors.map((e) => <ErrorRow key={e.code} error={e} recovery={recoveryFor(e)} onDismiss={() => dismissError(e.code)} />)}
                   <LevelMeter dbfs={live.level} />
