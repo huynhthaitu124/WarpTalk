@@ -47,10 +47,10 @@ raw.describe('A11Y public pages', () => {
 });
 
 test.describe('A11Y signed-in pages', () => {
-  test('A11Y-04 /rooms with data (dark + light)', async ({ app, tokens, workspace }) => {
+  test('A11Y-04 meetings list with data (dark + light)', async ({ app, tokens, workspace }) => {
     await createRoom(tokens.accessToken, workspace.id, { title: 'A11y room' });
-    await app.goto('/rooms');
-    await expect(app.getByRole('link', { name: 'A11y room' })).toBeVisible();
+    await app.goto(`/${workspace.slug}/meetings`);
+    await expect(app.getByRole('link', { name: 'A11y room', exact: true })).toBeVisible();
     await scan(app, 'rooms dark');
     await app.getByRole('button', { name: 'Toggle theme' }).click();
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -75,27 +75,33 @@ test.describe('A11Y signed-in pages', () => {
       await expect(app.getByTestId('lobby')).toBeVisible();
       await expect(app.getByRole('table', { name: 'Participants' })).toBeVisible();
       await scan(app, 'room detail');
+      await app.getByRole('button', { name: 'Show' }).click();
+      await expect(app.getByRole('table', { name: 'Audio routes' }).or(app.getByText(/No routes yet/))).toBeVisible();
+      await scan(app, 'room detail with routes');
     } finally {
       await c1.context.close();
       await c2.context.close();
     }
   });
 
-  test('A11Y-06 settings tabs', async ({ app, tokens, workspace }) => {
+  test('A11Y-06 settings sections', async ({ app, tokens, workspace }) => {
     await createRoom(tokens.accessToken, workspace.id);
-    await app.goto('/settings');
+    await app.goto(`/${workspace.slug}/settings/general`);
     await expect(app.getByLabel('Max participants')).toBeVisible();
     await scan(app, 'settings workspace');
-    await app.getByRole('tab', { name: 'Members' }).click();
+    await app.goto(`/${workspace.slug}/members`);
     await expect(app.getByRole('table', { name: 'Workspace members' })).toBeVisible();
-    await scan(app, 'settings members');
-    await app.getByRole('tab', { name: 'Runtime' }).click();
+    await scan(app, 'members');
+    await app.goto(`/${workspace.slug}/settings/advanced`);
     await expect(app.getByLabel('Minimum words')).toBeVisible();
     await scan(app, 'settings runtime form');
     await app.getByRole('tab', { name: 'Raw JSON' }).click();
     await expect(app.getByLabel('Settings JSON')).toBeVisible();
     await scan(app, 'settings runtime json');
-    await app.getByRole('tab', { name: 'Account' }).click();
+    await app.goto(`/${workspace.slug}/settings/ai`);
+    await expect(app.getByRole('heading', { name: 'Provider keys' })).toBeVisible();
+    await scan(app, 'settings ai');
+    await app.goto(`/${workspace.slug}/settings/account`);
     await expect(app.getByRole('heading', { name: 'Appearance' })).toBeVisible();
     await scan(app, 'settings account');
   });
@@ -111,7 +117,7 @@ test.describe('A11Y signed-in pages', () => {
     await expect(app.getByLabel('Room code')).toBeVisible();
     await scan(app, 'join');
     await app.goto('/meetings');
-    await expect(app.getByRole('list', { name: 'Live meetings' })).toBeVisible();
+    await expect(app.getByRole('list', { name: 'Meetings' })).toBeVisible();
     await scan(app, 'meetings');
   });
 
@@ -144,8 +150,7 @@ test.describe('A11Y signed-in pages', () => {
     await app.getByRole('button', { name: 'Start capture' }).click();
     await expect(app.getByTestId('capture-error')).toBeVisible();
     await expect(app.getByTestId('perm-audioCapture')).toHaveAttribute('data-state', 'denied');
-    // Park the pointer: the dark-theme primary hover colour (#6e7ae0) is only 3.8:1 with white text (design-system finding).
-    await app.mouse.move(0, 0);
+    // (primary hover is now AA with white text, so no need to park the pointer)
     await scan(app, 'external capture dark');
     await app.getByRole('button', { name: 'Toggle theme' }).click();
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -165,12 +170,48 @@ test.describe('A11Y signed-in pages', () => {
 
   test('A11Y-08 dialog and command menu', async ({ app }) => {
     await app.goto('/rooms?new=1');
-    await expect(app.getByRole('dialog', { name: 'Create room' })).toBeVisible();
-    await scan(app, 'create room dialog');
+    await expect(app.getByRole('dialog', { name: 'Create meeting' })).toBeVisible();
+    await scan(app, 'create meeting dialog');
+    await app.getByRole('button', { name: 'Create meeting' }).click();
+    await expect(app.getByRole('alert').filter({ hasText: 'Give the meeting a title.' })).toBeVisible();
+    await scan(app, 'create meeting dialog with errors');
     await app.keyboard.press('Escape');
     await app.keyboard.press('ControlOrMeta+k');
     await expect(app.getByRole('dialog', { name: 'Command menu' })).toBeVisible();
     await scan(app, 'command menu');
+  });
+});
+
+test.describe('A11Y new pages and states', () => {
+  test('A11Y-12 home, knowledge, join dialog, no-workspace page (dark + light)', async ({ app, tokens, workspace }) => {
+    await createRoom(tokens.accessToken, workspace.id, { title: 'Home room' });
+    await app.goto(`/${workspace.slug}/home`);
+    await expect(app.getByRole('region', { name: 'Quick actions' })).toBeVisible();
+    await expect(app.getByRole('link', { name: 'Home room', exact: true })).toBeVisible();
+    await scan(app, 'home dark');
+    await app.goto(`/${workspace.slug}/knowledge`);
+    await expect(app.getByRole('heading', { name: 'Search your workspace knowledge' })).toBeVisible();
+    await scan(app, 'knowledge empty');
+    await app.goto(`/${workspace.slug}/meetings?join=1`);
+    await expect(app.getByRole('dialog', { name: 'Join a meeting' })).toBeVisible();
+    await scan(app, 'join dialog');
+    await app.keyboard.press('Escape');
+    await app.getByRole('button', { name: 'Toggle theme' }).click();
+    await app.goto(`/${workspace.slug}/home`);
+    await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');
+    await scan(app, 'home light');
+  });
+
+  test('A11Y-13 auth forms with field errors (dark + light)', async ({ page }) => {
+    await page.goto('/register');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Enter your email.' })).toBeVisible();
+    await scan(page, 'register errors dark');
+    await setTheme(page, 'light');
+    await page.reload();
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Enter your email.' })).toBeVisible();
+    await scan(page, 'register errors light');
   });
 });
 

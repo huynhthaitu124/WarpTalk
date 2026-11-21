@@ -23,11 +23,6 @@ const assertUuid = (v: string) => {
   if (!/^[0-9a-f-]{36}$/i.test(v)) throw new Error(`not a uuid: ${v}`);
   return v;
 };
-const assertEmail = (v: string) => {
-  if (!/^[\w.+-]+@[\w.-]+$/.test(v)) throw new Error(`unsafe email: ${v}`);
-  return v;
-};
-
 const MEMBER_ROLE = '00000000-0000-7000-8000-000000000003';
 export function addWorkspaceMember(workspaceId: string, userId: string) {
   psql(

@@ -69,16 +69,38 @@ Conventions
 
 | ID | Pri | Preconditions | Steps | Expected | Status |
 |---|---|---|---|---|---|
-| MTG-01 | P0 | started room | `/meetings/:id` -> Join meeting | "LiveKit is not configured" state; roster shows host; mic toggle disabled; captions placeholder | auto |
-| MTG-02 | P1 | MTG-01 state | Open listen-language select | Options: original + dubbed vi/en/ja; selection changes | auto |
+| MTG-01 | P0 | started room | `/meetings/:id`: pre-join, then Join | No control bar/Unmute/Leave before a session exists (FN-06); "LiveKit is not configured" state keeps room info: People roster with host, Transcript placeholder, Chat disabled | auto |
+| MTG-02 | P1 | pre-join | Open "I speak" / "I listen in"; pick English / Japanese; Join | Options are the room languages (vi, en, ja); `POST /translation-rooms/:id/join` carries `speakLanguage`/`listenLanguage` | auto |
 | MTG-03 | P1 | started + waiting room | `/meetings` | Only live/open rooms listed; Open link goes to meeting | auto |
 | MTG-04 | P1 | meeting not configured | "Try again" | Back to pre-join | auto |
 | MTG-05 | P2 | LiveKit server | Connected: grid, mic, captions on data topic, `dub-{lang}` subscription, connection-quality badge | todo (needs a LiveKit server in CI) |
 | MTG-06 | P0 | started room, host | Header "End meeting" -> dialog -> Cancel (room unchanged) -> End meeting | `POST /meetings/{id}/end` answers 404/503 without LiveKit, the app falls back to ending the room; toast, lands on `/rooms/:id`, pill "Ended"; `/meetings/:id` then shows "This meeting has ended" with no Join/End | auto |
 | MTG-07 | P1 | started room, workspace MEMBER | Open `/meetings/:id` | No "End meeting" button, Join available | auto |
-| MTG-08 | P1 | waiting room, then live room (paused via API) | `/meetings/:id` | Status strip (NFR-US-02) with text labels: Connection "Not connected", Network "n/a", Translation "Not started" -> "Active/Stopped" -> "Paused" (polled) | auto |
+| MTG-08 | P1 | harness (`e2e/harness/meeting.tsx`), unstarted room, then start/pause via API | In-meeting header status strip (NFR-US-02) | Connection "Connected", Network "Good"/"Poor", Translation "Not started" -> "Active/Stopped" -> "Paused" (room polled) | auto |
 | MTG-09 | P0 | harness (`e2e/harness/captions.tsx`, real `CaptionsPanel` + `parseCaption`/`mergeCaption` fed pipeline payloads) | stt then translation message of one segment; translation only in another language; interim + 10 min old `emittedAtMs`; plain text | Original + translation per line, latency "450 ms" from `emittedAtMs`, same `segment_id` merges, "Translating to English…" only for final lines, skewed latency hidden | auto |
 | MTG-10 | P1 | harness | Original-audio listener, reconnecting + poor + paused | First available translation shown; labels "Reconnecting", "Poor", "Paused" | auto |
+| MTG-11 | P0 | harness, host | Mic, camera, share screen, captions toggles | Buttons flip name + `aria-pressed`; local tile shows mic state and video; share switches grid to spotlight and back; caption overlay hides/shows | auto |
+| MTG-12 | P0 | harness, 3 participants | `speak()` a remote; join/leave a participant | Tile `data-speaking` + "speaking" text, others unaffected; grid count follows; host crown | auto |
+| MTG-13 | P1 | harness | Raise hand, remote hand, lower, garbage payload | Publishes `{t:"hand"}` on topic `reactions`; hand badge on the right tiles; invalid payload ignored | auto |
+| MTG-14 | P1 | harness | Send a reaction; remote reaction | Publishes `{t:"reaction",emoji}`; floating chip with sender name; expires after ~4 s | auto |
+| MTG-15 | P1 | harness | Chat while on Transcript tab; send; Enter; duplicate id | Unread badge on tab + panel button, cleared on open; local echo `data-mine`; whitespace not sendable; wire duplicates dropped; "not saved" note (no backend chat persistence) | auto |
+| MTG-16 | P0 | harness | stt + translation of one segment, second speaker | One line per segment with original + translation + latency badge + speaker name/accent (different per speaker); "Translating to English…"; overlay shows latest | auto |
+| MTG-17 | P0 | harness + real API, approval room, two lobby guests | People tab | Lobby badge on tab and panel button; "Waiting to be admitted (2)"; roster shows host role/languages; Admit moves to "In the meeting", Deny removes (participant KICKED) | auto |
+| MTG-18 | P0 | harness + real API, unstarted room | Host controls: Start, Pause, Resume, Stop translation | Room status/`translationActive` change on the backend; status strip follows | auto |
+| MTG-19 | P0 | harness + real API | Host: Leave dialog (host note, Cancel), End for all dialog (Cancel keeps room, confirm ends); member: no host menu, plain Leave | Room ENDED after confirm; `onLeave`/`onEnded` callbacks fire | auto |
+| MTG-20 | P1 | harness | `setConnection(reconnecting)`; listen-language menu | Warning banner + strip "Reconnecting", gone on reconnect; menu: Original + Dubbed vi/en/ja, current marked | auto |
+| MTG-21 | P2 | harness | Close/reopen side panel | Tabs Transcript, People, Chat | auto |
+| MTG-22 | P0 | harness | axe over the meeting in dark + light, all three tabs | No serious/critical violations | auto |
+| MTG-23 | P2 | harness | Ended view | "This meeting has ended" + way back | auto |
+| MTG-24 | P1 | harness at 390x844 | Layout | Two-column compact tiles (<140px), stage never overlaps the control bar (LY-04), no horizontal scroll, panel is a bottom sheet with Close | auto |
+| MTG-25 | P1 | harness, 1280x800 and 390x844, dark + light | `toHaveScreenshot` of the live meeting (speaking, hand, captions) | Matches `meeting-live-{1280,390}-{theme}.png` | auto |
+| MTG-30 | P0 | project `meeting-media` (Chromium fake devices) | Open pre-join | Preview video plays, mic meter rises above 0, camera and microphone pickers list the fake devices | auto |
+| MTG-31 | P1 | meeting-media | Camera toggle; "Join with my microphone muted" | Preview goes off/on (track stopped/reopened); muted by default, can be unchecked | auto |
+| MTG-32 | P2 | meeting-media | Pick the second microphone | Preview re-opens on it (skipped when only one fake mic) | auto |
+| MTG-33 | P1 | meeting-media | Fill name, Join | Join request has name + languages; not-configured state; preview element and tracks released | auto |
+| MTG-34 | P1 | meeting-media, 1440/1280/390 x dark/light | Pre-join layout + screenshots (video/meter masked) | One centred card (two columns >= 1024), no overflow, Join above the device pickers on phones | auto |
+
+MTG-11..25 run the real in-meeting UI against a scripted media session (`e2e/harness/meeting.tsx`, mounted by `e2e/harness/helpers.ts` on a signed-in page; `window.__meeting` scripts speaking, data-channel messages, joins and connection state). Roster, admit/deny, translation start/stop/pause and end-meeting hit the real backend. MTG-30..34 live in the `meeting-media` Playwright project (Chromium `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`); the other projects skip that file. Real LiveKit track rendering stays under MTG-05 (todo).
 
 ## 6. Accessibility (A11Y) - axe, no serious/critical violations
 
@@ -170,15 +192,15 @@ The macOS host is replaced by a scriptable `window.warptalkNative` mock injected
 | Workspaces | 6 | 2 | 3 | 1 | 5 |
 | Rooms | 10 | 4 | 5 | 1 | 9 |
 | Runtime settings | 6 | 3 | 2 | 1 | 5 |
-| Meeting shell | 10 | 3 | 6 | 1 | 9 |
+| Meeting shell | 33 | 11 | 18 | 4 | 32 |
 | Accessibility | 11 | 6 | 5 | 0 | 11 |
 | Keyboard | 6 | 2 | 4 | 0 | 6 |
 | Visual regression | 8 | 2 | 6 | 0 | 8 |
 | macOS WebView | 3 | 0 | 2 | 1 | 3 |
 | External meeting | 27 | 10 | 15 | 2 | 25 |
-| **Total** | **98** | **38** | **51** | **9** | **90** |
+| **Total** | **121** | **46** | **63** | **12** | **113** |
 
-All P0 and P1 cases are automated; the nine `todo` cases are P2. Spec files: `e2e/tests/{auth,workspace,rooms,settings,meeting,external,a11y,keyboard,visual,webview}.spec.ts` (64 Playwright tests in the chromium project because a11y/visual cases run in dark and light; the macos-webview project re-runs `a11y`, `visual` and `webview`).
+All P0 and P1 cases are automated; the nine `todo` cases are P2. Spec files: `e2e/tests/{auth,workspace,rooms,settings,meeting,meeting-room,meeting-media,external,a11y,keyboard,visual,webview}.spec.ts` (64 Playwright tests in the chromium project because a11y/visual cases run in dark and light; the macos-webview project re-runs `a11y`, `visual` and `webview`).
 
 ## Known backend gaps surfaced by this suite
 

@@ -46,7 +46,7 @@ function Tile({ t, screen }: { t: TileInfo; screen?: boolean }) {
           <Hand weight="fill" className="size-4" aria-hidden />
         </span>
       )}
-      <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-6 text-white">
+      <div className={cn('absolute inset-x-0 bottom-0 flex items-center gap-1.5 px-2 pb-1.5', source ? 'bg-gradient-to-t from-black/70 to-transparent pt-6 text-white' : 'pt-1 text-ink')}>
         {screen ? <MonitorArrowUp className="size-4 shrink-0" aria-hidden /> : p.micOn ? <Microphone weight="fill" className="size-4 shrink-0" aria-hidden /> : <MicrophoneSlash className="size-4 shrink-0" aria-hidden />}
         <span className="min-w-0 truncate text-body-sm font-medium max-sm:text-caption">{screen ? `${p.name}'s screen` : p.name}{p.isLocal && !screen ? ' (you)' : ''}</span>
         {!screen && t.host && <Crown weight="fill" className="size-3.5 shrink-0" aria-label="Host" role="img" />}
@@ -72,6 +72,7 @@ export function Stage({ tiles }: { tiles: TileInfo[] }) {
     );
   }
   return (
+    <div className="flex min-h-full flex-col justify-center">
     <ul
       aria-label="Participants"
       data-testid="participant-grid"
@@ -84,5 +85,6 @@ export function Stage({ tiles }: { tiles: TileInfo[] }) {
     >
       {tiles.map((t) => <Tile key={t.p.identity} t={t} />)}
     </ul>
+    </div>
   );
 }

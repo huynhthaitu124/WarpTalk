@@ -43,7 +43,7 @@ function Preview({ preview, name }: { preview: MediaPreview; name: string }) {
           <p className="text-body-sm">{preview.status === 'requesting' ? 'Starting camera…' : preview.camOn && !preview.hasVideo ? 'No camera available' : 'Camera is off'}</p>
         </div>
       )}
-      <span className="absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-overlay px-2 py-0.5 text-caption text-white">{name || 'You'}</span>
+      <span className="absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/75 px-2 py-0.5 text-caption text-white">{name || 'You'}</span>
       <Button
         size="sm"
         variant="secondary"
@@ -77,8 +77,8 @@ export function PreJoin({
   const blocked = preview.status === 'denied' || preview.status === 'error';
   return (
     <Card className="mx-auto w-full max-w-4xl" data-testid="meeting-prejoin">
-      <CardBody className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.15fr_1fr]">
-        <div className="flex min-w-0 flex-col gap-4">
+      <CardBody className="grid gap-x-6 gap-y-4 p-4 sm:p-6 lg:grid-cols-[1.15fr_1fr] lg:grid-rows-[auto_1fr]">
+        <div className="flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-1">
           <Preview preview={preview} name={values.name} />
           <LevelMeter level={preview.level} active={preview.hasAudio} />
           {blocked && (
@@ -87,28 +87,28 @@ export function PreJoin({
               <Button size="sm" className="mt-2" onClick={preview.retry}>Try again</Button>
             </Alert>
           )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Microphone">
-              <Select
-                value={micSel}
-                onValueChange={preview.setMicId}
-                options={preview.mics.map((d) => ({ value: d.id, label: d.label }))}
-                placeholder={preview.status === 'requesting' ? 'Looking for microphones…' : 'No microphone found'}
-                disabled={preview.mics.length === 0}
-              />
-            </Field>
-            <Field label="Camera">
-              <Select
-                value={camSel}
-                onValueChange={preview.setCamId}
-                options={preview.cams.map((d) => ({ value: d.id, label: d.label }))}
-                placeholder={preview.status === 'requesting' ? 'Looking for cameras…' : 'No camera found'}
-                disabled={preview.cams.length === 0}
-              />
-            </Field>
-          </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-4">
+        <div className="order-3 grid min-w-0 content-start gap-3 sm:grid-cols-2 lg:order-none lg:col-start-1 lg:row-start-2">
+          <Field label="Microphone">
+            <Select
+              value={micSel}
+              onValueChange={preview.setMicId}
+              options={preview.mics.map((d) => ({ value: d.id, label: d.label }))}
+              placeholder={preview.status === 'requesting' ? 'Looking for microphones…' : 'No microphone found'}
+              disabled={preview.mics.length === 0}
+            />
+          </Field>
+          <Field label="Camera">
+            <Select
+              value={camSel}
+              onValueChange={preview.setCamId}
+              options={preview.cams.map((d) => ({ value: d.id, label: d.label }))}
+              placeholder={preview.status === 'requesting' ? 'Looking for cameras…' : 'No camera found'}
+              disabled={preview.cams.length === 0}
+            />
+          </Field>
+        </div>
+        <div className="order-2 flex min-w-0 flex-col gap-4 lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <div className="flex items-center gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-subtle"><VideoCamera className="size-5" aria-hidden /></span>
             <div className="min-w-0">

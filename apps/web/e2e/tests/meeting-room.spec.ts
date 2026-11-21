@@ -7,7 +7,6 @@ import { mountMeeting, script, sent } from '../harness/helpers';
 
 const ANA = { identity: 'u-ana', name: 'Ana Pereira' };
 const BOB = { identity: 'u-bob', name: 'Bob Lee' };
-const NOW = 1_700_000_000_000;
 
 interface Ctx { roomId: string; userId: string }
 
@@ -177,7 +176,7 @@ test.describe('In-meeting UI', () => {
     await expect(app.getByTestId('caption-overlay')).toContainText('Cảm ơn');
   });
 
-  test('MTG-17 People tab: roster from the room API, lobby with Admit/Deny and badge (real backend)', async ({ app, tokens, user, workspace, browser, baseURL }) => {
+  test('MTG-17 People tab: roster from the room API, lobby with Admit/Deny and badge (real backend)', async ({ app, tokens, user, workspace }) => {
     const c = await meet(app, tokens, user, workspace.id, { approval: true });
     const guestA = await createUser('gina');
     const guestB = await createUser('gus');
@@ -206,7 +205,6 @@ test.describe('In-meeting UI', () => {
     const parts = await ok(call<{ displayName: string; status: string }[]>(`/translation-rooms/${c.roomId}/participants`, { token: tokens.accessToken }));
     expect(parts.find((p) => p.displayName === 'Gina Guest')?.status).toBe('CONNECTED');
     expect(parts.find((p) => p.displayName === 'Gus Guest')?.status).toBe('KICKED');
-    void browser; void baseURL; void signedInContext;
   });
 
   test('MTG-18 host controls drive the room API: start, pause, resume, stop translation', async ({ app, tokens, user, workspace }) => {
@@ -279,7 +277,7 @@ test.describe('In-meeting UI', () => {
     await expect(app.getByTestId('reconnecting-banner')).toHaveCount(0);
 
     await bar(app).getByRole('button', { name: 'Listen language' }).click();
-    await expect(app.getByRole('menuitem')).toHaveText(['Original audio', 'Dubbed: Vietnamese', 'Dubbed: English', 'Dubbed: Japanese']);
+    await expect(app.getByRole('menuitem')).toHaveText(['Original audio', 'Dubbed: Vietnamese', 'Dubbed: English (current)', 'Dubbed: Japanese']);
     await app.keyboard.press('Escape');
   });
 
@@ -363,7 +361,6 @@ test.describe('In-meeting UI: visual', () => {
         await app.evaluate(() => document.fonts.ready);
         await app.waitForTimeout(200);
         await expect(app).toHaveScreenshot(`meeting-live-${size.name}-${theme}.png`, { mask: [app.getByTestId('status-quality')] });
-        void NOW;
       });
     }
   }

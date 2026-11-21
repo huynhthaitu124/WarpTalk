@@ -179,7 +179,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
           {floating.length > 0 && (
             <ul aria-label="Reactions" className="pointer-events-none absolute bottom-16 left-3 flex flex-col gap-1.5">
               {floating.map((f) => (
-                <li key={f.id} data-testid="reaction" className="flex animate-slide-up items-center gap-2 rounded-pill bg-overlay px-2.5 py-1 text-body-sm text-white">
+                <li key={f.id} data-testid="reaction" className="flex animate-slide-up items-center gap-2 rounded-pill bg-black/75 px-2.5 py-1 text-body-sm text-white">
                   <span className="text-title" aria-hidden>{f.emoji}</span>{f.name}<span className="sr-only"> reacted {f.emoji}</span>
                 </li>
               ))}
@@ -187,7 +187,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
           )}
           {captionsOn && overlayText && last && (
             <div aria-hidden data-testid="caption-overlay" className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
-              <p className="max-w-2xl rounded-lg bg-overlay px-4 py-2 text-center text-body-lg text-white"><span className="mr-2 text-body-sm opacity-80">{last.speaker}</span>{overlayText}</p>
+              <p className="max-w-2xl rounded-lg bg-black/75 px-4 py-2 text-center text-body-lg text-white"><span className="mr-2 text-body-sm opacity-80">{last.speaker}</span>{overlayText}</p>
             </div>
           )}
         </div>

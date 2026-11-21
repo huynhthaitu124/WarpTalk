@@ -4,7 +4,7 @@ test.describe('macOS WebView shell', () => {
   test('WV-01 shell fits 1280x800 without horizontal scroll', async ({ app, tokens, workspace }) => {
     await createRoom(tokens.accessToken, workspace.id, { title: 'Fits' });
     await app.goto('/rooms');
-    await expect(app.getByRole('link', { name: 'Fits' })).toBeVisible();
+    await expect(app.getByRole('link', { name: 'Fits', exact: true })).toBeVisible();
     await expect(app.getByRole('complementary', { name: 'Sidebar' })).toBeVisible();
     await expect(app.getByRole('banner')).toBeVisible();
     const m = await app.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
@@ -25,8 +25,40 @@ test.describe('macOS WebView shell', () => {
     await app.goto('/rooms');
     await expect(app.getByRole('complementary', { name: 'Sidebar' })).toBeHidden();
     await app.getByRole('button', { name: 'Open navigation' }).click();
-    await expect(app.getByRole('link', { name: 'Settings' })).toBeVisible();
-    await app.getByRole('link', { name: 'Settings' }).click();
+    const drawer = app.getByRole('dialog', { name: 'Navigation' });
+    await expect(drawer.getByRole('link', { name: 'Settings' })).toBeVisible();
+    await drawer.getByRole('link', { name: 'Settings' }).click();
     await expect(app).toHaveURL(/\/settings/);
+    await expect(drawer).toHaveCount(0);
+  });
+
+  test('WV-04 mobile drawer is a real dialog: focus trap, Escape, focus return (A11Y-04)', async ({ app }) => {
+    await app.setViewportSize({ width: 390, height: 800 });
+    await app.goto('/');
+    await expect(app.getByTestId('current-workspace')).toBeHidden();
+    const opener = app.getByRole('button', { name: 'Open navigation' });
+    await opener.focus();
+    await app.keyboard.press('Enter');
+    const drawer = app.getByRole('dialog', { name: 'Navigation' });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveAttribute('aria-modal', 'true').catch(() => undefined);
+    for (let i = 0; i < 14; i++) {
+      await app.keyboard.press('Tab');
+      expect(await app.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')), `tab ${i} stays in the drawer`).toBe(true);
+    }
+    await app.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+
+  test('WV-05 mobile drawer closes from its button and on the overlay', async ({ app }) => {
+    await app.setViewportSize({ width: 390, height: 800 });
+    await app.goto('/');
+    await app.getByRole('button', { name: 'Open navigation' }).click();
+    await app.getByRole('button', { name: 'Close menu' }).click();
+    await expect(app.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0);
+    await app.getByRole('button', { name: 'Open navigation' }).click();
+    await app.mouse.click(380, 400);
+    await expect(app.getByRole('dialog', { name: 'Navigation' })).toHaveCount(0);
   });
 });

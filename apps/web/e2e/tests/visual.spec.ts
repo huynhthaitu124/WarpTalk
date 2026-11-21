@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test as raw } from '@playwright/test';
-import { call, createRoom, createWorkspace, expect, installNativeMock, login, markEmailVerified, ok, rnd, seedSession } from '../fixtures';
+import { call, createRoom, createWorkspace, expect, installNativeMock, login, ok, verifyEmail, rnd, seedSession } from '../fixtures';
 
 async function setTheme(page: Page, theme: 'dark' | 'light') {
   await page.addInitScript((t) => { try { localStorage.setItem('wt.theme', t); } catch { /* ignore */ } }, theme);
@@ -15,7 +15,7 @@ async function seededApp() {
   const id = rnd();
   const u = { email: `e2e-vr-${id}@example.com`, password: 'Passw0rd!e2e', fullName: 'Ada Visual' };
   await ok(call('/auth/register', { body: u }));
-  markEmailVerified(u.email);
+  await verifyEmail(u.email);
   const tokens = await login({ ...u, userId: '' });
   const ws = await createWorkspace(tokens.accessToken, 'Visual HQ');
   const live = await createRoom(tokens.accessToken, ws.id, { title: 'Quarterly planning', requiresApproval: true });
@@ -23,7 +23,7 @@ async function seededApp() {
   const waiting = await createRoom(tokens.accessToken, ws.id, { title: 'Customer onboarding' });
   return { tokens, ws, live, waiting };
 }
-const masks = (page: Page) => [page.getByTestId('account-menu'), page.locator('code'), page.getByTestId('room-code')];
+const masks = (page: Page) => [page.getByTestId('account-menu'), page.locator('code'), page.getByTestId('room-code'), page.getByTestId('room-when')];
 
 raw.describe('Visual regression', () => {
   for (const theme of ['dark', 'light'] as const) {
@@ -43,14 +43,25 @@ raw.describe('Visual regression', () => {
       await expect(page).toHaveScreenshot(`login-${theme}.png`);
     });
 
-    raw(`VR-04 /rooms populated (${theme})`, async ({ page }) => {
+    raw(`VR-04 meetings populated (${theme})`, async ({ page }) => {
       const s = await seededApp();
       await seedSession(page, s.tokens);
       await setTheme(page, theme);
       await page.goto('/rooms');
-      await expect(page.getByRole('link', { name: 'Quarterly planning' })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Quarterly planning', exact: true })).toBeVisible();
       await settle(page);
-      await expect(page).toHaveScreenshot(`rooms-${theme}.png`, { mask: [page.getByTestId('account-menu'), page.locator('code')] });
+      await expect(page).toHaveScreenshot(`meetings-${theme}.png`, { mask: masks(page) });
+    });
+
+    raw(`VR-09 home dashboard (${theme})`, async ({ page }) => {
+      const s = await seededApp();
+      await seedSession(page, s.tokens);
+      await setTheme(page, theme);
+      await page.goto('/');
+      await expect(page.getByRole('heading', { name: 'Welcome back, Ada' })).toBeVisible();
+      await expect(page.getByRole('list', { name: 'Live now' }).getByRole('link', { name: 'Quarterly planning', exact: true })).toBeVisible();
+      await settle(page);
+      await expect(page).toHaveScreenshot(`home-${theme}.png`, { mask: masks(page) });
     });
   }
 
@@ -89,7 +100,7 @@ raw.describe('Visual regression', () => {
     await expect(page).toHaveScreenshot('room-detail-dark.png', { mask: masks(page) });
   });
 
-  raw('VR-06 settings runtime (dark)', async ({ page }) => {
+  raw('VR-06 settings advanced (dark)', async ({ page }) => {
     const s = await seededApp();
     await seedSession(page, s.tokens);
     await setTheme(page, 'dark');

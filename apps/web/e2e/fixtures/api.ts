@@ -58,7 +58,7 @@ export async function login(u: TestUser): Promise<Tokens> {
   return ok(call<Tokens>('/auth/login', { body: { email: u.email, password: u.password } }));
 }
 
-export interface Ws { id: string; name: string }
+export interface Ws { id: string; name: string; slug: string }
 export const createWorkspace = (token: string, name = `Acme ${rnd()}`) =>
   ok(call<Ws>('/workspaces', { token, body: { name } }));
 

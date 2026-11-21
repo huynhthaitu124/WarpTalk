@@ -69,7 +69,7 @@ export function RoomRow({ room, showOpen = false }: { room: Room; showOpen?: boo
         <Link to={`/rooms/${room.id}`} title={room.title} className="block truncate text-body font-medium text-ink hover:text-link">{room.title}</Link>
         <p className="mt-0.5 flex flex-wrap gap-x-2 text-caption text-ink-subtle">
           <span>{languageLabel(room.sourceLanguage)} → {room.targetLanguages.map(languageLabel).join(', ')}</span>
-          {moment && <span>{moment}</span>}
+          {moment && <span data-testid="room-when">{moment}</span>}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:shrink-0">

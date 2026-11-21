@@ -1,9 +1,9 @@
-import { call, createUser, createWorkspace, expect, loginViaUi, rnd, test as base, seedSession, login } from '../fixtures';
+import { call, createUser, createWorkspace, expect, loginViaUi, rnd, test as base, seedSession, login, verifyEmail } from '../fixtures';
 
 const test = base;
 
 test.describe('Auth', () => {
-  test('AUTH-01 register -> verify instructions -> login lands on rooms', async ({ page }) => {
+  test('AUTH-01 register -> verify -> login lands on the Workspaces page (no workspace yet)', async ({ page }) => {
     const id = rnd();
     const email = `e2e-reg-${id}@example.com`;
     await page.goto('/register');
@@ -15,12 +15,11 @@ test.describe('Auth', () => {
     await expect(page.getByText('Check your inbox')).toBeVisible();
     await expect(page.getByText(email)).toBeVisible();
 
-    // Test-only bypass: the token is never exposed, mark verified in Postgres.
-    const { markEmailVerified } = await import('../fixtures/db');
-    markEmailVerified(email);
+    // Verify like a person: the test backend captures the "emailed" token in Redis (dev mail capture).
+    await verifyEmail(email);
 
     await loginViaUi(page, { email, password: 'Passw0rd!e2e' });
-    await expect(page).toHaveURL(/\/rooms$/);
+    await expect(page).toHaveURL(/\/workspaces$/);
     await expect(page.getByTestId('account-name')).toHaveText(`Reg User ${id}`);
   });
 
@@ -41,19 +40,20 @@ test.describe('Auth', () => {
 
   test('AUTH-04 protected route redirects to login and back', async ({ page }) => {
     const u = await createUser('guard');
-    await page.goto('/settings');
+    const ws = await createWorkspace((await login(u)).accessToken);
+    await page.goto(`/${ws.slug}/settings/general`);
     await expect(page).toHaveURL(/\/login/);
     await page.getByLabel('Email').fill(u.email);
     await page.getByLabel('Password').fill(u.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page).toHaveURL(/\/settings/);
+    await expect(page).toHaveURL(new RegExp(`/${ws.slug}/settings/general`));
     await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
   });
 
   test('AUTH-05 logout clears the session and revokes the refresh token', async ({ page }) => {
     const u = await createUser('logout');
     await loginViaUi(page, u);
-    await expect(page).toHaveURL(/\/rooms/);
+    await expect(page).toHaveURL(/\/workspaces/);
     const rt = await page.evaluate(() => localStorage.getItem('wt.refresh'));
     expect(rt).toBeTruthy();
     await page.getByTestId('account-menu').click();
@@ -71,7 +71,7 @@ test.describe('Auth', () => {
   test('AUTH-06 silent refresh on reload rotates the refresh token', async ({ page }) => {
     const u = await createUser('silent');
     await loginViaUi(page, u);
-    await expect(page).toHaveURL(/\/rooms/);
+    await expect(page).toHaveURL(/\/workspaces/);
     const t0 = await page.evaluate(() => localStorage.getItem('wt.refresh'));
     await page.reload();
     await expect(page.getByTestId('account-name')).toBeVisible();
@@ -89,7 +89,7 @@ test.describe('Auth', () => {
     const tokens = await login(u);
     await createWorkspace(tokens.accessToken);
     await seedSession(page, tokens);
-    await page.goto('/rooms');
+    await page.goto('/');
     await expect(page.getByTestId('account-name')).toBeVisible();
     let refreshes = 0;
     await page.route('**/api/v1/auth/refresh', async (route) => { refreshes += 1; await route.continue(); });
@@ -103,7 +103,7 @@ test.describe('Auth', () => {
     });
     // Client-side navigation fires several authed queries at once (settings + members).
     await page.getByRole('link', { name: 'Settings' }).click();
-    await page.getByRole('tab', { name: 'Members' }).click();
+    await page.getByRole('link', { name: 'Members' }).click();
     await expect(page.getByRole('table', { name: 'Workspace members' })).toBeVisible();
     expect(refreshes).toBe(1);
   });
@@ -123,11 +123,56 @@ test.describe('Auth', () => {
     await page.getByLabel('Password').fill('short');
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page.getByRole('alert')).toContainText('at least 8 characters');
+    await expect(page.getByLabel('Password')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByLabel('Password')).toBeFocused();
 
     await page.getByLabel('Email').fill(existing.email);
     await page.getByLabel('Password').fill('Passw0rd!e2e');
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(page).toHaveURL(/\/register/);
+  });
+
+  test('AUTH-10 empty submit reports every empty field, not one banner (FN-03)', async ({ page }) => {
+    await page.goto('/register');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    for (const [label, msg] of [['Full name', 'Enter your full name.'], ['Email', 'Enter your email.'], ['Password', 'at least 8 characters']] as const) {
+      await expect(page.getByLabel(label)).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.getByRole('alert').filter({ hasText: msg })).toBeVisible();
+    }
+    await expect(page.getByLabel('Full name')).toBeFocused();
+    await page.getByLabel('Email').fill('not-an-email');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Enter a valid email address.' })).toBeVisible();
+
+    await page.goto('/login');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByLabel('Email')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByLabel('Password')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('alert').filter({ hasText: 'Enter your email.' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Enter your password.' })).toBeVisible();
+    await expect(page.getByLabel('Email')).toBeFocused();
+  });
+
+  test('AUTH-11 password can be revealed and hidden', async ({ page }) => {
+    await page.goto('/login');
+    const pw = page.getByLabel('Password');
+    await expect(pw).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: 'Show characters' }).click();
+    await expect(pw).toHaveAttribute('type', 'text');
+    await page.getByRole('button', { name: 'Hide characters' }).click();
+    await expect(pw).toHaveAttribute('type', 'password');
+  });
+
+  test('AUTH-12 JSON error bodies: a malformed login request is INVALID_REQUEST, shown as a message', async ({ page }) => {
+    const r = await call('/auth/login', { body: { email: 'x@example.com' } });
+    expect(r.status).toBe(400);
+    expect((r.body as { code: string }).code).toBe('INVALID_REQUEST');
+    await page.goto('/login');
+    await page.route('**/api/v1/auth/login', (route) => route.fulfill({ status: 400, json: { code: 'INVALID_REQUEST', message: 'Invalid request body' } }));
+    await page.getByLabel('Email').fill('a@example.com');
+    await page.getByLabel('Password').fill('whatever1');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByRole('alert')).toContainText('Invalid request body');
   });
 });
