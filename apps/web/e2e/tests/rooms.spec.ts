@@ -152,7 +152,9 @@ test.describe('Meetings (rooms)', () => {
       await code.fill(room.roomCode);
       await guest.page.getByLabel('Display name (optional)').fill('Outsider Olga');
       await guest.page.getByRole('button', { name: 'Join meeting' }).click();
-      await expect(guest.page.getByTestId('join-result')).toContainText('Waiting for the host to admit you');
+      // joining by code lands on the room page, which explains the wait
+      await expect(guest.page).toHaveURL(new RegExp(`/rooms/${room.id}$`));
+      await expect(guest.page.getByText('Waiting for the host', { exact: true })).toBeVisible();
 
       // FN-08: a person with no workspace gets a minimal shell
       const side = guest.page.getByRole('complementary', { name: 'Sidebar' });

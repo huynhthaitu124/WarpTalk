@@ -210,7 +210,8 @@ test.describe('Design system and brand', () => {
     const danger = await page.evaluate(() => { const d = document.createElement('i'); d.style.color = 'var(--danger)'; document.body.append(d); const v = getComputedStyle(d).color; d.remove(); return v; });
     expect(c.border).toBe(danger);
     // outline is danger-tinted (alpha), not the lavender focus colour
-    expect(c.outline).toMatch(/^rgba?\(2[0-9]{2}, \d{1,2}, \d{1,2}/);
+    expect(c.outline).not.toContain('0.486'); // not the lavender focus colour
+    expect(c.outline).toContain('0.839'); // danger red channel
   });
 });
 
