@@ -24,8 +24,8 @@ use warptalk_kernel::{
 };
 use warptalk_livekit::{LiveKitConfig, NoopRoomService, RoomServiceClient};
 use warptalk_meeting::application::ports::{
-    MeetingEvent, MeetingEventPublisher, NoopMeetingEventPublisher, ParticipantInfo, RoomDirectory,
-    RoomInfo,
+    BridgeInfo, MeetingEvent, MeetingEventPublisher, NoopMeetingEventPublisher, ParticipantInfo,
+    RoomDirectory, RoomInfo,
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MeetingDeps, MeetingModule, RoomService};
 use warptalk_room::RoomDeps;
@@ -101,6 +101,14 @@ impl RoomDirectory for RoomDirectoryAdapter {
                 status: p.status,
                 display_name: p.display_name,
             }))
+    }
+
+    async fn bridge(&self, room: RoomId) -> AppResult<Option<BridgeInfo>> {
+        Ok(self.0.bridge_info(room).await?.map(|b| BridgeInfo {
+            provider: b.provider,
+            capturer_user_id: b.capturer_user_id,
+            capturer_stale: b.capturer_stale,
+        }))
     }
 }
 
