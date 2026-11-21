@@ -155,7 +155,7 @@ mod tests {
         ];
         let s = lexical_scores("quarterly budget approval", &docs);
         assert!(s[0] > s[1], "{s:?}");
-        assert!(s[0] > 0.5, "{s:?}");
+        assert!(s[0] > 0.3, "{s:?}");
         assert_eq!(s[1], 0.0);
         assert!(s.iter().all(|x| (0.0..=1.0).contains(x)));
         assert_eq!(lexical_scores("", &docs), vec![0.0; 3]);

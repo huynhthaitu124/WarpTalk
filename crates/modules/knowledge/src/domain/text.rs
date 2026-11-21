@@ -65,6 +65,11 @@ fn ends_with_abbreviation(buf: &str) -> bool {
         .into_iter()
         .rev()
         .collect();
+    // "1." / "12." at the start of a sentence is a list marker.
+    let t = buf.trim();
+    if t.len() <= 4 && t.ends_with('.') && t[..t.len() - 1].chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
     let lower = word.to_lowercase();
     if lower.is_empty() {
         return false;
