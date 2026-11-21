@@ -47,6 +47,21 @@ pub fn join_gate(is_host: bool, participant_status: Option<&str>) -> JoinGate {
     }
 }
 
+/// Chat length cap (spec: 11 §5.4).
+pub const MAX_CHAT_CHARS: usize = 1000;
+pub const MAX_CLIENT_MESSAGE_ID_CHARS: usize = 100;
+pub const MAX_CHAT_PAGE: i64 = 50;
+
+/// Reading chat: the host, or a participant who is in or was in the meeting (a user who merely
+/// left keeps read access, spec 11 §5.4); waiting, kicked and rejected users do not.
+pub fn can_read_chat(is_host: bool, participant_status: Option<&str>) -> bool {
+    is_host
+        || matches!(
+            participant_status,
+            Some("CONNECTED" | "DISCONNECTED" | "LEFT")
+        )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackChange {
     Published,
@@ -91,6 +106,15 @@ mod tests {
         assert_eq!(join_gate(false, Some("WAITING")), JoinGate::Lobby);
         assert_eq!(join_gate(false, Some("KICKED")), JoinGate::Denied);
         assert_eq!(join_gate(false, None), JoinGate::Denied);
+    }
+
+    #[test]
+    fn chat_read_access() {
+        assert!(can_read_chat(true, None));
+        assert!(can_read_chat(false, Some("LEFT")));
+        assert!(!can_read_chat(false, Some("WAITING")));
+        assert!(!can_read_chat(false, Some("KICKED")));
+        assert!(!can_read_chat(false, None));
     }
 
     #[test]

@@ -30,11 +30,18 @@ pub use warptalk_livekit::RoomService;
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "meeting",
-    migrations: &[Migration {
-        version: 1,
-        name: "init",
-        sql: include_str!("../migrations/0001_init.sql"),
-    }],
+    migrations: &[
+        Migration {
+            version: 1,
+            name: "init",
+            sql: include_str!("../migrations/0001_init.sql"),
+        },
+        Migration {
+            version: 2,
+            name: "chat",
+            sql: include_str!("../migrations/0002_chat.sql"),
+        },
+    ],
 };
 
 /// Participant token lifetime (spec: 11 §8, code constant 4 h).

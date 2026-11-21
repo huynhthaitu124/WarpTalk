@@ -11,13 +11,16 @@ use warptalk_livekit::{
     verify_webhook,
 };
 
+use uuid::Uuid;
+
 use super::ports::{
-    EVENT_BILLING_STOP, EVENT_END_ROOM, MeetingEvent, MeetingEventPublisher, MeetingRepo,
-    MeetingRoom, NewParticipant, RoomDirectory, RoomInfo,
+    ChatMessage, EVENT_BILLING_STOP, EVENT_CHAT_HIDDEN, EVENT_CHAT_TRANSLATE, EVENT_END_ROOM,
+    MeetingEvent, MeetingEventPublisher, MeetingRepo, MeetingRoom, NewChatMessage, NewParticipant,
+    RoomDirectory, RoomInfo,
 };
 use crate::domain::{
-    BRIDGE_IDENTITY, JoinGate, STATUS_FINISHED, WebhookKind, is_bridge_audio_owner,
-    is_ended_status, join_gate,
+    BRIDGE_IDENTITY, JoinGate, MAX_CHAT_CHARS, MAX_CHAT_PAGE, MAX_CLIENT_MESSAGE_ID_CHARS,
+    STATUS_FINISHED, WebhookKind, can_read_chat, is_bridge_audio_owner, is_ended_status, join_gate,
 };
 
 /// LiveKit room empty timeout (seconds) used on CreateRoom.
@@ -235,6 +238,152 @@ impl MeetingService {
             token,
             participant_identity: BRIDGE_IDENTITY.to_owned(),
         })
+    }
+
+    // ------------------------------------------------------------ chat (spec: 11 §5.4)
+
+    /// Post a chat message. Host or CONNECTED participant; idempotent on `client_message_id`
+    /// (`created == false` on a replay, nothing is published again).
+    pub async fn post_chat(
+        &self,
+        user: UserId,
+        room: RoomId,
+        content: &str,
+        client_message_id: &str,
+    ) -> AppResult<(ChatMessage, bool)> {
+        let text = content.trim();
+        if text.is_empty() {
+            return Err(AppError::validation(
+                "VALIDATION_ERROR",
+                "content must not be empty",
+            ));
+        }
+        if text.chars().count() > MAX_CHAT_CHARS {
+            return Err(AppError::validation(
+                "VALIDATION_ERROR",
+                format!("content must be at most {MAX_CHAT_CHARS} characters"),
+            ));
+        }
+        let cid = client_message_id.trim();
+        if cid.is_empty() || cid.chars().count() > MAX_CLIENT_MESSAGE_ID_CHARS {
+            return Err(AppError::validation(
+                "VALIDATION_ERROR",
+                format!("clientMessageId must be 1-{MAX_CLIENT_MESSAGE_ID_CHARS} characters"),
+            ));
+        }
+        let info = self.room_info(room).await?;
+        let meeting = self.repo.find_current(room).await?;
+        let is_host = Self::is_host(&info, meeting.as_ref(), user);
+        let participant = self.rooms.participant(room, user).await?;
+        if join_gate(is_host, participant.as_ref().map(|p| p.status.as_str())) != JoinGate::Allow {
+            return Err(AppError::forbidden("Not an active participant."));
+        }
+        let meeting = meeting.ok_or_else(|| AppError::not_found("meeting has not started"))?;
+        if is_ended_status(&info.status) || meeting.status == STATUS_FINISHED {
+            return Err(AppError::conflict(
+                "INVALID_STATE",
+                "chat is only available during an active meeting",
+            ));
+        }
+        let sender_name = participant
+            .map(|p| p.display_name)
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| "Host".to_owned());
+        let (msg, created) = self
+            .repo
+            .insert_chat_message(NewChatMessage {
+                meeting_room_id: meeting.id,
+                workspace_id: info.workspace_id,
+                sender_id: user,
+                sender_name: &sender_name,
+                content: text,
+                // Per-message language is not known here; the translation worker detects it.
+                original_language: "und",
+                client_message_id: cid,
+                now: self.clock.now(),
+            })
+            .await?;
+        if created {
+            // Translation is additive: a bus failure must not lose or fail the message.
+            let ev = MeetingEvent {
+                event_type: EVENT_CHAT_TRANSLATE,
+                payload: json!({
+                    "message_id": msg.id,
+                    "meeting_room_id": msg.meeting_room_id,
+                    "translation_room_id": room,
+                    "workspace_id": info.workspace_id,
+                    "sender_user_id": user,
+                    "sender_name": msg.sender_name,
+                    "text": msg.content,
+                    "source_language": msg.original_language,
+                    "created_at": msg.created_at,
+                }),
+            };
+            if let Err(e) = self.events.publish(ev).await {
+                tracing::warn!(error = %e, message = %msg.id, "chat translation request not published");
+            }
+        }
+        Ok((msg, created))
+    }
+
+    /// History, oldest first within the page. Hidden messages are returned (flagged) only to
+    /// the host, everyone else does not see them.
+    pub async fn chat_history(
+        &self,
+        user: UserId,
+        room: RoomId,
+        before: Option<Uuid>,
+        limit: Option<i64>,
+    ) -> AppResult<Vec<ChatMessage>> {
+        let info = self.room_info(room).await?;
+        let meeting = self.repo.find_current(room).await?;
+        let is_host = Self::is_host(&info, meeting.as_ref(), user);
+        let participant = self.rooms.participant(room, user).await?;
+        if !can_read_chat(is_host, participant.as_ref().map(|p| p.status.as_str())) {
+            return Err(AppError::forbidden("Not a participant of this meeting."));
+        }
+        let Some(meeting) = meeting else {
+            return Ok(Vec::new());
+        };
+        let limit = limit.unwrap_or(MAX_CHAT_PAGE).clamp(1, MAX_CHAT_PAGE);
+        self.repo
+            .list_chat_messages(meeting.id, before, limit, is_host)
+            .await
+    }
+
+    /// Host-only moderation: hide, never erase (BR-54). Idempotent.
+    pub async fn hide_chat(
+        &self,
+        user: UserId,
+        room: RoomId,
+        message: Uuid,
+        reason: Option<&str>,
+    ) -> AppResult<ChatMessage> {
+        let info = self.room_info(room).await?;
+        let meeting = self.repo.find_current(room).await?;
+        if !Self::is_host(&info, meeting.as_ref(), user) {
+            return Err(AppError::forbidden("Only host can moderate messages"));
+        }
+        let meeting = meeting.ok_or_else(|| AppError::not_found("message not found"))?;
+        let reason = reason.map(str::trim).filter(|r| !r.is_empty());
+        let msg = self
+            .repo
+            .hide_chat_message(meeting.id, message, user, reason, self.clock.now())
+            .await?
+            .ok_or_else(|| AppError::not_found("message not found"))?;
+        let ev = MeetingEvent {
+            event_type: EVENT_CHAT_HIDDEN,
+            payload: json!({
+                "message_id": msg.id,
+                "meeting_room_id": msg.meeting_room_id,
+                "translation_room_id": room,
+                "moderated_by": user,
+            }),
+        };
+        if let Err(e) = self.events.publish(ev).await {
+            tracing::warn!(error = %e, message = %msg.id, "chat hidden event not published");
+        }
+        Ok(msg)
     }
 
     fn livekit_configured(&self) -> bool {

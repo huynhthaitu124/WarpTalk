@@ -10,7 +10,8 @@ use warptalk_kernel::{
 
 use super::ports::{
     Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
-    ParticipantRecord, RoomEventPublisher, RoomRecord, RoomRepo, WorkspacePolicy,
+    ParticipantRecord, RoomEventPublisher, RoomRecord, RoomRepo, UpdateLanguagesInput,
+    WorkspacePolicy,
 };
 use crate::domain::{
     AudioMode, BridgeConfig, BridgeProvider, RoomAction, RoomStatus, generate_room_code,
@@ -348,6 +349,46 @@ impl RoomService {
         self.publish(&m, false).await?;
         m.participant
             .ok_or_else(|| AppError::internal("leave returned no participant"))
+    }
+
+    /// Own speak/listen language change (`none` speak = listen-only). Validated against the room
+    /// languages by the repo; republishes the routes snapshot when the room is IN_PROGRESS.
+    pub async fn update_languages(
+        &self,
+        id: RoomId,
+        user: UserId,
+        speak_language: Option<String>,
+        listen_language: Option<String>,
+    ) -> AppResult<ParticipantRecord> {
+        if speak_language.is_none() && listen_language.is_none() {
+            return Err(validation(
+                "INVALID_LANGUAGE",
+                "speakLanguage or listenLanguage is required",
+            ));
+        }
+        if !speak_language
+            .iter()
+            .chain(&listen_language)
+            .all(|l| valid_language(l))
+        {
+            return Err(validation(
+                "INVALID_LANGUAGE",
+                "speakLanguage and listenLanguage must be valid language codes",
+            ));
+        }
+        let m = self
+            .repo
+            .update_languages(UpdateLanguagesInput {
+                room: id,
+                user,
+                speak_language,
+                listen_language,
+                now: self.clock.now(),
+            })
+            .await?;
+        self.publish(&m, false).await?;
+        m.participant
+            .ok_or_else(|| AppError::internal("update returned no participant"))
     }
 
     pub async fn generate_routes(

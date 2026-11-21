@@ -77,6 +77,10 @@ pub fn router(state: AppState) -> Router {
             put(handlers::leave),
         )
         .route(
+            "/translation-rooms/{id}/participants/me/languages",
+            put(handlers::update_languages),
+        )
+        .route(
             "/translation-rooms/{id}/participants/{participant_id}/admit",
             put(handlers::admit),
         )

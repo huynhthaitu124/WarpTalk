@@ -37,5 +37,13 @@ pub fn router(state: AppState) -> Router {
             post(handlers::bridge_token),
         )
         .route("/meetings/{room_id}/end", post(handlers::end))
+        .route(
+            "/meetings/{room_id}/chat/messages",
+            post(handlers::post_chat).get(handlers::chat_history),
+        )
+        .route(
+            "/meetings/{room_id}/chat/messages/{message_id}/hide",
+            post(handlers::hide_chat),
+        )
         .with_state(state)
 }

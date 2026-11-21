@@ -39,8 +39,8 @@ use warptalk_knowledge::infrastructure::{
 use warptalk_knowledge::{AccessScope, DocumentAccess};
 use warptalk_livekit::{LiveKitConfig, NoopRoomService, RoomServiceClient};
 use warptalk_meeting::application::ports::{
-    BridgeInfo, MeetingEvent, MeetingEventPublisher, NoopMeetingEventPublisher, ParticipantInfo,
-    RoomDirectory, RoomInfo,
+    BridgeInfo, CHAT_TRANSLATE_REQUESTS_STREAM, EVENT_CHAT_TRANSLATE, MeetingEvent,
+    MeetingEventPublisher, NoopMeetingEventPublisher, ParticipantInfo, RoomDirectory, RoomInfo,
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MeetingDeps, MeetingModule, RoomService};
 use warptalk_qdrant::VectorStore;
@@ -192,6 +192,18 @@ impl MeetingEventPublisher for RedisMeetingEventPublisher {
             payload: event.payload,
         };
         let mut conn = self.conn.clone();
+        if event.event_type == EVENT_CHAT_TRANSLATE {
+            // Chat translation requests are durable work for the worker: a stream, not pub/sub.
+            return warptalk_bus::xadd_json(
+                &mut conn,
+                CHAT_TRANSLATE_REQUESTS_STREAM,
+                &envelope,
+                10_000,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::unavailable(format!("event bus unavailable: {e}")));
+        }
         publish_json(&mut conn, event.event_type, &envelope)
             .await
             .map(|_| ())

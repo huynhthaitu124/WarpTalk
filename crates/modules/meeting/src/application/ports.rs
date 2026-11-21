@@ -1,11 +1,12 @@
 //! Ports: what the meeting module needs from the outside, plus its persistence port.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, MeetingRoomId, RoomId, UserId, WorkspaceId};
 
 use crate::domain::TrackChange;
@@ -163,6 +164,14 @@ impl RoomDirectory for InMemoryRoomDirectory {
 
 pub const EVENT_END_ROOM: &str = "meeting.end_room";
 pub const EVENT_BILLING_STOP: &str = "meeting.billing.stop";
+/// A new chat message that the translation worker should translate (best-effort, additive).
+pub const EVENT_CHAT_TRANSLATE: &str = "meeting.chat.translate_request";
+/// A host hid a chat message (the hub broadcasts `ChatMessageHidden` from it).
+pub const EVENT_CHAT_HIDDEN: &str = "meeting.chat.hidden";
+/// Redis stream that `EVENT_CHAT_TRANSLATE` is written to by the api wiring.
+// spec: 06 §3 (`PublishChatForTranslationAsync`); stream name is not given by the spec, so it is
+// defined here next to the event until `warptalk-contracts` names it.
+pub const CHAT_TRANSLATE_REQUESTS_STREAM: &str = "translate:chat_requests";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeetingEvent {
@@ -229,6 +238,31 @@ pub struct NewParticipant<'a> {
     pub now: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChatMessage {
+    pub id: Uuid,
+    pub meeting_room_id: MeetingRoomId,
+    pub sender_id: Option<UserId>,
+    pub sender_name: String,
+    pub content: String,
+    pub original_language: String,
+    pub created_at: DateTime<Utc>,
+    pub hidden: bool,
+    /// target language -> translated text (filled by the translation worker).
+    pub translations: BTreeMap<String, String>,
+}
+
+pub struct NewChatMessage<'a> {
+    pub meeting_room_id: MeetingRoomId,
+    pub workspace_id: WorkspaceId,
+    pub sender_id: UserId,
+    pub sender_name: &'a str,
+    pub content: &'a str,
+    pub original_language: &'a str,
+    pub client_message_id: &'a str,
+    pub now: DateTime<Utc>,
+}
+
 /// Persistence port (schema `meeting`), implemented by `infrastructure::PgMeetingRepo`.
 #[async_trait]
 pub trait MeetingRepo: Send + Sync {
@@ -287,4 +321,28 @@ pub trait MeetingRepo: Send + Sync {
     ) -> AppResult<()>;
     /// `room_finished`: close the session and its participants without touching `status`.
     async fn close_room(&self, id: MeetingRoomId, at: DateTime<Utc>) -> AppResult<()>;
+
+    // ------------------------------------------------------------ chat
+
+    /// Insert, idempotent on `(meeting room, sender, client_message_id)`: a replay returns the
+    /// stored message and `false`.
+    async fn insert_chat_message(&self, m: NewChatMessage<'_>) -> AppResult<(ChatMessage, bool)>;
+    /// Oldest-first page ending right before `before` (a message id of the same room).
+    async fn list_chat_messages(
+        &self,
+        room: MeetingRoomId,
+        before: Option<Uuid>,
+        limit: i64,
+        include_hidden: bool,
+    ) -> AppResult<Vec<ChatMessage>>;
+    /// Hide (never erase) a message and record the moderation event once. `None`: no such
+    /// message in this meeting.
+    async fn hide_chat_message(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+        by: UserId,
+        reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<ChatMessage>>;
 }

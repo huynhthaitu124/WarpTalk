@@ -38,6 +38,13 @@ pub struct JoinByIdRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateLanguagesRequest {
+    pub speak_language: Option<String>,
+    pub listen_language: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListQuery {
     pub workspace_id: WorkspaceId,
     pub page: Option<u32>,

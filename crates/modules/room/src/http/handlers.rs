@@ -10,7 +10,7 @@ type ApiResult<T> = AppResult<Json<T>>;
 use super::dto::{
     AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
     CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, JoinedDto, ListQuery,
-    PageDto, ParticipantDto, RoomDto, RoutesDto,
+    PageDto, ParticipantDto, RoomDto, RoutesDto, UpdateLanguagesRequest,
 };
 use crate::application::ports::RoomRecord;
 use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom};
@@ -310,4 +310,18 @@ pub async fn bridge_audio_mode(
         .set_bridge_audio_mode(id, auth.user_id(), mode)
         .await?;
     bridge_state(&s, room)
+}
+
+pub async fn update_languages(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+    Json(req): Json<UpdateLanguagesRequest>,
+) -> ApiResult<ParticipantDto> {
+    Ok(Json(
+        s.service
+            .update_languages(id, auth.user_id(), req.speak_language, req.listen_language)
+            .await?
+            .into(),
+    ))
 }

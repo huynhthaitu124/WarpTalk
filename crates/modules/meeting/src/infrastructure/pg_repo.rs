@@ -11,8 +11,11 @@ use uuid::Uuid;
 use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppResult, MeetingRoomId, RoomId, UserId};
 
-use crate::application::ports::{MeetingRepo, MeetingRoom, NewParticipant};
+use crate::application::ports::{
+    ChatMessage, MeetingRepo, MeetingRoom, NewChatMessage, NewParticipant,
+};
 use crate::domain::{STATUS_ACTIVE, STATUS_FINISHED, TrackChange};
+use std::collections::BTreeMap;
 
 pub struct PgMeetingRepo {
     pool: PgPool,
@@ -61,6 +64,69 @@ async fn ensure_participant(
     .fetch_one(pool)
     .await?;
     row.try_get("id")
+}
+
+const CHAT_COLS: &str = "id, meeting_room_id, sender_user_id, sender_display_name, original_text, \
+     original_language, created_at, is_hidden";
+
+fn chat_from_row(r: &PgRow) -> Result<ChatMessage, sqlx::Error> {
+    Ok(ChatMessage {
+        id: r.try_get("id")?,
+        meeting_room_id: MeetingRoomId::from_uuid(r.try_get("meeting_room_id")?),
+        sender_id: r
+            .try_get::<Option<Uuid>, _>("sender_user_id")?
+            .map(UserId::from_uuid),
+        sender_name: r.try_get("sender_display_name")?,
+        content: r.try_get("original_text")?,
+        original_language: r.try_get("original_language")?,
+        created_at: r.try_get("created_at")?,
+        hidden: r.try_get("is_hidden")?,
+        translations: BTreeMap::new(),
+    })
+}
+
+impl PgMeetingRepo {
+    async fn attach_translations(&self, msgs: &mut [ChatMessage]) -> AppResult<()> {
+        if msgs.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<Uuid> = msgs.iter().map(|m| m.id).collect();
+        let rows = sqlx::query(
+            "SELECT message_id, target_language, translated_text \
+             FROM meeting.meeting_chat_translations WHERE message_id = ANY($1) \
+             ORDER BY prompt_version",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        for r in rows {
+            let id: Uuid = r.try_get("message_id").map_err(map_sqlx_error)?;
+            if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+                m.translations.insert(
+                    r.try_get("target_language").map_err(map_sqlx_error)?,
+                    r.try_get("translated_text").map_err(map_sqlx_error)?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn chat_by_id(&self, room: MeetingRoomId, id: Uuid) -> AppResult<Option<ChatMessage>> {
+        let row = sqlx::query(&format!(
+            "SELECT {CHAT_COLS} FROM meeting.meeting_chat_messages \
+             WHERE id = $1 AND meeting_room_id = $2"
+        ))
+        .bind(id)
+        .bind(room.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let Some(row) = row else { return Ok(None) };
+        let mut v = vec![chat_from_row(&row).map_err(map_sqlx_error)?];
+        self.attach_translations(&mut v).await?;
+        Ok(v.pop())
+    }
 }
 
 #[async_trait]
@@ -376,5 +442,125 @@ impl MeetingRepo for PgMeetingRepo {
         .map_err(map_sqlx_error)?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(())
+    }
+
+    async fn insert_chat_message(&self, m: NewChatMessage<'_>) -> AppResult<(ChatMessage, bool)> {
+        let id = Uuid::now_v7();
+        let inserted = sqlx::query(
+            "INSERT INTO meeting.meeting_chat_messages \
+               (id, meeting_room_id, workspace_id, sender_user_id, sender_display_name, \
+                original_language, original_text, translation_enabled, client_message_id, \
+                created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $9) \
+             ON CONFLICT (meeting_room_id, sender_user_id, client_message_id) \
+               WHERE client_message_id IS NOT NULL DO NOTHING",
+        )
+        .bind(id)
+        .bind(m.meeting_room_id.as_uuid())
+        .bind(m.workspace_id.as_uuid())
+        .bind(m.sender_id.as_uuid())
+        .bind(m.sender_name)
+        .bind(m.original_language)
+        .bind(m.content)
+        .bind(m.client_message_id)
+        .bind(m.now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected()
+            == 1;
+        let id = if inserted {
+            id
+        } else {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM meeting.meeting_chat_messages \
+                 WHERE meeting_room_id = $1 AND sender_user_id = $2 AND client_message_id = $3",
+            )
+            .bind(m.meeting_room_id.as_uuid())
+            .bind(m.sender_id.as_uuid())
+            .bind(m.client_message_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+        };
+        let msg = self
+            .chat_by_id(m.meeting_room_id, id)
+            .await?
+            .ok_or_else(|| warptalk_kernel::AppError::internal("chat message vanished"))?;
+        Ok((msg, inserted))
+    }
+
+    async fn list_chat_messages(
+        &self,
+        room: MeetingRoomId,
+        before: Option<Uuid>,
+        limit: i64,
+        include_hidden: bool,
+    ) -> AppResult<Vec<ChatMessage>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {CHAT_COLS} FROM meeting.meeting_chat_messages \
+             WHERE meeting_room_id = $1 AND ($2 OR NOT is_hidden) \
+               AND ($3::uuid IS NULL OR (created_at, id) < ( \
+                    SELECT created_at, id FROM meeting.meeting_chat_messages \
+                    WHERE id = $3 AND meeting_room_id = $1)) \
+             ORDER BY created_at DESC, id DESC LIMIT $4"
+        ))
+        .bind(room.as_uuid())
+        .bind(include_hidden)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let mut msgs = rows
+            .iter()
+            .rev()
+            .map(chat_from_row)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlx_error)?;
+        self.attach_translations(&mut msgs).await?;
+        Ok(msgs)
+    }
+
+    async fn hide_chat_message(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+        by: UserId,
+        reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<ChatMessage>> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let changed = sqlx::query(
+            "UPDATE meeting.meeting_chat_messages SET is_hidden = true, updated_at = $3 \
+             WHERE id = $1 AND meeting_room_id = $2 AND NOT is_hidden",
+        )
+        .bind(message)
+        .bind(room.as_uuid())
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected()
+            == 1;
+        if changed {
+            sqlx::query(
+                "INSERT INTO meeting.meeting_chat_moderation_events \
+                   (id, message_id, meeting_room_id, moderated_by_user_id, action, reason, \
+                    created_at) \
+                 VALUES ($1, $2, $3, $4, 'hidden', $5, $6)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(message)
+            .bind(room.as_uuid())
+            .bind(by.as_uuid())
+            .bind(reason)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        tx.commit().await.map_err(map_sqlx_error)?;
+        self.chat_by_id(room, message).await
     }
 }

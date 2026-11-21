@@ -1465,3 +1465,119 @@ async fn extractor_rejections_are_json() {
     }
     let _ = ws;
 }
+
+#[tokio::test]
+async fn participant_language_update_reconciles_routes() {
+    let Some(mut c) = ctx().await else { return };
+    let (host, alice, outsider) = (UserId::new(), UserId::new(), UserId::new());
+    let ws = WorkspaceId::new();
+    for u in [host, alice] {
+        c.policy.set_role(ws, u, WorkspaceRole::Member);
+    }
+    let rooms = "/translation-rooms";
+    let body = json!({"workspaceId": ws, "title": "Langs", "sourceLanguage": "vi",
+        "targetLanguages": ["en"], "requiresApproval": false});
+    let (st, v) = c.call(Method::POST, rooms, host, Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    let uri = format!("{rooms}/{room}/participants/me/languages");
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("{rooms}/{room}/join"),
+            host,
+            Some(json!({"speakLanguage": "vi", "listenLanguage": "vi"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let host_pid = v["participants"]
+        .as_array()
+        .and_then(|a| a.iter().find(|p| p["userId"] == host.to_string()))
+        .map(|p| p["id"].as_str().unwrap().to_owned())
+        .or_else(|| v["participant"]["id"].as_str().map(str::to_owned))
+        .or_else(|| v["id"].as_str().map(str::to_owned))
+        .unwrap();
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("{rooms}/{room}/join"),
+            alice,
+            Some(json!({"speakLanguage": "en", "listenLanguage": "en"})),
+        )
+        .await;
+    assert_eq!(
+        (st, v["status"].as_str()),
+        (StatusCode::OK, Some("CONNECTED"))
+    );
+    let alice_pid = v["id"].as_str().unwrap().to_owned();
+    let parts = [(host_pid.as_str(), "host"), (alice_pid.as_str(), "alice")];
+    let (st, _) = c.post(&format!("{rooms}/{room}/start"), host).await;
+    assert_eq!(st, StatusCode::OK);
+    let (snap, _) = c.cached_routes(&room).await;
+    assert_eq!(
+        route_pairs(&snap, &parts),
+        vec![
+            s("alice", "host", "en", "vi"),
+            s("host", "alice", "vi", "en")
+        ]
+    );
+
+    // alice listens in vi: host->alice route disappears
+    let (st, v) = c
+        .call(
+            Method::PUT,
+            &uri,
+            alice,
+            Some(json!({"listenLanguage": "vi"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["speakLanguage"].as_str(), v["listenLanguage"].as_str()),
+        (Some("en"), Some("vi"))
+    );
+    let (snap, _) = c.cached_routes(&room).await;
+    assert_eq!(
+        route_pairs(&snap, &parts),
+        vec![s("alice", "host", "en", "vi")]
+    );
+
+    // alice goes listen-only: no routes at all
+    let (st, v) = c
+        .call(
+            Method::PUT,
+            &uri,
+            alice,
+            Some(json!({"speakLanguage": "none"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["speakLanguage"], "none");
+    let (snap, _) = c.cached_routes(&room).await;
+    assert!(snap["routes"].as_array().unwrap().is_empty());
+
+    // validation: language outside the room, empty body, listen cannot be none
+    for bad in [
+        json!({"speakLanguage": "fr"}),
+        json!({"listenLanguage": "none"}),
+    ] {
+        let (st, v) = c.call(Method::PUT, &uri, alice, Some(bad)).await;
+        assert_eq!(
+            (st, v["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("LANGUAGE_NOT_IN_ROOM"))
+        );
+    }
+    let (st, _) = c.call(Method::PUT, &uri, alice, Some(json!({}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // non-participant: 404
+    let (st, _) = c
+        .call(
+            Method::PUT,
+            &uri,
+            outsider,
+            Some(json!({"listenLanguage": "en"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

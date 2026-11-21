@@ -17,8 +17,8 @@ use warptalk_livekit::{
     InMemoryRoomService, LiveKitConfig, RoomServiceCall, TokenClaims, sign_webhook,
 };
 use warptalk_meeting::application::ports::{
-    BridgeInfo, EVENT_BILLING_STOP, EVENT_END_ROOM, InMemoryMeetingEventPublisher,
-    InMemoryRoomDirectory, RoomInfo,
+    BridgeInfo, EVENT_BILLING_STOP, EVENT_CHAT_HIDDEN, EVENT_CHAT_TRANSLATE, EVENT_END_ROOM,
+    InMemoryMeetingEventPublisher, InMemoryRoomDirectory, RoomInfo,
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MIGRATIONS, MeetingDeps, MeetingModule};
 use warptalk_web::JwtKeys;
@@ -620,4 +620,331 @@ async fn invalid_json_body_is_a_json_error() {
     let (st, v) = c.post("/meetings/not-a-uuid/end", host).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert_eq!(v["code"], "INVALID_REQUEST", "{v}");
+}
+
+// ---------------------------------------------------------------- chat
+
+impl Ctx {
+    async fn call(
+        &self,
+        m: Method,
+        uri: &str,
+        user: UserId,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let token = self
+            .keys
+            .issue_access(user, Uuid::new_v4(), false, Utc::now())
+            .unwrap()
+            .0;
+        let mut b = Request::builder()
+            .method(m)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"));
+        let body = match body {
+            Some(v) => {
+                b = b.header("content-type", "application/json");
+                Body::from(v.to_string())
+            }
+            None => Body::empty(),
+        };
+        self.send(b.body(body).unwrap()).await
+    }
+
+    async fn say(&self, room: RoomId, user: UserId, text: &str, cid: &str) -> (StatusCode, Value) {
+        self.call(
+            Method::POST,
+            &format!("/meetings/{room}/chat/messages"),
+            user,
+            Some(json!({"content": text, "clientMessageId": cid})),
+        )
+        .await
+    }
+
+    async fn history(&self, room: RoomId, user: UserId, query: &str) -> (StatusCode, Value) {
+        self.call(
+            Method::GET,
+            &format!("/meetings/{room}/chat/messages{query}"),
+            user,
+            None,
+        )
+        .await
+    }
+
+    /// Room in progress, a joined host and one CONNECTED guest who joined too.
+    async fn chat_room(&self) -> (RoomId, UserId, UserId) {
+        let (room, host) = self.room("IN_PROGRESS");
+        let guest = UserId::new();
+        self.dir.set_participant(room, guest, "CONNECTED", "Guest");
+        for u in [host, guest] {
+            let (st, b) = self.post(&format!("/meetings/{room}/join"), u).await;
+            assert_eq!(st, StatusCode::OK, "{b}");
+        }
+        (room, host, guest)
+    }
+}
+
+#[tokio::test]
+async fn chat_post_history_and_idempotency() {
+    let Some(c) = ctx().await else { return };
+    let (room, host, guest) = c.chat_room().await;
+
+    let (st, m1) = c.say(room, guest, "  hello  ", "c-1").await;
+    assert_eq!(st, StatusCode::CREATED, "{m1}");
+    assert_eq!(m1["content"], "hello");
+    assert_eq!(m1["senderId"], guest.to_string());
+    assert_eq!(m1["senderName"], "Guest");
+    assert_eq!(m1["hidden"], false);
+    assert_eq!(m1["translations"], json!({}));
+    assert!(m1["messageId"].is_string() && m1["createdAt"].is_string());
+
+    // replay with the same clientMessageId: same message, no duplicate, no second publish
+    let (st, again) = c.say(room, guest, "hello", "c-1").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(again["messageId"], m1["messageId"]);
+    // same id from another sender is a different message
+    let (st, m2) = c.say(room, host, "hi guest", "c-1").await;
+    assert_eq!(st, StatusCode::CREATED, "{m2}");
+    assert_ne!(m2["messageId"], m1["messageId"]);
+
+    let requests: Vec<_> = c
+        .events
+        .events()
+        .into_iter()
+        .filter(|e| e.event_type == EVENT_CHAT_TRANSLATE)
+        .filter(|e| e.payload["translation_room_id"] == room.to_string())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].payload["text"], "hello");
+    assert_eq!(requests[0].payload["message_id"], m1["messageId"]);
+
+    // history: newest last
+    let (st, h) = c.history(room, host, "").await;
+    assert_eq!(st, StatusCode::OK, "{h}");
+    let ids: Vec<_> = h
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["messageId"].clone())
+        .collect();
+    assert_eq!(ids, vec![m1["messageId"].clone(), m2["messageId"].clone()]);
+
+    // paging with limit + before
+    for i in 0..4 {
+        c.say(room, guest, &format!("m{i}"), &format!("p-{i}"))
+            .await;
+    }
+    let (_, page) = c.history(room, guest, "?limit=3").await;
+    let page = page.as_array().unwrap().clone();
+    assert_eq!(page.len(), 3);
+    assert_eq!(
+        page.iter()
+            .map(|m| m["content"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("m1"), json!("m2"), json!("m3")]
+    );
+    let before = page[0]["messageId"].as_str().unwrap();
+    let (_, older) = c
+        .history(room, guest, &format!("?limit=50&before={before}"))
+        .await;
+    assert_eq!(
+        older
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["content"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("hello"), json!("hi guest"), json!("m0")]
+    );
+    // limit is clamped to 1..50 instead of failing
+    assert_eq!(
+        c.history(room, guest, "?limit=0")
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(c.history(room, guest, "?limit=500").await.0, StatusCode::OK);
+
+    // translations written by the worker are returned
+    sqlx::query(
+        "INSERT INTO meeting.meeting_chat_translations \
+         (id, message_id, meeting_room_id, source_language, target_language, translated_text, created_at) \
+         SELECT $1, id, meeting_room_id, 'en', 'vi', 'xin chao', now() \
+         FROM meeting.meeting_chat_messages WHERE id = $2",
+    )
+    .bind(Uuid::now_v7())
+    .bind(m1["messageId"].as_str().unwrap().parse::<Uuid>().unwrap())
+    .execute(&c.pool)
+    .await
+    .unwrap();
+    let (_, h) = c
+        .history(
+            room,
+            host,
+            "?limit=50&before=00000000-0000-0000-0000-000000000000",
+        )
+        .await;
+    assert_eq!(h, json!([]));
+    let (_, h) = c.history(room, host, "").await;
+    assert_eq!(h[0]["translations"], json!({"vi": "xin chao"}));
+}
+
+#[tokio::test]
+async fn chat_validation_and_access() {
+    let Some(c) = ctx().await else { return };
+    let (room, host, guest) = c.chat_room().await;
+
+    // content bounds: 1000 chars ok (multi-byte counted as chars), 1001 rejected, blank rejected
+    let ok = "é".repeat(1000);
+    assert_eq!(
+        c.say(room, guest, &ok, "len-ok").await.0,
+        StatusCode::CREATED
+    );
+    let (st, b) = c.say(room, guest, &"é".repeat(1001), "len-bad").await;
+    assert_eq!(
+        (st, b["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("VALIDATION_ERROR"))
+    );
+    assert_eq!(
+        c.say(room, guest, "   ", "blank").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(c.say(room, guest, "x", "").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        c.say(room, guest, "x", &"i".repeat(101)).await.0,
+        StatusCode::BAD_REQUEST
+    );
+
+    // non-participant / waiting / kicked cannot post or read
+    let stranger = UserId::new();
+    let waiting = UserId::new();
+    let kicked = UserId::new();
+    c.dir.set_participant(room, waiting, "WAITING", "W");
+    c.dir.set_participant(room, kicked, "KICKED", "K");
+    for u in [stranger, waiting, kicked] {
+        assert_eq!(c.say(room, u, "hey", "x-1").await.0, StatusCode::FORBIDDEN);
+        assert_eq!(c.history(room, u, "").await.0, StatusCode::FORBIDDEN);
+    }
+    // unknown room
+    assert_eq!(
+        c.say(RoomId::new(), host, "hey", "x").await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    // a participant who left keeps read access but cannot post
+    let leaver = UserId::new();
+    c.dir.set_participant(room, leaver, "LEFT", "L");
+    assert_eq!(c.history(room, leaver, "").await.0, StatusCode::OK);
+    assert_eq!(
+        c.say(room, leaver, "bye", "l-1").await.0,
+        StatusCode::FORBIDDEN
+    );
+
+    // ended meeting: no new messages, history still readable
+    let (st, _) = c.post(&format!("/meetings/{room}/end"), host).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, b) = c.say(room, guest, "late", "late-1").await;
+    assert_eq!(
+        (st, b["code"].as_str()),
+        (StatusCode::CONFLICT, Some("INVALID_STATE"))
+    );
+    assert_eq!(c.history(room, guest, "").await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn chat_requires_a_started_meeting() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    let (st, _) = c.say(room, host, "anyone?", "n-1").await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, h) = c.history(room, host, "").await;
+    assert_eq!((st, h), (StatusCode::OK, json!([])));
+}
+
+#[tokio::test]
+async fn chat_hide_is_host_only_and_not_destructive() {
+    let Some(c) = ctx().await else { return };
+    let (room, host, guest) = c.chat_room().await;
+    let other = UserId::new();
+    c.dir.set_participant(room, other, "CONNECTED", "Other");
+    let (_, m) = c.say(room, guest, "rude words", "h-1").await;
+    let (_, keep) = c.say(room, guest, "fine", "h-2").await;
+    let id = m["messageId"].as_str().unwrap();
+    let uri = format!("/meetings/{room}/chat/messages/{id}/hide");
+
+    // non-host (even the author) is refused
+    for u in [guest, other] {
+        let (st, b) = c.call(Method::POST, &uri, u, None).await;
+        assert_eq!(
+            (st, b["code"].as_str()),
+            (StatusCode::FORBIDDEN, Some("FORBIDDEN"))
+        );
+    }
+    assert_eq!(
+        c.history(room, guest, "").await.1.as_array().unwrap().len(),
+        2
+    );
+
+    let (st, b) = c
+        .call(Method::POST, &uri, host, Some(json!({"reason": "abuse"})))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    assert_eq!(
+        (b["messageId"].as_str(), b["hidden"].as_bool()),
+        (Some(id), Some(true))
+    );
+    // idempotent, one audit row
+    assert_eq!(
+        c.call(Method::POST, &uri, host, None).await.0,
+        StatusCode::OK
+    );
+
+    // others no longer see it, the host still does (flagged)
+    let (_, h) = c.history(room, guest, "").await;
+    assert_eq!(h.as_array().unwrap().len(), 1);
+    assert_eq!(h[0]["messageId"], keep["messageId"]);
+    let (_, h) = c.history(room, host, "").await;
+    assert_eq!(h.as_array().unwrap().len(), 2);
+    assert_eq!(
+        (h[0]["content"].as_str(), h[0]["hidden"].as_bool()),
+        (Some("rude words"), Some(true))
+    );
+    assert_eq!(h[1]["hidden"], false);
+
+    // BR-54: the row and one moderation event remain
+    let (rows, events): (i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM meeting.meeting_chat_messages WHERE id = $1 AND is_hidden")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&c.pool)
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM meeting.meeting_chat_moderation_events WHERE message_id = $1 AND action = 'hidden'")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&c.pool)
+            .await
+            .unwrap(),
+    );
+    assert_eq!((rows, events), (1, 1));
+    assert!(
+        c.events
+            .events()
+            .iter()
+            .any(|e| e.event_type == EVENT_CHAT_HIDDEN && e.payload["message_id"] == id)
+    );
+
+    // unknown message / message of another meeting: 404
+    let missing = format!("/meetings/{room}/chat/messages/{}/hide", Uuid::now_v7());
+    assert_eq!(
+        c.call(Method::POST, &missing, host, None).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (room2, host2, _) = c.chat_room().await;
+    let cross = format!("/meetings/{room2}/chat/messages/{id}/hide");
+    assert_eq!(
+        c.call(Method::POST, &cross, host2, None).await.0,
+        StatusCode::NOT_FOUND
+    );
 }

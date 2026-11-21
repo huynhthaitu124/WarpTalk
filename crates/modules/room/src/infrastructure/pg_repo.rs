@@ -19,7 +19,7 @@ use warptalk_kernel::{
 
 use crate::application::ports::{
     Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
-    ParticipantRecord, RoomRecord, RoomRepo, VoiceConsentDirectory,
+    ParticipantRecord, RoomRecord, RoomRepo, UpdateLanguagesInput, VoiceConsentDirectory,
 };
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
@@ -1151,6 +1151,61 @@ impl RoomRepo for PgRoomRepo {
         let updated = participant_by_id(&mut tx, room, p.id).await?;
         let m = self
             .finish(&mut tx, room, Some(updated), vec![], Snap::Reconcile, now)
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(m)
+    }
+
+    async fn update_languages(&self, input: UpdateLanguagesInput) -> AppResult<Mutation> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, input.room).await?;
+        ensure_open(&rec)?;
+        let p = participant_by_user(&mut tx, input.room, input.user)
+            .await?
+            .ok_or_else(|| AppError::not_found("participant not found"))?;
+        if matches!(
+            p.status,
+            ParticipantStatus::Left | ParticipantStatus::Kicked | ParticipantStatus::Rejected
+        ) {
+            return Err(AppError::conflict(
+                "INVALID_STATE",
+                "participant is no longer in this room",
+            ));
+        }
+        let langs = room_languages(&rec.source_language, &rec.target_languages);
+        let speak = input
+            .speak_language
+            .unwrap_or_else(|| p.speak_language.clone());
+        let listen = input
+            .listen_language
+            .unwrap_or_else(|| p.listen_language.clone());
+        if !(langs.contains(&speak) || speak == LISTEN_ONLY) || !langs.contains(&listen) {
+            return Err(AppError::validation(
+                "LANGUAGE_NOT_IN_ROOM",
+                "speakLanguage and listenLanguage must be languages of the room",
+            ));
+        }
+        sqlx::query(
+            "UPDATE translation_room.translation_room_participants \
+             SET speak_language = $2, listen_language = $3, updated_at = $4 WHERE id = $1",
+        )
+        .bind(p.id.as_uuid())
+        .bind(&speak)
+        .bind(&listen)
+        .bind(input.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let updated = participant_by_id(&mut tx, input.room, p.id).await?;
+        let m = self
+            .finish(
+                &mut tx,
+                input.room,
+                Some(updated),
+                vec![],
+                Snap::Reconcile,
+                input.now,
+            )
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(m)

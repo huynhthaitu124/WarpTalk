@@ -275,6 +275,15 @@ pub struct JoinInput {
     pub now: DateTime<Utc>,
 }
 
+pub struct UpdateLanguagesInput {
+    pub room: RoomId,
+    pub user: UserId,
+    /// `None`: keep. `none` (listen-only) is allowed.
+    pub speak_language: Option<String>,
+    pub listen_language: Option<String>,
+    pub now: DateTime<Utc>,
+}
+
 /// Result of a locked mutation; the service publishes `commands` and `snapshot` after commit.
 #[derive(Debug, Clone)]
 pub struct Mutation {
@@ -328,6 +337,8 @@ pub trait RoomRepo: Send + Sync {
         now: DateTime<Utc>,
     ) -> AppResult<Mutation>;
     async fn leave(&self, room: RoomId, user: UserId, now: DateTime<Utc>) -> AppResult<Mutation>;
+    /// Change the caller's own speak/listen language; reconciles routes when the room is live.
+    async fn update_languages(&self, input: UpdateLanguagesInput) -> AppResult<Mutation>;
     async fn generate_routes(
         &self,
         room: RoomId,
