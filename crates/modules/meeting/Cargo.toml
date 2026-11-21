@@ -19,7 +19,8 @@ tracing = { workspace = true }
 warptalk-kernel = { workspace = true, features = ["axum"] }
 warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
-warptalk-livekit = { workspace = true }
+# NOTE: not yet in root [workspace.dependencies]; switch to `{ workspace = true }` once added.
+warptalk-livekit = { path = "../../providers/livekit" }
 
 [dev-dependencies]
 tokio = { workspace = true }
