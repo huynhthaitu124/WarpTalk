@@ -54,6 +54,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to Redis")?;
 
+    let livekit = warptalk_api::LiveKitSettings::from_env().map(|l| l.into_config());
+    if livekit.is_none() {
+        tracing::warn!("LIVEKIT_* not set: meeting join answers 503 LIVEKIT_NOT_CONFIGURED");
+    }
+    let opts = warptalk_api::ApiOptions {
+        livekit,
+        room_service: None,
+        redis_url: Some(redis_cfg.url.clone()),
+    };
     let jwt = JwtKeys::from_config(&jwt_cfg);
     let app = warptalk_api::build_router(
         pool,
@@ -62,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         &http.cors_origins,
         Arc::new(LogMailer),
         Some(redis),
+        opts,
     );
 
     let listener = tokio::net::TcpListener::bind(&http.bind)

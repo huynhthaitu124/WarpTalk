@@ -499,6 +499,32 @@ async fn full_room_flow() {
         Some(ws)
     );
 
+    let summary = c.module.queries().room_summary(rid).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            summary.workspace_id,
+            summary.host_id,
+            summary.effective_host_id
+        ),
+        (ws, host, host)
+    );
+    assert!(!summary.status.is_empty());
+    let p = c
+        .module
+        .queries()
+        .participant_summary(rid, host)
+        .await
+        .unwrap();
+    assert!(p.is_some());
+    assert!(
+        c.module
+            .queries()
+            .participant_summary(rid, outsider)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     // end (host only), idempotent, then the room is closed
     let (st, _) = c.post(&format!("{rooms}/{room}/end"), alice).await;
     assert_eq!(st, StatusCode::FORBIDDEN);

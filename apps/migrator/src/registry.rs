@@ -7,8 +7,10 @@ use warptalk_db::ModuleMigrations;
 pub fn registry() -> Vec<ModuleMigrations> {
     vec![
         warptalk_db::OUTBOX_MIGRATIONS,
+        warptalk_settings::MIGRATIONS,
         warptalk_identity::MIGRATIONS,
         warptalk_workspace::MIGRATIONS,
         warptalk_room::MIGRATIONS,
+        warptalk_meeting::MIGRATIONS,
     ]
 }

@@ -93,4 +93,49 @@ impl RoomQueries {
     pub async fn room_workspace(&self, room: RoomId) -> AppResult<Option<WorkspaceId>> {
         Ok(self.repo.get(room).await?.map(|r| r.workspace_id))
     }
+
+    /// Summary of a room for other modules; `None` when it does not exist.
+    pub async fn room_summary(&self, room: RoomId) -> AppResult<Option<RoomSummary>> {
+        Ok(self.repo.get(room).await?.map(|r| RoomSummary {
+            workspace_id: r.workspace_id,
+            host_id: r.host_id,
+            effective_host_id: r.effective_host(),
+            status: r.status.as_str().to_owned(),
+        }))
+    }
+
+    /// Participant status of `user` in `room`; `None` when the user never joined.
+    pub async fn participant_summary(
+        &self,
+        room: RoomId,
+        user: UserId,
+    ) -> AppResult<Option<ParticipantSummary>> {
+        Ok(self
+            .repo
+            .participants(room)
+            .await?
+            .into_iter()
+            .find(|p| p.user_id == Some(user))
+            .map(|p| ParticipantSummary {
+                status: p.status.as_str().to_owned(),
+                display_name: p.display_name,
+            }))
+    }
+}
+
+/// Read-only room facts (`status` is the room status string, e.g. `IN_PROGRESS`).
+#[derive(Debug, Clone)]
+pub struct RoomSummary {
+    pub workspace_id: WorkspaceId,
+    pub host_id: UserId,
+    /// `COALESCE(active_host_id, host_id)`.
+    pub effective_host_id: UserId,
+    pub status: String,
+}
+
+/// Read-only participant facts (`status` is e.g. `WAITING`, `CONNECTED`).
+#[derive(Debug, Clone)]
+pub struct ParticipantSummary {
+    pub status: String,
+    pub display_name: String,
 }

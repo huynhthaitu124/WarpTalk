@@ -23,7 +23,7 @@ axum = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-warptalk-kernel = { workspace = true }
+warptalk-kernel = { workspace = true, features = ["axum"] }
 warptalk-config = { workspace = true }
 warptalk-telemetry = { workspace = true }
 warptalk-db = { workspace = true }
@@ -33,8 +33,13 @@ warptalk-workspace = { workspace = true }
 warptalk-room = { workspace = true }
 warptalk-bus = { workspace = true }
 redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+warptalk-contracts = { workspace = true }
+warptalk-livekit = { workspace = true }
+warptalk-meeting = { workspace = true }
+warptalk-settings = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tower = { workspace = true, features = ["util"] }
-uuid = { workspace = true }

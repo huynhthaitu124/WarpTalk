@@ -17,3 +17,5 @@ warptalk-db = { workspace = true }
 warptalk-identity = { workspace = true }
 warptalk-workspace = { workspace = true }
 warptalk-room = { workspace = true }
+warptalk-settings = { workspace = true }
+warptalk-meeting = { workspace = true }
