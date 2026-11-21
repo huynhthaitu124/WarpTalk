@@ -13,10 +13,10 @@ use serde_json::{Value, json};
 use warptalk_bus::xadd;
 use warptalk_contracts::events::{SYSTEM_SPEAKER, SttResult};
 use warptalk_kernel::{Clock, RoomId, WorkspaceId};
-use warptalk_llm::{
-    CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response,
+use warptalk_llm::{CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response};
+use warptalk_telemetry::{
+    Outcome as Metric, STAGE_OUTCOME_METRIC, StageTimer, record_stage_outcome,
 };
-use warptalk_telemetry::{Outcome as Metric, STAGE_OUTCOME_METRIC, StageTimer, record_stage_outcome};
 
 use super::config::{
     CategoryKind, LanguageMode, ResolvedCategory, RetrievalMode, SuggestionConfig, primary_language,
@@ -93,6 +93,16 @@ pub struct SuggestionEngine {
 enum CallError {
     Timeout,
     Failed,
+}
+
+struct RequestSpec {
+    model: String,
+    system: String,
+    user: String,
+    schema: JsonSchemaFormat,
+    max_tokens: u32,
+    purpose: Purpose,
+    version: String,
 }
 
 struct Decision {
@@ -216,7 +226,12 @@ impl SuggestionEngine {
             return Admission::Rejected(fin(Outcome::FlagOff));
         }
         // Gate 4: host-paused transcript is skipped BEFORE the window.
-        if self.deps.signals.transcript_paused(room, &stt.segment_id).await {
+        if self
+            .deps
+            .signals
+            .transcript_paused(room, &stt.segment_id)
+            .await
+        {
             return Admission::Rejected(fin(Outcome::TranscriptPaused));
         }
 
@@ -316,7 +331,10 @@ impl SuggestionEngine {
             }
         };
         let mut consent: Option<bool> = None;
-        if self.blocked_by_policy(&decide_llm, workspace, room, consent_age, &mut consent).await {
+        if self
+            .blocked_by_policy(&decide_llm, workspace, room, consent_age, &mut consent)
+            .await
+        {
             return fin(Outcome::BlockedPolicy);
         }
 
@@ -379,7 +397,10 @@ impl SuggestionEngine {
                 return fin(Outcome::ProviderUnavailable);
             }
         };
-        if self.blocked_by_policy(&gen_llm, workspace, room, consent_age, &mut consent).await {
+        if self
+            .blocked_by_policy(&gen_llm, workspace, room, consent_age, &mut consent)
+            .await
+        {
             return fin(Outcome::BlockedPolicy);
         }
 
@@ -462,21 +483,11 @@ impl SuggestionEngine {
         format!("<transcript>\n{}\n</transcript>", lines.join("\n"))
     }
 
-    fn request(
-        cfg: &SuggestionConfig,
-        model: String,
-        system: String,
-        user: String,
-        schema: JsonSchemaFormat,
-        max_tokens: u32,
-        purpose: Purpose,
-        version: &str,
-        workspace: WorkspaceId,
-    ) -> Request {
-        let mut req = Request::new(model, vec![Message::user(user)]);
-        req.system = Some(system);
-        req.response_format = Some(schema);
-        req.max_output_tokens = Some(max_tokens);
+    fn request(cfg: &SuggestionConfig, workspace: WorkspaceId, spec: RequestSpec) -> Request {
+        let mut req = Request::new(spec.model, vec![Message::user(spec.user)]);
+        req.system = Some(spec.system);
+        req.response_format = Some(spec.schema);
+        req.max_output_tokens = Some(spec.max_tokens);
         req.temperature = Some(cfg.temperature);
         if cfg.prompt_cache {
             req.cache_hint = Some(CacheHint {
@@ -484,8 +495,9 @@ impl SuggestionEngine {
                 key: Some(format!("suggestion:{workspace}")),
             });
         }
-        req.metadata.insert("purpose".into(), purpose.as_str().into());
-        req.metadata.insert("prompt_version".into(), version.to_string());
+        req.metadata
+            .insert("purpose".into(), spec.purpose.as_str().into());
+        req.metadata.insert("prompt_version".into(), spec.version);
         req
     }
 
@@ -568,17 +580,22 @@ impl SuggestionEngine {
             }),
             strict: true,
         };
-        let model = llm.model.clone().unwrap_or_else(|| cfg.decide_model.clone());
+        let model = llm
+            .model
+            .clone()
+            .unwrap_or_else(|| cfg.decide_model.clone());
         let req = Self::request(
             cfg,
-            model,
-            system,
-            user,
-            schema,
-            cfg.decide_max_tokens,
-            Purpose::SuggestionDecide,
-            &sys_t.version,
             a.workspace,
+            RequestSpec {
+                model,
+                system,
+                user,
+                schema,
+                max_tokens: cfg.decide_max_tokens,
+                purpose: Purpose::SuggestionDecide,
+                version: sys_t.version.clone(),
+            },
         );
         let timeout = Duration::from_secs_f32(cfg.request_timeout_seconds);
         // No retries: a late hint is worthless.
@@ -590,7 +607,10 @@ impl SuggestionEngine {
             tracing::debug!(room = %a.room, "decide returned no JSON");
             return Err(());
         };
-        let should = v.get("should_suggest").and_then(Value::as_bool).unwrap_or(false);
+        let should = v
+            .get("should_suggest")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let confidence = v
             .get("confidence")
             .and_then(Value::as_f64)
@@ -812,17 +832,22 @@ impl SuggestionEngine {
         } else {
             1
         };
-        let model = llm.model.clone().unwrap_or_else(|| cfg.generate_model.clone());
+        let model = llm
+            .model
+            .clone()
+            .unwrap_or_else(|| cfg.generate_model.clone());
         let req = Self::request(
             cfg,
-            model,
-            system,
-            user,
-            schema,
-            cfg.generate_max_tokens.saturating_mul(multiplier),
-            Purpose::SuggestionGenerate,
-            &sys_t.version,
             a.workspace,
+            RequestSpec {
+                model,
+                system,
+                user,
+                schema,
+                max_tokens: cfg.generate_max_tokens.saturating_mul(multiplier),
+                purpose: Purpose::SuggestionGenerate,
+                version: sys_t.version.clone(),
+            },
         );
         let timeout = Duration::from_secs_f32(cfg.request_timeout_seconds);
         let resp = Self::call(STAGE_GENERATE, llm, &req, timeout)
@@ -854,13 +879,7 @@ impl SuggestionEngine {
         })
     }
 
-    fn sources(
-        generated_source: &str,
-        snippets: &[GroundedSnippet],
-        cfg: &SuggestionConfig,
-        _category: &ResolvedCategory,
-    ) -> Vec<SourceRef> {
-        let _ = cfg;
+    fn sources(generated_source: &str, snippets: &[GroundedSnippet]) -> Vec<SourceRef> {
         let wanted = generated_source.trim().to_lowercase();
         if wanted.is_empty() {
             return Vec::new();
@@ -993,7 +1012,9 @@ impl SuggestionEngine {
         }
 
         let follow_up = if category.kind == CategoryKind::FollowUp {
-            g.follow_up.as_ref().and_then(|raw| Self::build_follow_up(raw, a))
+            g.follow_up
+                .as_ref()
+                .and_then(|raw| Self::build_follow_up(raw, a))
         } else {
             None
         };
@@ -1016,7 +1037,7 @@ impl SuggestionEngine {
             confidence: decision.confidence,
             language,
             token_count: decision.tokens.saturating_add(g.tokens),
-            sources: Self::sources(&g.source, snippets, cfg, category),
+            sources: Self::sources(&g.source, snippets),
             timestamp_ms: now_ms,
             ttl_seconds: category.ttl_seconds,
             conflict: g.conflict,

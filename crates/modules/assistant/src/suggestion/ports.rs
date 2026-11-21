@@ -74,7 +74,12 @@ pub struct AllowAllConsent;
 
 #[async_trait]
 impl ConsentPolicy for AllowAllConsent {
-    async fn external_llm_allowed(&self, _: WorkspaceId, _: RoomId, _: std::time::Duration) -> bool {
+    async fn external_llm_allowed(
+        &self,
+        _: WorkspaceId,
+        _: RoomId,
+        _: std::time::Duration,
+    ) -> bool {
         true
     }
 }

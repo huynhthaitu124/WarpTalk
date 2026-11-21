@@ -41,7 +41,12 @@ pub fn looks_like_question(text: &str, h: &HeuristicLang) -> bool {
 
 /// `stt_confidence` is an average token logprob (<= 0); `None` or the configured sentinel means
 /// "unknown" and always passes (WT-543).
-pub fn check(cfg: &SuggestionConfig, text: &str, language: &str, stt_confidence: Option<f64>) -> Stage0 {
+pub fn check(
+    cfg: &SuggestionConfig,
+    text: &str,
+    language: &str,
+    stt_confidence: Option<f64>,
+) -> Stage0 {
     let text = text.trim();
     if text.is_empty() {
         return Stage0::Reject("empty");
@@ -84,7 +89,10 @@ mod tests {
     fn rejects_empty_short_and_filler() {
         let c = cfg();
         assert_eq!(check(&c, "  ", "en", None), Stage0::Reject("empty"));
-        assert_eq!(check(&c, "ok then", "en", None), Stage0::Reject("too_short"));
+        assert_eq!(
+            check(&c, "ok then", "en", None),
+            Stage0::Reject("too_short")
+        );
         assert_eq!(
             check(&c, "yeah yeah okay sure right", "en", None),
             Stage0::Reject("filler")
@@ -104,7 +112,10 @@ mod tests {
         let c = cfg();
         assert_eq!(check(&c, "JavaScript là gì?", "vi", None), Stage0::Pass);
         assert_eq!(check(&c, "what is Next", "en", None), Stage0::Pass);
-        assert_eq!(check(&c, "Next.js now", "en", None), Stage0::Reject("too_short"));
+        assert_eq!(
+            check(&c, "Next.js now", "en", None),
+            Stage0::Reject("too_short")
+        );
     }
 
     #[test]
@@ -113,7 +124,10 @@ mod tests {
         let t = "we ship the beta on Friday";
         assert_eq!(check(&c, t, "en", Some(-1.0)), Stage0::Pass);
         assert_eq!(check(&c, t, "en", None), Stage0::Pass);
-        assert_eq!(check(&c, t, "en", Some(-0.9)), Stage0::Reject("low_stt_confidence"));
+        assert_eq!(
+            check(&c, t, "en", Some(-0.9)),
+            Stage0::Reject("low_stt_confidence")
+        );
         assert_eq!(check(&c, t, "en", Some(-0.1)), Stage0::Pass);
     }
 
@@ -123,6 +137,9 @@ mod tests {
         c.min_words = 2;
         assert_eq!(check(&c, "ship Friday", "en", None), Stage0::Pass);
         c.min_words = 8;
-        assert_eq!(check(&c, "we ship the beta on Friday", "en", None), Stage0::Reject("too_short"));
+        assert_eq!(
+            check(&c, "we ship the beta on Friday", "en", None),
+            Stage0::Reject("too_short")
+        );
     }
 }

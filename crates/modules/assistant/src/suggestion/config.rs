@@ -447,8 +447,18 @@ impl Validate for SuggestionConfig {
         check_range("max_detail_chars", self.max_detail_chars, 0, 8000)?;
         check_range("decide_max_tokens", self.decide_max_tokens, 16, 4096)?;
         check_range("generate_max_tokens", self.generate_max_tokens, 32, 8192)?;
-        check_range("window.chars_per_token", self.window.chars_per_token, 1.0, 16.0)?;
-        check_range("window.max_age_seconds", self.window.max_age_seconds, 0, 86_400)?;
+        check_range(
+            "window.chars_per_token",
+            self.window.chars_per_token,
+            1.0,
+            16.0,
+        )?;
+        check_range(
+            "window.max_age_seconds",
+            self.window.max_age_seconds,
+            0,
+            86_400,
+        )?;
         check_range(
             "budget.workspace_window_seconds",
             self.budget.workspace_window_seconds,
@@ -458,7 +468,12 @@ impl Validate for SuggestionConfig {
         check_range("hygiene.digit_run_min", self.hygiene.digit_run_min, 0, 40)?;
         check_range("dedup.window_seconds", self.dedup.window_seconds, 0, 86_400)?;
         check_range("retrieval.top_k", self.retrieval.top_k, 1, 20)?;
-        check_range("retrieval.timeout_ms", self.retrieval.timeout_ms, 100, 30_000)?;
+        check_range(
+            "retrieval.timeout_ms",
+            self.retrieval.timeout_ms,
+            100,
+            30_000,
+        )?;
         check_range(
             "language.max_reader_languages",
             self.language.max_reader_languages,
@@ -503,13 +518,14 @@ impl Validate for SuggestionConfig {
                 return Err("heuristics keys must not be empty".into());
             }
             if h.question_marks.iter().any(|m| m.is_empty()) {
-                return Err(format!("heuristics.{lang}.question_marks has an empty entry"));
+                return Err(format!(
+                    "heuristics.{lang}.question_marks has an empty entry"
+                ));
             }
         }
         for (name, text) in self
             .prompts
             .iter()
-            .map(|(n, t)| (n, t))
             .chain(self.prompt_templates.iter().map(|(n, t)| (n, &t.text)))
         {
             if !prompt::TEMPLATE_NAMES.contains(&name.as_str()) {
@@ -716,10 +732,21 @@ mod tests {
     fn builtin_defaults_parse() {
         let cfg = SuggestionConfig::default();
         cfg.validate().unwrap();
-        let ids: Vec<_> = cfg.resolved_categories().into_iter().map(|c| c.id).collect();
+        let ids: Vec<_> = cfg
+            .resolved_categories()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
         assert_eq!(
             ids,
-            ["clarification", "term", "correction", "fact", "action_item", "follow_up"]
+            [
+                "clarification",
+                "term",
+                "correction",
+                "fact",
+                "action_item",
+                "follow_up"
+            ]
         );
         assert!(!builtin_heuristics().is_empty());
         assert!(!builtin_language_names().is_empty());
@@ -727,10 +754,9 @@ mod tests {
 
     #[test]
     fn partial_document_inherits_defaults() {
-        let cfg: SuggestionConfig = serde_json::from_value(
-            json!({"min_confidence": 0.9, "window": {"max_tokens": 500}}),
-        )
-        .unwrap();
+        let cfg: SuggestionConfig =
+            serde_json::from_value(json!({"min_confidence": 0.9, "window": {"max_tokens": 500}}))
+                .unwrap();
         assert!((cfg.min_confidence - 0.9).abs() < 1e-6);
         assert_eq!(cfg.window.max_tokens, 500);
         assert!((cfg.window.chars_per_token - 4.0).abs() < 1e-6);
@@ -770,7 +796,11 @@ mod tests {
 
     #[test]
     fn rejects_bad_values() {
-        let bad = |v| serde_json::from_value::<SuggestionConfig>(v).unwrap().validate();
+        let bad = |v| {
+            serde_json::from_value::<SuggestionConfig>(v)
+                .unwrap()
+                .validate()
+        };
         assert!(bad(json!({"min_confidence": 2.0})).is_err());
         assert!(bad(json!({"prompts": {"decide": "x {{nope}}"}})).is_err());
         assert!(bad(json!({"prompts": {"bogus": "x"}})).is_err());
@@ -785,10 +815,12 @@ mod tests {
         let vi = cfg.heuristics_for("vi-VN");
         assert!(vi.question_words.contains(&"gì".to_string()));
         assert!(vi.question_marks.contains(&"?".to_string()));
-        let custom: SuggestionConfig = serde_json::from_value(
-            json!({"heuristics": {"en": {"filler_words": ["zzz"]}}}),
-        )
-        .unwrap();
-        assert_eq!(custom.heuristics_for("en").filler_words, vec!["zzz".to_string()]);
+        let custom: SuggestionConfig =
+            serde_json::from_value(json!({"heuristics": {"en": {"filler_words": ["zzz"]}}}))
+                .unwrap();
+        assert_eq!(
+            custom.heuristics_for("en").filler_words,
+            vec!["zzz".to_string()]
+        );
     }
 }

@@ -112,8 +112,8 @@ pub fn render(template: &str, vars: &BTreeMap<&str, String>) -> String {
         match after.find("}}") {
             Some(end) => {
                 let name = after[..end].trim();
-                let is_var = !name.is_empty()
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                let is_var =
+                    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
                 if is_var {
                     if let Some(v) = vars.get(name) {
                         out.push_str(v);
@@ -156,7 +156,10 @@ mod tests {
         let mut vars = BTreeMap::new();
         vars.insert("a", "{{b}}".to_string());
         vars.insert("b", "BAD".to_string());
-        assert_eq!(render("x {{a}} y {{ b }} {{nope}}!", &vars), "x {{b}} y BAD !");
+        assert_eq!(
+            render("x {{a}} y {{ b }} {{nope}}!", &vars),
+            "x {{b}} y BAD !"
+        );
         assert_eq!(render("json {\"k\": 1} {{", &vars), "json {\"k\": 1} {{");
     }
 
@@ -173,6 +176,9 @@ mod tests {
             },
         );
         let t = resolve(&cfg, "decide");
-        assert_eq!((t.version.as_str(), t.text.as_str()), ("v7", "from templates"));
+        assert_eq!(
+            (t.version.as_str(), t.text.as_str()),
+            ("v7", "from templates")
+        );
     }
 }

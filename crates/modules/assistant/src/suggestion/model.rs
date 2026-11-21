@@ -121,7 +121,10 @@ impl SuggestionResult {
             ("prompt_version", self.prompt_version.clone()),
         ];
         if let Some(fu) = &self.follow_up {
-            f.push(("follow_up_json", serde_json::to_string(fu).unwrap_or_default()));
+            f.push((
+                "follow_up_json",
+                serde_json::to_string(fu).unwrap_or_default(),
+            ));
         }
         if !self.actions.is_empty() {
             f.push((

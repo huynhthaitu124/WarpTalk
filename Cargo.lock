@@ -2815,6 +2815,28 @@ dependencies = [
 [[package]]
 name = "warptalk-assistant"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "metrics",
+ "redis",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+ "warptalk-bus",
+ "warptalk-contracts",
+ "warptalk-db",
+ "warptalk-kernel",
+ "warptalk-llm",
+ "warptalk-settings",
+ "warptalk-telemetry",
+]
 
 [[package]]
 name = "warptalk-audio"
@@ -3082,6 +3104,34 @@ version = "0.1.0"
 [[package]]
 name = "warptalk-pipeline"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "metrics",
+ "rand 0.8.8",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+ "warptalk-audio",
+ "warptalk-bus",
+ "warptalk-config",
+ "warptalk-contracts",
+ "warptalk-db",
+ "warptalk-ingress",
+ "warptalk-kernel",
+ "warptalk-livekit",
+ "warptalk-pipeline-runtime",
+ "warptalk-settings",
+ "warptalk-stt",
+ "warptalk-telemetry",
+]
 
 [[package]]
 name = "warptalk-pipeline-runtime"
