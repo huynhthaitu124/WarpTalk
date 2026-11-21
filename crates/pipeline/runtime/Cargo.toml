@@ -8,3 +8,16 @@ publish = false
 workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+metrics = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+warptalk-audio = { workspace = true }
+warptalk-ingress = { workspace = true }
+warptalk-telemetry = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
