@@ -6,8 +6,8 @@ use warptalk_ai_plane::knowledge::build_vector_store;
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_worker::{
-    build_ai_plane, build_settings, build_transcript_module, join_consumers, knowledge_consumers,
-    spawn_consumers, spawn_suggestion,
+    build_ai_plane, build_settings, build_transcript_module, chat_translate_consumer,
+    join_consumers, knowledge_consumers, spawn_consumers, spawn_suggestion,
 };
 
 /// Resolves on Ctrl-C or SIGTERM.
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = warptalk_db::connect(&db.url, db.max_connections)
         .await
         .context("connecting to PostgreSQL")?;
-    for module in ["transcript", "assistant"] {
+    for module in ["transcript", "assistant", "meeting"] {
         let migrated: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
         )
@@ -76,6 +76,8 @@ async fn main() -> anyhow::Result<()> {
     );
     // Workspace AI config changes made through the API apply here without a restart.
     let _ai_config_listener = ai.spawn_invalidation_listener(&redis_cfg.url);
+    let chat_translate =
+        chat_translate_consumer(pool.clone(), &redis_cfg.url, &ai, &settings).await?;
     let plane = build_ai_plane(
         pool.clone(),
         &redis_cfg.url,
@@ -88,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = watch::channel(false);
     let mut consumers = transcript.consumers();
     consumers.extend(knowledge_consumers(&plane.knowledge));
+    consumers.push(chat_translate);
     let mut handles = spawn_consumers(&redis_cfg.url, consumers, &rx).await?;
     handles.push(spawn_suggestion(&redis_cfg.url, plane.suggestion.clone(), &rx).await?);
     tracing::info!(consumers = handles.len(), "worker started");

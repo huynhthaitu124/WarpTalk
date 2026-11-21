@@ -95,6 +95,35 @@ impl WebhookKind {
     }
 }
 
+// ---------------------------------------------------------------- chat language heuristic
+
+/// Cheap script-based language guess for a chat message (HEURISTIC, not real detection):
+/// Vietnamese-specific letters -> `vi`, kana/kanji -> `ja`, everything else -> `en`.
+pub fn detect_chat_language(text: &str) -> &'static str {
+    const VI: &str = "ăâđêôơưĂÂĐÊÔƠƯàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ\
+                      ÀÁẢÃẠẰẮẲẴẶẦẤẨẪẬÈÉẺẼẸỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌỒỐỔỖỘỜỚỞỠỢÙÚỦŨỤỪỨỬỮỰỲÝỶỸỴ";
+    let mut vi = false;
+    for c in text.chars() {
+        let u = c as u32;
+        if (0x3040..=0x30FF).contains(&u) || (0x4E00..=0x9FFF).contains(&u) {
+            return "ja";
+        }
+        if VI.contains(c) {
+            vi = true;
+        }
+    }
+    if vi { "vi" } else { "en" }
+}
+
+/// Primary language subtag, lowercase (`vi-VN` -> `vi`).
+pub fn primary_language(tag: &str) -> String {
+    tag.split(['-', '_'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +169,13 @@ mod tests {
             WebhookKind::Track(TrackChange::Muted)
         );
         assert_eq!(WebhookKind::parse("egress_ended"), WebhookKind::Ignored);
+    }
+
+    #[test]
+    fn chat_language_heuristic() {
+        assert_eq!(detect_chat_language("Xin chào các bạn"), "vi");
+        assert_eq!(detect_chat_language("こんにちは"), "ja");
+        assert_eq!(detect_chat_language("hello there"), "en");
+        assert_eq!(primary_language("vi-VN"), "vi");
     }
 }

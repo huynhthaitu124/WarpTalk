@@ -12,7 +12,7 @@ use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppResult, MeetingRoomId, RoomId, UserId};
 
 use crate::application::ports::{
-    ChatMessage, MeetingRepo, MeetingRoom, NewChatMessage, NewParticipant,
+    ChatMessage, MeetingRepo, MeetingRoom, NewChatMessage, NewChatTranslation, NewParticipant,
 };
 use crate::domain::{STATUS_ACTIVE, STATUS_FINISHED, TrackChange};
 use std::collections::BTreeMap;
@@ -562,5 +562,73 @@ impl MeetingRepo for PgMeetingRepo {
         }
         tx.commit().await.map_err(map_sqlx_error)?;
         self.chat_by_id(room, message).await
+    }
+
+    async fn chat_message(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+    ) -> AppResult<Option<ChatMessage>> {
+        self.chat_by_id(room, message).await
+    }
+
+    async fn set_chat_original_language(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+        language: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE meeting.meeting_chat_messages SET original_language = $3, updated_at = now() \
+             WHERE id = $1 AND meeting_room_id = $2 AND original_language = 'und'",
+        )
+        .bind(message)
+        .bind(room.as_uuid())
+        .bind(language)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn insert_chat_translation(&self, t: NewChatTranslation<'_>) -> AppResult<bool> {
+        let res = sqlx::query(
+            "INSERT INTO meeting.meeting_chat_translations \
+             (id, message_id, meeting_room_id, source_language, target_language, translated_text, \
+              model_used, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT (message_id, target_language, prompt_version) DO NOTHING",
+        )
+        .bind(Uuid::now_v7())
+        .bind(t.message_id)
+        .bind(t.meeting_room_id.as_uuid())
+        .bind(t.source_language)
+        .bind(t.target_language)
+        .bind(t.translated_text)
+        .bind(t.model_used)
+        .bind(t.now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    async fn chat_translations(&self, message: Uuid) -> AppResult<BTreeMap<String, String>> {
+        let rows = sqlx::query(
+            "SELECT target_language, translated_text FROM meeting.meeting_chat_translations \
+             WHERE message_id = $1 ORDER BY prompt_version",
+        )
+        .bind(message)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let mut out = BTreeMap::new();
+        for r in rows {
+            out.insert(
+                r.try_get("target_language").map_err(map_sqlx_error)?,
+                r.try_get("translated_text").map_err(map_sqlx_error)?,
+            );
+        }
+        Ok(out)
     }
 }

@@ -948,3 +948,210 @@ async fn chat_hide_is_host_only_and_not_destructive() {
         StatusCode::NOT_FOUND
     );
 }
+
+// ---------------------------------------------------------------- chat translation consumer
+
+mod translate {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use warptalk_bus::{HandlerError, StreamHandler, StreamMessage};
+    use warptalk_contracts::events::DomainEventEnvelope;
+    use warptalk_kernel::AppResult;
+    use warptalk_meeting::application::ports::{
+        ChatEventSink, ChatTargetLanguages, ChatTranslation, ChatTranslator, TranslateError,
+    };
+    use warptalk_meeting::infrastructure::ChatTranslateHandler;
+
+    struct Targets(Vec<String>);
+    #[async_trait::async_trait]
+    impl ChatTargetLanguages for Targets {
+        async fn for_room(&self, _: RoomId) -> AppResult<Vec<String>> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeTranslator {
+        calls: Mutex<Vec<(String, String)>>,
+        fail_transient: Mutex<bool>,
+    }
+    #[async_trait::async_trait]
+    impl ChatTranslator for FakeTranslator {
+        async fn translate(
+            &self,
+            _: WorkspaceId,
+            text: &str,
+            source: &str,
+            target: &str,
+        ) -> Result<ChatTranslation, TranslateError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((source.to_owned(), target.to_owned()));
+            if *self.fail_transient.lock().unwrap() {
+                return Err(TranslateError::Transient("overloaded".into()));
+            }
+            Ok(ChatTranslation {
+                text: format!("[{target}] {text}"),
+                model: Some("fake".into()),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct Sink(Mutex<Vec<(String, Value)>>);
+    #[async_trait::async_trait]
+    impl ChatEventSink for Sink {
+        async fn publish(&self, channel: &str, payload: Value) -> AppResult<()> {
+            self.0.lock().unwrap().push((channel.to_owned(), payload));
+            Ok(())
+        }
+    }
+
+    fn stream_msg(env: &DomainEventEnvelope) -> StreamMessage {
+        StreamMessage {
+            stream: "translate:chat_requests".into(),
+            id: "1-0".into(),
+            fields: HashMap::from([("data".to_owned(), serde_json::to_string(env).unwrap())]),
+        }
+    }
+
+    /// Post `text` as the host and return the request envelope the service published.
+    async fn post(
+        c: &Ctx,
+        room: RoomId,
+        host: UserId,
+        text: &str,
+        cid: &str,
+    ) -> DomainEventEnvelope {
+        let (st, m) = c.say(room, host, text, cid).await;
+        assert_eq!(st, StatusCode::CREATED, "{m}");
+        let ev = c
+            .events
+            .events()
+            .into_iter()
+            .rev()
+            .find(|e| {
+                e.event_type == EVENT_CHAT_TRANSLATE && e.payload["message_id"] == m["messageId"]
+            })
+            .unwrap();
+        DomainEventEnvelope {
+            event_id: Uuid::now_v7(),
+            event_type: ev.event_type.to_owned(),
+            schema_version: 1,
+            producer: "meeting-service".into(),
+            occurred_at: Utc::now(),
+            payload: ev.payload,
+        }
+    }
+
+    #[tokio::test]
+    async fn translates_stores_idempotently_and_skips_same_language() {
+        let Some(c) = ctx().await else { return };
+        let (room, host, _guest) = c.chat_room().await;
+        let translator = Arc::new(FakeTranslator::default());
+        let sink = Arc::new(Sink::default());
+        let handler = ChatTranslateHandler::new(
+            c.pool.clone(),
+            Arc::new(Targets(vec!["en".into(), "vi-VN".into(), "ja".into()])),
+            translator.clone(),
+            sink.clone(),
+            Arc::new(SystemClock),
+        );
+
+        // Vietnamese text: source vi (heuristic) -> only en + ja are translated.
+        let env = post(&c, room, host, "Xin chào mọi người", "t-1").await;
+        handler.handle(&stream_msg(&env)).await.unwrap();
+        let langs: Vec<String> = translator
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(s, t)| {
+                assert_eq!(s, "vi");
+                t.clone()
+            })
+            .collect();
+        assert_eq!(langs, vec!["en", "ja"]);
+
+        let mid = env.payload["message_id"].as_str().unwrap().to_owned();
+        let row = sqlx::query(
+            "SELECT original_language, (SELECT count(*) FROM meeting.meeting_chat_translations \
+             WHERE message_id = $1::uuid) AS n FROM meeting.meeting_chat_messages WHERE id = $1::uuid",
+        )
+        .bind(&mid)
+        .fetch_one(&c.pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("original_language"), "vi");
+        assert_eq!(row.get::<i64, _>("n"), 2);
+
+        let published = sink.0.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, format!("meeting:{room}:chat"));
+        assert_eq!(published[0].1["type"], "chat.translated");
+        assert_eq!(published[0].1["messageId"], mid);
+        assert_eq!(
+            published[0].1["translations"]["en"],
+            "[en] Xin chào mọi người"
+        );
+
+        // redelivery: nothing translated again, nothing stored twice, nothing republished
+        handler.handle(&stream_msg(&env)).await.unwrap();
+        assert_eq!(translator.calls.lock().unwrap().len(), 2);
+        assert_eq!(sink.0.lock().unwrap().len(), 1);
+
+        // history carries the translations map
+        let (st, h) = c.history(room, host, "").await;
+        assert_eq!(st, StatusCode::OK, "{h}");
+        let m = &h.as_array().unwrap()[0];
+        assert_eq!(m["translations"]["ja"], "[ja] Xin chào mọi người");
+        assert_eq!(m["translations"].as_object().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn transient_failure_retries_and_garbage_is_fatal() {
+        let Some(c) = ctx().await else { return };
+        let (room, host, _guest) = c.chat_room().await;
+        let translator = Arc::new(FakeTranslator::default());
+        let sink = Arc::new(Sink::default());
+        let handler = ChatTranslateHandler::new(
+            c.pool.clone(),
+            Arc::new(Targets(vec!["en".into(), "vi".into()])),
+            translator.clone(),
+            sink.clone(),
+            Arc::new(SystemClock),
+        );
+        let env = post(&c, room, host, "hello", "t-2").await;
+
+        *translator.fail_transient.lock().unwrap() = true;
+        let r = handler.handle(&stream_msg(&env)).await;
+        assert!(matches!(r, Err(HandlerError::Retry(_))), "{r:?}");
+        assert!(sink.0.lock().unwrap().is_empty());
+
+        // provider recovers: the redelivery completes the work
+        *translator.fail_transient.lock().unwrap() = false;
+        handler.handle(&stream_msg(&env)).await.unwrap();
+        assert_eq!(sink.0.lock().unwrap().len(), 1);
+        // source en: only vi was requested (en skipped as same language)
+        assert!(
+            translator
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, t)| t == "vi")
+        );
+
+        let bad = StreamMessage {
+            stream: "translate:chat_requests".into(),
+            id: "2-0".into(),
+            fields: HashMap::from([("data".to_owned(), "not json".to_owned())]),
+        };
+        assert!(matches!(
+            handler.handle(&bad).await,
+            Err(HandlerError::Fatal(_))
+        ));
+    }
+}

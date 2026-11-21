@@ -154,7 +154,10 @@ async fn full_flow() {
         &cfg,
         &[],
         mailer.clone(),
-        None,
+        match std::env::var("REDIS_URL") {
+            Ok(u) => Some(warptalk_bus::connect(&u).await.unwrap()),
+            Err(_) => None,
+        },
         warptalk_api::ApiOptions {
             livekit: Some(LiveKitConfig {
                 url: "wss://lk.test".to_owned(),
@@ -378,6 +381,53 @@ async fn full_flow() {
     let (s, b) = call(&app, "POST", &join, Some(json!({})), Some(&access)).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(!b["token"].as_str().unwrap().is_empty());
+    // chat: the host posts after joining; the request lands on the translation stream
+    if let Ok(redis_url) = std::env::var("REDIS_URL") {
+        let cid = format!("e2e-{}", uuid::Uuid::new_v4().simple());
+        let (s, m) = call(
+            &app,
+            "POST",
+            &format!("/api/v1/meetings/{room_id}/chat/messages"),
+            Some(json!({"content": "hello e2e", "clientMessageId": cid})),
+            Some(&access),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED, "{m}");
+        let message_id = m["messageId"].as_str().unwrap().to_owned();
+        let mut conn = warptalk_bus::connect(&redis_url).await.unwrap();
+        let entries: redis::streams::StreamRangeReply = redis::cmd("XRANGE")
+            .arg("translate:chat_requests")
+            .arg("-")
+            .arg("+")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let found: Vec<Value> = entries
+            .ids
+            .iter()
+            .filter_map(|e| {
+                let raw: String = redis::from_redis_value(e.map.get("data")?).ok()?;
+                serde_json::from_str::<Value>(&raw).ok()
+            })
+            .filter(|env| env["payload"]["message_id"] == message_id.as_str())
+            .collect();
+        assert_eq!(found.len(), 1, "one translation request on the stream");
+        assert_eq!(found[0]["event_type"], "meeting.chat.translate_request");
+        assert_eq!(found[0]["payload"]["text"], "hello e2e");
+        assert_eq!(found[0]["payload"]["translation_room_id"], room_id.as_str());
+
+        // history works and starts with an empty translations map
+        let (s, h) = call(
+            &app,
+            "GET",
+            &format!("/api/v1/meetings/{room_id}/chat/messages"),
+            None,
+            Some(&access),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{h}");
+        assert_eq!(h[0]["translations"], json!({}));
+    }
     let (s, b) = call(&unconfigured, "POST", &join, Some(json!({})), Some(&access)).await;
     assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(b["code"], "LIVEKIT_NOT_CONFIGURED");

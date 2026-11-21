@@ -7,17 +7,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use async_trait::async_trait;
 use sqlx::PgPool;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use warptalk_bus::{ConsumerConfig, StreamHandler, run_consumer};
+use warptalk_bus::{ConsumerConfig, HandlerError, StreamHandler, StreamMessage, run_consumer};
 use warptalk_config::JwtConfig;
 use warptalk_kernel::SystemClock;
 use warptalk_transcript::application::ports::{AlwaysSaveRoomPolicy, NoopReadAccess, NoopRoomHost};
 use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 
-use crate::adapters::{PgRoomDirectory, PgSuggestionRoomDirectory, PgWorkspaceAiPolicy};
+use crate::adapters::{
+    AiChatTranslator, PgChatTargetLanguages, PgRoomDirectory, PgSuggestionRoomDirectory,
+    PgWorkspaceAiPolicy,
+};
 use redis::aio::ConnectionManager;
 use warptalk_ai_plane::ai::AiProviders;
 use warptalk_ai_plane::knowledge::{
@@ -29,8 +33,11 @@ use warptalk_assistant::suggestion::{
 };
 use warptalk_knowledge::infrastructure::{INDEX_RESULTS_STREAM, RedisResultPublisher};
 use warptalk_knowledge::{KnowledgeModule, index_consumer_config, purge_consumer_config};
+use warptalk_meeting::infrastructure::{
+    ChatTranslateHandler, RedisChatEventSink, chat_translate_consumer_config,
+};
 use warptalk_qdrant::VectorStore;
-use warptalk_settings::SettingsStore;
+use warptalk_settings::{AiProvidersSettings, NS_AI_PROVIDERS, ScopeChain, SettingsStore};
 
 /// Model pipelines the suggestion worker runs at once across rooms.
 const SUGGESTION_MAX_PIPELINES: usize = 8;
@@ -190,4 +197,64 @@ pub async fn spawn_suggestion(
         .await
         .context("connecting suggestion consumer to Redis")?;
     Ok(worker.spawn(conn, shutdown.clone()))
+}
+
+/// Acks chat translation requests without translating (no AI key configured).
+pub struct DiscardChatTranslations {
+    logged: std::sync::atomic::AtomicBool,
+}
+
+impl DiscardChatTranslations {
+    pub fn new() -> Self {
+        Self {
+            logged: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl Default for DiscardChatTranslations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl StreamHandler for DiscardChatTranslations {
+    async fn handle(&self, _: &StreamMessage) -> Result<(), HandlerError> {
+        if !self.logged.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!("no AI key configured: chat messages are not translated");
+        }
+        Ok(())
+    }
+}
+
+/// Chat translation consumer (`translate:chat_requests`, group `meeting-chat-translate`).
+/// Without an AI key the handler only acks.
+pub async fn chat_translate_consumer(
+    pool: PgPool,
+    redis_url: &str,
+    ai: &Arc<AiProviders>,
+    settings: &SettingsStore,
+) -> anyhow::Result<(ConsumerConfig, Arc<dyn StreamHandler>)> {
+    let cfg = chat_translate_consumer_config();
+    let Some(llm) = ai.chat() else {
+        return Ok((cfg, Arc::new(DiscardChatTranslations::new())));
+    };
+    let model = settings
+        .get::<AiProvidersSettings>(NS_AI_PROVIDERS, ScopeChain::platform())
+        .await
+        .unwrap_or_default()
+        .translation
+        .model;
+    let redis = warptalk_bus::connect(redis_url)
+        .await
+        .context("connecting to Redis")?;
+    let handler = ChatTranslateHandler::new(
+        pool.clone(),
+        Arc::new(PgChatTargetLanguages::new(pool)),
+        Arc::new(AiChatTranslator::new(llm, model)),
+        Arc::new(RedisChatEventSink::new(redis)),
+        Arc::new(SystemClock),
+    );
+    Ok((cfg, Arc::new(handler)))
 }

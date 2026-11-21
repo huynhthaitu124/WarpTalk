@@ -19,6 +19,10 @@ tracing = { workspace = true }
 warptalk-kernel = { workspace = true, features = ["axum"] }
 warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
+warptalk-bus = { workspace = true }
+warptalk-contracts = { workspace = true }
+redis = { workspace = true }
+thiserror = { workspace = true }
 # NOTE: not yet in root [workspace.dependencies]; switch to `{ workspace = true }` once added.
 warptalk-livekit = { workspace = true }
 

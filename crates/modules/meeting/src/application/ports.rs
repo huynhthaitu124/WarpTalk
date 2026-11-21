@@ -263,6 +263,17 @@ pub struct NewChatMessage<'a> {
     pub now: DateTime<Utc>,
 }
 
+/// A translation row to store (idempotent on message + target language).
+pub struct NewChatTranslation<'a> {
+    pub message_id: Uuid,
+    pub meeting_room_id: MeetingRoomId,
+    pub source_language: &'a str,
+    pub target_language: &'a str,
+    pub translated_text: &'a str,
+    pub model_used: Option<&'a str>,
+    pub now: DateTime<Utc>,
+}
+
 /// Persistence port (schema `meeting`), implemented by `infrastructure::PgMeetingRepo`.
 #[async_trait]
 pub trait MeetingRepo: Send + Sync {
@@ -345,4 +356,64 @@ pub trait MeetingRepo: Send + Sync {
         reason: Option<&str>,
         now: DateTime<Utc>,
     ) -> AppResult<Option<ChatMessage>>;
+
+    // ------------------------------------------------------------ chat translation
+
+    /// One message of a meeting (hidden or not).
+    async fn chat_message(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+    ) -> AppResult<Option<ChatMessage>>;
+    /// Replace the placeholder language (`und`) of a message; a known language is kept.
+    async fn set_chat_original_language(
+        &self,
+        room: MeetingRoomId,
+        message: Uuid,
+        language: &str,
+    ) -> AppResult<()>;
+    /// `false`: a translation for this message and language already existed (kept).
+    async fn insert_chat_translation(&self, t: NewChatTranslation<'_>) -> AppResult<bool>;
+    /// target language -> translated text.
+    async fn chat_translations(&self, message: Uuid) -> AppResult<BTreeMap<String, String>>;
+}
+
+// ---------------------------------------------------------------- chat translation ports
+
+/// Languages a room's chat is translated into (room source + target languages).
+#[async_trait]
+pub trait ChatTargetLanguages: Send + Sync {
+    async fn for_room(&self, room: RoomId) -> AppResult<Vec<String>>;
+}
+
+/// Translation failure classes: only `Transient` is worth redelivering.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum TranslateError {
+    #[error("transient translation failure: {0}")]
+    Transient(String),
+    #[error("translation failed: {0}")]
+    Permanent(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatTranslation {
+    pub text: String,
+    pub model: Option<String>,
+}
+
+#[async_trait]
+pub trait ChatTranslator: Send + Sync {
+    async fn translate(
+        &self,
+        workspace: WorkspaceId,
+        text: &str,
+        source_language: &str,
+        target_language: &str,
+    ) -> Result<ChatTranslation, TranslateError>;
+}
+
+/// Fire-and-forget pub/sub (the realtime hub fans these out to clients).
+#[async_trait]
+pub trait ChatEventSink: Send + Sync {
+    async fn publish(&self, channel: &str, payload: Value) -> AppResult<()>;
 }
