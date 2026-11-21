@@ -788,7 +788,9 @@ async fn bridge_concurrent_claims_yield_one_room_and_unique_index_guards() {
 
 /// Claim at a fixed clock; returns (ctx, clock, ws, [capturer/host, other, third], room id).
 async fn clocked_bridge() -> Option<(Ctx, Arc<FixedClock>, WorkspaceId, Vec<UserId>, String)> {
-    let clock = Arc::new(FixedClock::new(chrono::Utc::now()));
+    let clock = Arc::new(FixedClock::new(
+        chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp(), 0).unwrap(),
+    ));
     let c = ctx_with(clock.clone()).await?;
     let (ws, u) = members(&c, 3);
     let (st, v) = c
@@ -825,7 +827,7 @@ async fn bridge_heartbeat_keeps_lease() {
             .call(Method::POST, &hb, u[0], Some(json!({"audioFlowing": true})))
             .await;
         assert_eq!(st, StatusCode::OK, "{v}");
-        assert_eq!(v["bridge"]["audioFlowing"], true);
+        assert_eq!(v["audioFlowing"], true);
     }
     // 90 s after the claim, but only 0 s after the last heartbeat: not stale
     let info = c
@@ -886,8 +888,8 @@ async fn bridge_takeover_when_lease_stale() {
     );
     let (st, v) = c.call(Method::POST, &take, u[1], None).await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert_eq!(v["bridge"]["capturerUserId"], u[1].to_string());
-    assert_eq!(v["bridge"]["epoch"], 2);
+    assert_eq!(v["capturerUserId"], u[1].to_string());
+    assert_eq!(v["epoch"], 2);
     // the old capturer lost the lease; the new one holds it
     let (st, v) = c.call(Method::POST, &hb, u[0], None).await;
     assert_eq!(
@@ -901,7 +903,7 @@ async fn bridge_takeover_when_lease_stale() {
     // the host may take over even though the lease is fresh
     let (st, v) = c.call(Method::POST, &take, u[0], None).await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert_eq!(v["bridge"]["capturerUserId"], u[0].to_string());
+    assert_eq!(v["capturerUserId"], u[0].to_string());
     // outsiders do not even see the room
     let (st, _) = c.call(Method::POST, &take, UserId::new(), None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
@@ -953,7 +955,7 @@ async fn bridge_silent_audio_makes_lease_stale_despite_heartbeats() {
     );
     let (st, v) = c.call(Method::POST, &take, u[1], None).await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert_eq!(v["bridge"]["capturerUserId"], u[1].to_string());
+    assert_eq!(v["capturerUserId"], u[1].to_string());
 }
 
 #[tokio::test]
@@ -981,7 +983,7 @@ async fn bridge_audio_mode_locks_while_translation_runs() {
 
     let (st, v) = put(u[0], "text").await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert_eq!(v["bridge"]["audioMode"], "text");
+    assert_eq!(v["audioMode"], "text");
     // not running yet: back to voice is fine, then text again
     assert_eq!(put(u[0], "voice").await.0, StatusCode::OK);
     assert_eq!(put(u[0], "text").await.0, StatusCode::OK);

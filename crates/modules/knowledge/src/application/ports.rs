@@ -6,9 +6,7 @@ use serde_json::Value;
 use uuid::Uuid;
 use warptalk_kernel::{AppResult, UserId, WorkspaceId, WorkspaceRole};
 
-use crate::domain::{
-    ChunkKind, EmbeddingProfile, FactCategory, IndexResult, SourceType,
-};
+use crate::domain::{ChunkKind, EmbeddingProfile, FactCategory, IndexResult, SourceType};
 
 /// What the caller may retrieve, resolved by the workspace/meeting modules.
 #[derive(Debug, Clone, PartialEq)]

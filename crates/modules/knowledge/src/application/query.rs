@@ -98,18 +98,24 @@ mod tests {
         assert!(f.matches("x", &glossary));
         assert!(f.matches("x", &allowed_doc));
         assert!(!f.matches("x", &other_doc));
-        assert!(!f.matches("x", &transcript), "empty meeting list matches nothing");
-        assert!(scope_filter(&EffectiveScope {
-            documents: None,
-            meetings: None
-        })
-        .is_none());
+        assert!(
+            !f.matches("x", &transcript),
+            "empty meeting list matches nothing"
+        );
+        assert!(
+            scope_filter(&EffectiveScope {
+                documents: None,
+                meetings: None
+            })
+            .is_none()
+        );
     }
 
     #[test]
     fn full_filter_pins_workspace_and_state() {
         let w = WorkspaceId::new();
-        let ctx = AccessContext::privileged(w, UserId::new(), warptalk_kernel::WorkspaceRole::Owner);
+        let ctx =
+            AccessContext::privileged(w, UserId::new(), warptalk_kernel::WorkspaceRole::Owner);
         let f = search_filter(
             &ctx,
             &ctx.effective_scope(),

@@ -357,7 +357,10 @@ impl Inner {
             .await?,
         );
         let (stop_tx, stop_rx) = watch::channel(false);
-        let task = tokio::spawn(self.clone().supervise(room, worker.clone(), stop_rx, events));
+        let task = tokio::spawn(
+            self.clone()
+                .supervise(room, worker.clone(), stop_rx, events),
+        );
         self.lock().rooms.insert(
             room,
             RoomEntry {
@@ -432,7 +435,11 @@ impl Inner {
         let _ = release_lease(&mut conn, &key, &self.cfg.host_id).await;
         {
             let mut st = self.lock();
-            if st.rooms.get(&room).is_some_and(|e| Arc::ptr_eq(&e.worker, &worker)) {
+            if st
+                .rooms
+                .get(&room)
+                .is_some_and(|e| Arc::ptr_eq(&e.worker, &worker))
+            {
                 st.rooms.remove(&room);
             }
         }
@@ -445,13 +452,15 @@ impl Inner {
             .arg(keys::audio_routes(room))
             .query_async(&mut conn)
             .await?;
-        Ok(raw.and_then(|r| match serde_json::from_str::<AudioRoutesSnapshot>(&r) {
-            Ok(s) => Some(RoutesView::from_snapshot(&s)),
-            Err(e) => {
-                warn!(%room, error = %e, "undecodable routes snapshot");
-                None
-            }
-        }))
+        Ok(
+            raw.and_then(|r| match serde_json::from_str::<AudioRoutesSnapshot>(&r) {
+                Ok(s) => Some(RoutesView::from_snapshot(&s)),
+                Err(e) => {
+                    warn!(%room, error = %e, "undecodable routes snapshot");
+                    None
+                }
+            }),
+        )
     }
 
     async fn read_flash_override(&self, room: RoomId) -> Option<bool> {

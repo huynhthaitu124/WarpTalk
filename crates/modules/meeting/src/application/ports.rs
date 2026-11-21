@@ -32,8 +32,23 @@ pub struct ParticipantInfo {
     pub display_name: String,
 }
 
+/// Bridge facts of an `EXTERNAL_BRIDGE` translation room.
+#[derive(Debug, Clone)]
+pub struct BridgeInfo {
+    /// `google_meet | zoom | teams`.
+    pub provider: String,
+    pub capturer_user_id: Option<UserId>,
+    /// The capturer lease (or its audio) is stale.
+    pub capturer_stale: bool,
+}
+
 #[async_trait]
 pub trait RoomDirectory: Send + Sync {
+    /// `Some` only for `EXTERNAL_BRIDGE` rooms. The default (`None`) fails closed: without an
+    /// adapter that answers, no bridge token is ever issued.
+    async fn bridge(&self, _room: RoomId) -> AppResult<Option<BridgeInfo>> {
+        Ok(None)
+    }
     /// `None` when the translation room does not exist.
     async fn room(&self, room: RoomId) -> AppResult<Option<RoomInfo>>;
     async fn participant(&self, room: RoomId, user: UserId) -> AppResult<Option<ParticipantInfo>>;
@@ -57,9 +72,18 @@ impl RoomDirectory for NoopRoomDirectory {
 pub struct InMemoryRoomDirectory {
     rooms: Mutex<HashMap<RoomId, RoomInfo>>,
     participants: Mutex<HashMap<(RoomId, UserId), ParticipantInfo>>,
+    bridges: Mutex<HashMap<RoomId, BridgeInfo>>,
 }
 
 impl InMemoryRoomDirectory {
+    /// Mark `room` as an EXTERNAL_BRIDGE room.
+    pub fn set_bridge(&self, room: RoomId, info: BridgeInfo) {
+        self.bridges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(room, info);
+    }
+
     pub fn set_room(&self, room: RoomId, info: RoomInfo) {
         self.rooms
             .lock()
@@ -83,6 +107,14 @@ impl InMemoryRoomDirectory {
 
 #[async_trait]
 impl RoomDirectory for InMemoryRoomDirectory {
+    async fn bridge(&self, room: RoomId) -> AppResult<Option<BridgeInfo>> {
+        Ok(self
+            .bridges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&room)
+            .cloned())
+    }
     async fn room(&self, room: RoomId) -> AppResult<Option<RoomInfo>> {
         Ok(self
             .rooms

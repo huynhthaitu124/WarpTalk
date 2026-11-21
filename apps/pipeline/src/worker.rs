@@ -305,8 +305,11 @@ impl FrameChunker {
         if frame.sample_rate_hz == SAMPLE_RATE_16K {
             self.buf.extend_from_slice(&frame.samples);
         } else {
-            self.buf
-                .extend(resample(&frame.samples, frame.sample_rate_hz, SAMPLE_RATE_16K));
+            self.buf.extend(resample(
+                &frame.samples,
+                frame.sample_rate_hz,
+                SAMPLE_RATE_16K,
+            ));
         }
         let mut consumed = 0;
         while self.buf.len() - consumed >= FRAME_SAMPLES {
@@ -347,7 +350,9 @@ mod tests {
         let mut c = FrameChunker::default();
         let mut frames = 0;
         for _ in 0..4 {
-            c.push(&Frame::new(vec![0.0; 320], 16_000), Instant::now(), |_| frames += 1);
+            c.push(&Frame::new(vec![0.0; 320], 16_000), Instant::now(), |_| {
+                frames += 1
+            });
         }
         assert_eq!(frames, 2); // 1280 samples = 2.5 frames
     }

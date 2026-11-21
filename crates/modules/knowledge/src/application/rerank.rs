@@ -99,7 +99,10 @@ impl LlmReranker {
 
 fn parse_scores(raw: &str, n: usize) -> Vec<Option<f32>> {
     let t = raw.trim();
-    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    let t = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t);
     let t = t.strip_suffix("```").unwrap_or(t).trim();
     let mut out = vec![None; n];
     let Ok(v) = serde_json::from_str::<Value>(t) else {
@@ -221,7 +224,10 @@ mod tests {
 
     #[test]
     fn score_parsing_is_tolerant() {
-        let p = parse_scores("```json\n{\"scores\":[{\"index\":1,\"score\":1.7},{\"index\":9,\"score\":1}]}\n```", 2);
+        let p = parse_scores(
+            "```json\n{\"scores\":[{\"index\":1,\"score\":1.7},{\"index\":9,\"score\":1}]}\n```",
+            2,
+        );
         assert_eq!(p, vec![None, Some(1.0)]);
         assert_eq!(parse_scores("garbage", 2), vec![None, None]);
     }

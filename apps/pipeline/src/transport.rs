@@ -58,7 +58,8 @@ pub struct PcmChunk {
 pub trait MediaTransport: Send + Sync {
     /// Joins `room` under `identity`. Audio of every participant already present or joining
     /// later arrives on the session's event channel.
-    async fn join(&self, room: RoomId, identity: &str) -> Result<Box<dyn MediaSession>, MediaError>;
+    async fn join(&self, room: RoomId, identity: &str)
+    -> Result<Box<dyn MediaSession>, MediaError>;
 }
 
 /// One joined room. Shared (`Arc`) between the room worker (events) and the downstream stage

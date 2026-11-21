@@ -133,7 +133,11 @@ impl SimParticipant {
         }
     }
 
-    pub fn from_wav(id: impl Into<ParticipantId>, path: &Path, looped: bool) -> Result<Self, WavError> {
+    pub fn from_wav(
+        id: impl Into<ParticipantId>,
+        path: &Path,
+        looped: bool,
+    ) -> Result<Self, WavError> {
         let wav = read_wav_file(path)?;
         Ok(Self::from_pcm(id, wav.samples, wav.sample_rate_hz, looped))
     }
@@ -230,11 +234,17 @@ pub struct SimCapture {
 
 impl SimCapture {
     pub fn dubs(&self) -> Vec<DubRecord> {
-        self.dubs.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.dubs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn data(&self) -> Vec<DataRecord> {
-        self.data.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.data
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Data payloads of `topic` parsed as JSON.
@@ -297,7 +307,11 @@ impl SimulatedTransport {
 
 #[async_trait]
 impl MediaTransport for SimulatedTransport {
-    async fn join(&self, room: RoomId, identity: &str) -> Result<Box<dyn MediaSession>, MediaError> {
+    async fn join(
+        &self,
+        room: RoomId,
+        identity: &str,
+    ) -> Result<Box<dyn MediaSession>, MediaError> {
         let capture = Arc::new(SimCapture::default());
         *capture
             .identity
@@ -344,7 +358,8 @@ async fn play(p: SimParticipant, tx: mpsc::Sender<MediaEvent>) {
         return;
     }
     tokio::time::sleep(p.join_after).await;
-    let frame_samples = (u64::from(p.sample_rate_hz) * u64::from(p.frame_ms) / 1000).max(1) as usize;
+    let frame_samples =
+        (u64::from(p.sample_rate_hz) * u64::from(p.frame_ms) / 1000).max(1) as usize;
     let frame_dur = Duration::from_millis(u64::from(p.frame_ms));
     let start = tokio::time::Instant::now();
     let mut idx: u64 = 0;
@@ -354,7 +369,9 @@ async fn play(p: SimParticipant, tx: mpsc::Sender<MediaEvent>) {
         if p.leave_after.is_some_and(|l| due - start >= l) {
             break;
         }
-        let (samples, done) = p.source.render(idx * frame_samples as u64, frame_samples, p.sample_rate_hz);
+        let (samples, done) =
+            p.source
+                .render(idx * frame_samples as u64, frame_samples, p.sample_rate_hz);
         if done {
             break;
         }
@@ -435,7 +452,10 @@ impl MediaSession for SimulatedSession {
 
     async fn close(&self) {
         self.capture.closed.store(true, Ordering::Release);
-        self.tx.lock().unwrap_or_else(PoisonError::into_inner).take();
+        self.tx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         for t in self
             .tasks
             .lock()
@@ -522,7 +542,10 @@ mod tests {
             )
             .await
             .unwrap();
-        session.publish_data("captions", b"{\"a\":1}".to_vec()).await.unwrap();
+        session
+            .publish_data("captions", b"{\"a\":1}".to_vec())
+            .await
+            .unwrap();
         let cap = t.capture(room).unwrap();
         assert_eq!(cap.identity(), "agent");
         assert_eq!(cap.dubs().len(), 1);

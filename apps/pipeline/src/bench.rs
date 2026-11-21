@@ -102,7 +102,11 @@ impl Percentiles {
         };
         Self {
             count: v.len(),
-            mean: if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 },
+            mean: if v.is_empty() {
+                0.0
+            } else {
+                v.iter().sum::<f64>() / v.len() as f64
+            },
             p50: pick(0.50),
             p95: pick(0.95),
             p99: pick(0.99),
@@ -150,7 +154,13 @@ impl BenchReport {
         let _ = writeln!(
             s,
             "fake STT: commit->completed p50 {:.0} ms / p95 {:.0} ms, first text {} ms; speech {} ms, pause {} ms; {} Hz / {} ms blocks",
-            c.stt_p50_ms, c.stt_p95_ms, c.stt_early_ms, c.speech_ms, c.pause_ms, c.sample_rate_hz, c.frame_ms
+            c.stt_p50_ms,
+            c.stt_p95_ms,
+            c.stt_early_ms,
+            c.speech_ms,
+            c.pause_ms,
+            c.sample_rate_hz,
+            c.frame_ms
         );
         let _ = writeln!(
             s,
@@ -165,15 +175,42 @@ impl BenchReport {
             );
         }
         let _ = writeln!(s);
-        let _ = writeln!(s, "frames dropped (speaker queues)  {}", self.frames_dropped);
-        let _ = writeln!(s, "media events dropped             {}", self.media_events_dropped);
-        let _ = writeln!(s, "stt:results entries              {}", self.stt_results_published);
-        let _ = writeln!(s, "captions published               {}", self.captions_published);
-        let _ = writeln!(s, "audio processed                  {:.0} s", self.audio_seconds_total);
-        let _ = writeln!(s, "wall                             {:.2} s", self.wall_secs);
+        let _ = writeln!(
+            s,
+            "frames dropped (speaker queues)  {}",
+            self.frames_dropped
+        );
+        let _ = writeln!(
+            s,
+            "media events dropped             {}",
+            self.media_events_dropped
+        );
+        let _ = writeln!(
+            s,
+            "stt:results entries              {}",
+            self.stt_results_published
+        );
+        let _ = writeln!(
+            s,
+            "captions published               {}",
+            self.captions_published
+        );
+        let _ = writeln!(
+            s,
+            "audio processed                  {:.0} s",
+            self.audio_seconds_total
+        );
+        let _ = writeln!(
+            s,
+            "wall                             {:.2} s",
+            self.wall_secs
+        );
         match (self.cpu_secs, self.cpu_percent_of_one_core) {
             (Some(cpu), Some(pct)) => {
-                let _ = writeln!(s, "cpu time                         {cpu:.2} s ({pct:.1}% of one core)");
+                let _ = writeln!(
+                    s,
+                    "cpu time                         {cpu:.2} s ({pct:.1}% of one core)"
+                );
             }
             _ => {
                 let _ = writeln!(s, "cpu time                         n/a");
@@ -205,7 +242,10 @@ struct HistSink(Mutex<Vec<f64>>);
 
 impl HistogramFn for HistSink {
     fn record(&self, value: f64) {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).push(value);
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(value);
     }
 }
 
@@ -237,10 +277,20 @@ impl Capture {
 
     /// Forgets samples recorded so far (handles already handed out keep working).
     pub fn reset(&self) {
-        for h in self.hists.lock().unwrap_or_else(PoisonError::into_inner).values() {
+        for h in self
+            .hists
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
             h.0.lock().unwrap_or_else(PoisonError::into_inner).clear();
         }
-        for c in self.counters.lock().unwrap_or_else(PoisonError::into_inner).values() {
+        for c in self
+            .counters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
             c.0.store(0, Ordering::Relaxed);
         }
     }
@@ -349,7 +399,8 @@ pub async fn run_bench(cfg: BenchConfig) -> BenchReport {
         let mut routes = Vec::new();
         for _ in 0..cfg.speakers {
             let pid = ParticipantId::new();
-            let jitter = |rng: &mut StdRng, ms: u32| (f64::from(ms) * rng.gen_range(0.8..1.2)) as u32;
+            let jitter =
+                |rng: &mut StdRng, ms: u32| (f64::from(ms) * rng.gen_range(0.8..1.2)) as u32;
             let speech = jitter(&mut rng, cfg.speech_ms);
             let pause = jitter(&mut rng, cfg.pause_ms);
             let offset = Duration::from_millis(rng.gen_range(0..u64::from(cfg.pause_ms.max(1))));
@@ -437,7 +488,12 @@ pub async fn run_bench(cfg: BenchConfig) -> BenchReport {
         captions_published,
         stages: STAGES
             .iter()
-            .map(|s| ((*s).to_owned(), Percentiles::from_samples(&capture.histogram(s))))
+            .map(|s| {
+                (
+                    (*s).to_owned(),
+                    Percentiles::from_samples(&capture.histogram(s)),
+                )
+            })
             .collect(),
         config: cfg,
     }
@@ -463,7 +519,9 @@ mod tests {
     #[test]
     fn lognormal_median_matches() {
         let mut rng = StdRng::seed_from_u64(1);
-        let mut xs: Vec<f64> = (0..20_000).map(|_| lognormal(&mut rng, 774.0, 1300.0)).collect();
+        let mut xs: Vec<f64> = (0..20_000)
+            .map(|_| lognormal(&mut rng, 774.0, 1300.0))
+            .collect();
         xs.sort_by(f64::total_cmp);
         let med = xs[xs.len() / 2];
         let p95 = xs[xs.len() * 95 / 100];

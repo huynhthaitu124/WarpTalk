@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use warptalk_kernel::{AppError, AppResult, Clock, RoomId, UserId};
 use warptalk_livekit::{
-    LiveKitConfig, LiveKitError, RoomService, WebhookEvent, bridge_token, participant_token,
+    AccessTokenBuilder, LiveKitConfig, LiveKitError, RoomService, WebhookEvent, participant_token,
     verify_webhook,
 };
 
@@ -16,7 +16,8 @@ use super::ports::{
     MeetingRoom, NewParticipant, RoomDirectory, RoomInfo,
 };
 use crate::domain::{
-    BRIDGE_IDENTITY, JoinGate, STATUS_FINISHED, WebhookKind, is_ended_status, join_gate,
+    BRIDGE_IDENTITY, JoinGate, STATUS_FINISHED, WebhookKind, is_bridge_audio_owner,
+    is_ended_status, join_gate,
 };
 
 /// LiveKit room empty timeout (seconds) used on CreateRoom.
@@ -188,23 +189,60 @@ impl MeetingService {
         Ok(meeting)
     }
 
-    /// Spec: 11 §3.1 `bridge-token` (publish-only seat).
+    /// Spec: 11 §3.1 `bridge-token` (publish-only seat). Room must be EXTERNAL_BRIDGE (409
+    /// `NOT_BRIDGE_ROOM`); caller must be the current non-stale capturer, or the host while the
+    /// room has no capturer (403 `NOT_CAPTURER`).
     pub async fn bridge_token(&self, user: UserId, room: RoomId) -> AppResult<JoinGrant> {
-        let meeting = self.host_session(user, room).await?;
+        let info = self.room_info(room).await?;
+        if is_ended_status(&info.status) {
+            return Err(AppError::conflict(
+                "INVALID_STATE",
+                "meeting has already ended",
+            ));
+        }
+        let bridge = self.rooms.bridge(room).await?.ok_or_else(|| {
+            AppError::conflict(
+                "NOT_BRIDGE_ROOM",
+                "this room is not an external bridge room",
+            )
+        })?;
+        if !is_bridge_audio_owner(
+            bridge.capturer_user_id.map(|u| u.as_uuid()),
+            bridge.capturer_stale,
+            info.host_id.as_uuid(),
+            user.as_uuid(),
+        ) {
+            return Err(AppError::coded(
+                403,
+                "NOT_CAPTURER",
+                "only the current capturer can publish the external meeting audio",
+            ));
+        }
+        let meeting = self
+            .repo
+            .find_current(room)
+            .await?
+            .ok_or_else(|| AppError::not_found("meeting has not started"))?;
         if meeting.status == STATUS_FINISHED {
             return Err(AppError::conflict(
                 "INVALID_STATE",
                 "meeting has already ended",
             ));
         }
-        let token = bridge_token(
-            &self.livekit,
-            &meeting.provider_room_name,
-            BRIDGE_IDENTITY,
-            "External bridge",
-            self.token_ttl,
-        )
-        .map_err(lk_err)?;
+        let metadata =
+            json!({ "provider": bridge.provider, "role": "external_bridge" }).to_string();
+        let token = AccessTokenBuilder::new(&self.livekit, BRIDGE_IDENTITY)
+            .name("External Meeting")
+            .metadata(metadata)
+            .ttl(self.token_ttl)
+            .room(meeting.provider_room_name.clone())
+            .room_join(true)
+            .can_publish(true)
+            .can_subscribe(false)
+            .can_publish_data(false)
+            .can_publish_sources(vec!["MICROPHONE".to_owned()])
+            .build()
+            .map_err(lk_err)?;
         Ok(JoinGrant {
             room_name: meeting.provider_room_name,
             server_url: self.livekit.url.clone(),

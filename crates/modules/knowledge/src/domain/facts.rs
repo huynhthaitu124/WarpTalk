@@ -199,8 +199,14 @@ mod tests {
 
     fn chunks() -> Vec<(Uuid, String)> {
         vec![
-            (Uuid::now_v7(), "We decided to ship on Friday. Budget is 10k.".into()),
-            (Uuid::now_v7(), "Risk: the vendor may be late with the API.".into()),
+            (
+                Uuid::now_v7(),
+                "We decided to ship on Friday. Budget is 10k.".into(),
+            ),
+            (
+                Uuid::now_v7(),
+                "Risk: the vendor may be late with the API.".into(),
+            ),
         ]
     }
 

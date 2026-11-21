@@ -3,8 +3,24 @@
 pub const STATUS_ACTIVE: &str = "ACTIVE";
 pub const STATUS_FINISHED: &str = "FINISHED";
 
-/// Identity of the Google Meet bridge stand-in seat (spec: 11 §6.4).
-pub const BRIDGE_IDENTITY: &str = "external-bridge";
+/// Identity of the external bridge stand-in seat (spec: 11 §6.4): the fixed stand-in user id, the
+/// same value as `warptalk_room::domain::STAND_IN_USER_ID` (the pipeline takes the far side's
+/// speaker id from the LiveKit identity).
+pub const BRIDGE_IDENTITY: &str = "00000000-0000-0000-0000-00000000b21d";
+
+/// Who may mint the stand-in token: the current non-stale capturer, or the host when the room
+/// has no capturer yet.
+pub fn is_bridge_audio_owner(
+    capturer: Option<uuid::Uuid>,
+    capturer_stale: bool,
+    host: uuid::Uuid,
+    caller: uuid::Uuid,
+) -> bool {
+    match capturer {
+        Some(c) => c == caller && !capturer_stale,
+        None => host == caller,
+    }
+}
 
 /// Ended statuses refuse joins (spec: 11 §5.1 step 2).
 pub fn is_ended_status(status: &str) -> bool {
@@ -75,6 +91,16 @@ mod tests {
         assert_eq!(join_gate(false, Some("WAITING")), JoinGate::Lobby);
         assert_eq!(join_gate(false, Some("KICKED")), JoinGate::Denied);
         assert_eq!(join_gate(false, None), JoinGate::Denied);
+    }
+
+    #[test]
+    fn bridge_owner() {
+        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+        assert!(is_bridge_audio_owner(Some(a), false, b, a));
+        assert!(!is_bridge_audio_owner(Some(a), true, b, a));
+        assert!(!is_bridge_audio_owner(Some(a), false, b, b));
+        assert!(is_bridge_audio_owner(None, false, b, b));
+        assert!(!is_bridge_audio_owner(None, false, b, a));
     }
 
     #[test]

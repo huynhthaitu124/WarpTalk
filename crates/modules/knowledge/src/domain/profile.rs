@@ -38,7 +38,11 @@ impl EmbeddingProfile {
             )
             .as_bytes(),
         );
-        h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect()
+        h.finalize()
+            .iter()
+            .take(6)
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// `workspace_{id}_{profile_hash}`
@@ -66,9 +70,6 @@ mod tests {
             assert_ne!(a.hash(), b.hash());
         }
         let ws = Uuid::now_v7();
-        assert_eq!(
-            a.collection(ws),
-            format!("workspace_{}_{}", ws, a.hash())
-        );
+        assert_eq!(a.collection(ws), format!("workspace_{}_{}", ws, a.hash()));
     }
 }

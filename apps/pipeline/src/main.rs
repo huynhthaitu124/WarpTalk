@@ -14,12 +14,12 @@ use anyhow::{Context, bail};
 use tokio::sync::watch;
 use tracing::{info, warn};
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
+use warptalk_pipeline::SttOnlyStage;
 use warptalk_pipeline::config::{AppConfig, TransportKind, pipeline_config_from_settings};
 use warptalk_pipeline::host::{HostConfig, HostDeps, PipelineHost};
 use warptalk_pipeline::results::RedisResultSink;
 use warptalk_pipeline::simulated::{SimParticipant, SimulatedTransport};
 use warptalk_pipeline::transport::MediaTransport;
-use warptalk_pipeline::SttOnlyStage;
 use warptalk_pipeline_runtime::testing::{FakeStt, energy_vad_factory};
 use warptalk_pipeline_runtime::{PipelineConfig, SpeechToText};
 use warptalk_settings::{
@@ -175,7 +175,10 @@ fn build_transport(app: &AppConfig) -> anyhow::Result<Arc<dyn MediaTransport>> {
         TransportKind::Simulated => {
             let mut participants = Vec::new();
             for id in &app.sim_participants {
-                let wav = app.sim_wav_dir.as_ref().map(|d| d.join(format!("{id}.wav")));
+                let wav = app
+                    .sim_wav_dir
+                    .as_ref()
+                    .map(|d| d.join(format!("{id}.wav")));
                 let p = match wav.filter(|p| p.exists()) {
                     Some(path) => SimParticipant::from_wav(id.clone(), &path, true)
                         .with_context(|| format!("reading {}", path.display()))?,
@@ -189,7 +192,9 @@ fn build_transport(app: &AppConfig) -> anyhow::Result<Arc<dyn MediaTransport>> {
                      set it to the participant ids used as route sources"
                 );
             }
-            Ok(Arc::new(SimulatedTransport::with_participants(participants)))
+            Ok(Arc::new(SimulatedTransport::with_participants(
+                participants,
+            )))
         }
         TransportKind::LiveKit => livekit_transport(app),
     }
@@ -198,7 +203,9 @@ fn build_transport(app: &AppConfig) -> anyhow::Result<Arc<dyn MediaTransport>> {
 #[cfg(feature = "livekit-rtc")]
 fn livekit_transport(app: &AppConfig) -> anyhow::Result<Arc<dyn MediaTransport>> {
     let cfg = app.livekit.clone().context("LiveKit settings missing")?;
-    Ok(Arc::new(warptalk_pipeline::livekit_transport::LiveKitTransport::new(cfg)))
+    Ok(Arc::new(
+        warptalk_pipeline::livekit_transport::LiveKitTransport::new(cfg),
+    ))
 }
 
 #[cfg(not(feature = "livekit-rtc"))]

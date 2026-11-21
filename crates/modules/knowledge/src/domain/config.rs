@@ -123,7 +123,12 @@ impl Validate for RagConfig {
             return Err("chunk_overlap_tokens must be < chunk_target_tokens".into());
         }
         check_range("chunk_char_limit", self.base.chunk_char_limit, 200, 20_000)?;
-        check_range("transcript_window_ms", e.transcript_window_ms, 1_000, 3_600_000)?;
+        check_range(
+            "transcript_window_ms",
+            e.transcript_window_ms,
+            1_000,
+            3_600_000,
+        )?;
         check_range("transcript_gap_ms", e.transcript_gap_ms, 0, 3_600_000)?;
         check_range("fact_min_confidence", e.fact_min_confidence, 0.0, 1.0)?;
         check_range("retry_max_attempts", e.retry_max_attempts, 1, 20)?;
@@ -208,7 +213,9 @@ mod tests {
         };
         assert!(bad(json!({"candidate_k": 3, "top_k": 5})));
         assert!(bad(json!({"min_score": 2.0})));
-        assert!(bad(json!({"rerank_dense_weight": 0.0, "rerank_weight": 0.0})));
+        assert!(bad(
+            json!({"rerank_dense_weight": 0.0, "rerank_weight": 0.0})
+        ));
         assert!(bad(json!({"chunk_overlap_tokens": 300})));
         assert!(bad(json!({"pii_source_types": ["nonsense"]})));
         assert!(bad(json!({"top_k": 0})));

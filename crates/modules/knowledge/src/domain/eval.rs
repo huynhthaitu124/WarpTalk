@@ -88,8 +88,8 @@ mod tests {
 
     #[test]
     fn recall_and_mrr_from_fixture() {
-        let fx = EvalFixture::from_json(include_str!("../../tests/fixtures/eval_fixture.json"))
-            .unwrap();
+        let fx =
+            EvalFixture::from_json(include_str!("../../tests/fixtures/eval_fixture.json")).unwrap();
         assert_eq!(fx.cases.len(), 3);
         let rankings = vec![
             vec!["a".into(), "x".into(), "b".into()], // relevant a,b -> recall@2 = .5, rr 1

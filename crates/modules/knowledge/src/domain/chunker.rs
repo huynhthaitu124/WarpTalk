@@ -219,7 +219,8 @@ fn build_units(pages: &[PageText], p: &ChunkingParams) -> Vec<Unit> {
                     let pieces = pieces
                         .into_iter()
                         .flat_map(|s| {
-                            if estimate_tokens(&s) > p.max_tokens || s.chars().count() > p.char_limit
+                            if estimate_tokens(&s) > p.max_tokens
+                                || s.chars().count() > p.char_limit
                             {
                                 split_oversized(&s, p.max_tokens, p.char_limit)
                             } else {
@@ -417,8 +418,7 @@ pub fn chunk_transcript(segments: &[SegmentInput], p: &ChunkingParams) -> Vec<Ch
             let gap = piece.start.saturating_sub(last_end) > p.transcript_gap_ms;
             let window = piece.end.saturating_sub(first.start) > p.transcript_window_ms;
             let size = cur_tokens + piece.tokens > p.target_tokens
-                || render_pieces(&cur).chars().count() + piece.text.chars().count()
-                    > p.char_limit;
+                || render_pieces(&cur).chars().count() + piece.text.chars().count() > p.char_limit;
             if gap || window || size {
                 chunks.extend(transcript_draft(&cur));
                 if gap {
@@ -450,7 +450,7 @@ pub fn split_pages_by_markers(text: &str) -> Vec<PageText> {
     let mut pages: Vec<PageText> = Vec::new();
     let mut cur = String::new();
     let mut number: u32 = 1;
-    let mut flush = |cur: &mut String, number: u32, pages: &mut Vec<PageText>| {
+    let flush = |cur: &mut String, number: u32, pages: &mut Vec<PageText>| {
         if !cur.trim().is_empty() {
             pages.push(PageText {
                 page: Some(number),
@@ -540,7 +540,10 @@ mod tests {
             assert_eq!(c.page, Some(7));
             // every chunk is a run of whole sentences
             for s in split_sentences(&c.text) {
-                assert!(s.starts_with("Sentence number ") && s.ends_with("plan."), "{s}");
+                assert!(
+                    s.starts_with("Sentence number ") && s.ends_with("plan."),
+                    "{s}"
+                );
             }
         }
         // overlap: the first sentence of chunk n+1 appears at the end of chunk n
@@ -549,7 +552,11 @@ mod tests {
             assert!(w[0].text.contains(&first_next), "no overlap: {first_next}");
         }
         // all sentences are covered in order
-        let all: String = chunks.iter().map(|c| c.text.clone()).collect::<Vec<_>>().join(" ");
+        let all: String = chunks
+            .iter()
+            .map(|c| c.text.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
         for n in 1..=40 {
             assert!(all.contains(&sentence(n)));
         }
@@ -624,7 +631,15 @@ mod tests {
     #[test]
     fn transcript_overlap_repeats_trailing_segment() {
         let segs: Vec<_> = (0..12u64)
-            .map(|i| seg(&format!("s{i}"), "Ann", i * 10_000, i * 10_000 + 9_000, "ok."))
+            .map(|i| {
+                seg(
+                    &format!("s{i}"),
+                    "Ann",
+                    i * 10_000,
+                    i * 10_000 + 9_000,
+                    "ok.",
+                )
+            })
             .collect();
         let p = ChunkingParams {
             transcript_window_ms: 30_000,
@@ -643,12 +658,18 @@ mod tests {
     fn page_markers_split_pages() {
         let pages = split_pages_by_markers("one\n\u{c}two\n\u{c}three");
         assert_eq!(
-            pages.iter().map(|p| (p.page, p.text.trim())).collect::<Vec<_>>(),
+            pages
+                .iter()
+                .map(|p| (p.page, p.text.trim()))
+                .collect::<Vec<_>>(),
             [(Some(1), "one"), (Some(2), "two"), (Some(3), "three")]
         );
         let pages = split_pages_by_markers("<<page 4>>\nalpha\n<<page 9>>\nbeta\n");
         assert_eq!(
-            pages.iter().map(|p| (p.page, p.text.trim())).collect::<Vec<_>>(),
+            pages
+                .iter()
+                .map(|p| (p.page, p.text.trim()))
+                .collect::<Vec<_>>(),
             [(Some(4), "alpha"), (Some(9), "beta")]
         );
     }

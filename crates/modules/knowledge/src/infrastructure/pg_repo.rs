@@ -82,7 +82,10 @@ impl KnowledgeRepository for PgKnowledgeRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        row.as_ref().map(profile_row).transpose().map_err(map_sqlx_error)
+        row.as_ref()
+            .map(profile_row)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 
     async fn register_profile(
@@ -229,7 +232,8 @@ impl KnowledgeRepository for PgKnowledgeRepository {
             Some(r) => {
                 let status: String = r.try_get("status").map_err(map_sqlx_error)?;
                 let prev: i32 = r.try_get("attempts").map_err(map_sqlx_error)?;
-                let last_msg: Option<String> = r.try_get("last_message_id").map_err(map_sqlx_error)?;
+                let last_msg: Option<String> =
+                    r.try_get("last_message_id").map_err(map_sqlx_error)?;
                 let next: Option<DateTime<Utc>> =
                     r.try_get("next_attempt_at").map_err(map_sqlx_error)?;
                 // Same stream entry redelivered after a failed attempt: continue the cycle.
@@ -332,7 +336,10 @@ impl KnowledgeRepository for PgKnowledgeRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        row.as_ref().map(job_record).transpose().map_err(map_sqlx_error)
+        row.as_ref()
+            .map(job_record)
+            .transpose()
+            .map_err(map_sqlx_error)
     }
 
     async fn replace_chunks(

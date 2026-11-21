@@ -17,8 +17,8 @@ use warptalk_livekit::{
     InMemoryRoomService, LiveKitConfig, RoomServiceCall, TokenClaims, sign_webhook,
 };
 use warptalk_meeting::application::ports::{
-    EVENT_BILLING_STOP, EVENT_END_ROOM, InMemoryMeetingEventPublisher, InMemoryRoomDirectory,
-    RoomInfo,
+    BridgeInfo, EVENT_BILLING_STOP, EVENT_END_ROOM, InMemoryMeetingEventPublisher,
+    InMemoryRoomDirectory, RoomInfo,
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MIGRATIONS, MeetingDeps, MeetingModule};
 use warptalk_web::JwtKeys;
@@ -256,23 +256,84 @@ async fn join_gate() {
     assert_eq!(body["code"], "INVALID_STATE");
 }
 
+fn bridge(provider: &str, capturer: Option<UserId>, stale: bool) -> BridgeInfo {
+    BridgeInfo {
+        provider: provider.into(),
+        capturer_user_id: capturer,
+        capturer_stale: stale,
+    }
+}
+
 #[tokio::test]
-async fn bridge_token_is_host_only_and_publish_only() {
+async fn bridge_token_refuses_native_rooms() {
     let Some(c) = ctx().await else { return };
     let (room, host) = c.room("IN_PROGRESS");
-    let guest = UserId::new();
-    c.dir.set_participant(room, guest, "CONNECTED", "G");
-    let (st, _) = c.post(&format!("/meetings/{room}/join"), host).await;
-    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        c.post(&format!("/meetings/{room}/join"), host).await.0,
+        StatusCode::OK
+    );
+    let (st, body) = c
+        .post(&format!("/meetings/{room}/bridge-token"), host)
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "NOT_BRIDGE_ROOM");
+}
 
+#[tokio::test]
+async fn bridge_token_is_capturer_only_and_publish_only() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    let (capturer, other) = (UserId::new(), UserId::new());
+    c.dir
+        .set_bridge(room, bridge("google_meet", Some(capturer), false));
+    assert_eq!(
+        c.post(&format!("/meetings/{room}/join"), host).await.0,
+        StatusCode::OK
+    );
     let uri = format!("/meetings/{room}/bridge-token");
-    let (st, _) = c.post(&uri, guest).await;
-    assert_eq!(st, StatusCode::FORBIDDEN);
-    let (st, body) = c.post(&uri, host).await;
+
+    // neither a stranger nor the host may mint it while someone else is the capturer
+    for u in [other, host] {
+        let (st, body) = c.post(&uri, u).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["code"], "NOT_CAPTURER");
+    }
+    let (st, body) = c.post(&uri, capturer).await;
     assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["participantIdentity"],
+        "00000000-0000-0000-0000-00000000b21d"
+    );
     let claims = decode(body["token"].as_str().unwrap());
+    assert_eq!(claims.sub, "00000000-0000-0000-0000-00000000b21d");
     assert!(claims.video.can_publish);
     assert!(!claims.video.can_subscribe);
+    let meta: Value = serde_json::from_str(claims.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(meta["provider"], "google_meet");
+
+    // a stale capturer loses the right
+    c.dir
+        .set_bridge(room, bridge("google_meet", Some(capturer), true));
+    let (st, body) = c.post(&uri, capturer).await;
+    assert_eq!(
+        (st, body["code"].as_str().unwrap()),
+        (StatusCode::FORBIDDEN, "NOT_CAPTURER")
+    );
+}
+
+#[tokio::test]
+async fn bridge_token_falls_back_to_host_without_capturer() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    c.dir.set_bridge(room, bridge("zoom", None, false));
+    assert_eq!(
+        c.post(&format!("/meetings/{room}/join"), host).await.0,
+        StatusCode::OK
+    );
+    let uri = format!("/meetings/{room}/bridge-token");
+    assert_eq!(c.post(&uri, UserId::new()).await.0, StatusCode::FORBIDDEN);
+    let (st, body) = c.post(&uri, host).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

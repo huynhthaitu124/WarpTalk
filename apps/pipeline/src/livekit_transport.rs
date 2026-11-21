@@ -64,7 +64,11 @@ impl LiveKitTransport {
 
 #[async_trait]
 impl MediaTransport for LiveKitTransport {
-    async fn join(&self, room: RoomId, identity: &str) -> Result<Box<dyn MediaSession>, MediaError> {
+    async fn join(
+        &self,
+        room: RoomId,
+        identity: &str,
+    ) -> Result<Box<dyn MediaSession>, MediaError> {
         let token = pipeline_agent_token(&self.cfg, &room.to_string(), identity, self.token_ttl)
             .map_err(|e| MediaError::Join(e.to_string()))?;
         let (lk_room, mut lk_events) = Room::connect(&self.cfg.url, &token, RoomOptions::default())
@@ -104,9 +108,15 @@ impl MediaTransport for LiveKitTransport {
                                 at: Instant::now(),
                             });
                         }
-                        RoomEvent::TrackSubscribed { track, publication, participant } => {
+                        RoomEvent::TrackSubscribed {
+                            track,
+                            publication,
+                            participant,
+                        } => {
                             let id = participant.identity().to_string();
-                            let RemoteTrack::Audio(audio) = track else { continue };
+                            let RemoteTrack::Audio(audio) = track else {
+                                continue;
+                            };
                             if AGENT_PREFIXES.iter().any(|p| id.starts_with(p))
                                 || publication.source() != TrackSource::Microphone
                             {
@@ -189,7 +199,10 @@ struct LiveKitSession {
 #[async_trait]
 impl MediaSession for LiveKitSession {
     fn take_events(&self) -> Option<mpsc::Receiver<MediaEvent>> {
-        self.events.lock().unwrap_or_else(PoisonError::into_inner).take()
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     async fn publish_dub(
@@ -231,7 +244,11 @@ impl MediaSession for LiveKitSession {
         }
         .ok_or(MediaError::Closed)?;
 
-        let pcm = f32_to_i16(&resample(&chunk.samples, chunk.sample_rate_hz, PUBLISH_RATE_HZ));
+        let pcm = f32_to_i16(&resample(
+            &chunk.samples,
+            chunk.sample_rate_hz,
+            PUBLISH_RATE_HZ,
+        ));
         for block in pcm.chunks(PUBLISH_FRAME_SAMPLES) {
             let mut data = block.to_vec();
             data.resize(PUBLISH_FRAME_SAMPLES, 0);
@@ -263,7 +280,12 @@ impl MediaSession for LiveKitSession {
 
     async fn close(&self) {
         self.pump.abort();
-        for (_, h) in self.readers.lock().unwrap_or_else(PoisonError::into_inner).drain() {
+        for (_, h) in self
+            .readers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+        {
             h.abort();
         }
         self.dub_tracks.lock().await.clear();

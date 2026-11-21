@@ -136,7 +136,9 @@ impl KnowledgeService {
             ));
         }
 
-        let top_k = filters.limit.map_or(cfg.base.top_k as usize, |l| l.clamp(1, 50));
+        let top_k = filters
+            .limit
+            .map_or(cfg.base.top_k as usize, |l| l.clamp(1, 50));
         let candidate_k = (cfg.ext.candidate_k as usize).max(top_k);
         let scope = ctx.effective_scope();
         let filter = search_filter(ctx, &scope, filters);

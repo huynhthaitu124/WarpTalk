@@ -25,7 +25,9 @@ impl FromStr for TransportKind {
         match s.trim().to_ascii_lowercase().as_str() {
             "simulated" => Ok(Self::Simulated),
             "livekit" => Ok(Self::LiveKit),
-            other => Err(format!("unknown transport {other:?}, expected simulated|livekit")),
+            other => Err(format!(
+                "unknown transport {other:?}, expected simulated|livekit"
+            )),
         }
     }
 }
@@ -61,7 +63,10 @@ impl fmt::Debug for AppConfig {
             .field("lease_ttl", &self.lease_ttl)
             .field("scan_interval", &self.scan_interval)
             .field("transport", &self.transport)
-            .field("openai_api_key", &self.openai_api_key.as_ref().map(|_| "***"))
+            .field(
+                "openai_api_key",
+                &self.openai_api_key.as_ref().map(|_| "***"),
+            )
             .field("livekit", &self.livekit)
             .field("sim_participants", &self.sim_participants)
             .finish_non_exhaustive()
@@ -81,7 +86,10 @@ impl AppConfig {
         let scan_ms: u64 = parse_or("PIPELINE_SCAN_INTERVAL_MS", 5_000)?;
         let host_id = optional("PIPELINE_HOST_ID").unwrap_or_else(|| {
             let host = optional("HOSTNAME").unwrap_or_else(|| "pipeline".into());
-            format!("{host}-{}", &uuid::Uuid::now_v7().simple().to_string()[20..])
+            format!(
+                "{host}-{}",
+                &uuid::Uuid::now_v7().simple().to_string()[20..]
+            )
         });
         let livekit = if transport == TransportKind::LiveKit {
             Some(LiveKitConfig {
@@ -161,8 +169,14 @@ mod tests {
 
     #[test]
     fn transport_kind_parses() {
-        assert_eq!("Simulated".parse::<TransportKind>().unwrap(), TransportKind::Simulated);
-        assert_eq!("livekit".parse::<TransportKind>().unwrap(), TransportKind::LiveKit);
+        assert_eq!(
+            "Simulated".parse::<TransportKind>().unwrap(),
+            TransportKind::Simulated
+        );
+        assert_eq!(
+            "livekit".parse::<TransportKind>().unwrap(),
+            TransportKind::LiveKit
+        );
         assert!("webrtc".parse::<TransportKind>().is_err());
     }
 }

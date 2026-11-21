@@ -93,10 +93,14 @@ async fn handle_segment(
     let (stored, shown) = tokio::join!(
         async {
             let r = ctx.results.publish_stt(&result).await;
-            record_stage_latency(STAGE_RESULT_PUBLISH, received.elapsed().as_secs_f64() * 1000.0);
+            record_stage_latency(
+                STAGE_RESULT_PUBLISH,
+                received.elapsed().as_secs_f64() * 1000.0,
+            );
             r
         },
-        ctx.media.publish_data(CAPTION_TOPIC, caption.to_string().into_bytes()),
+        ctx.media
+            .publish_data(CAPTION_TOPIC, caption.to_string().into_bytes()),
     );
     let published = Instant::now();
     match stored {
@@ -111,9 +115,13 @@ async fn handle_segment(
     }
 
     let since_end = |end: Option<Instant>| {
-        end.map_or(0.0, |e| published.saturating_duration_since(e).as_secs_f64() * 1000.0)
+        end.map_or(0.0, |e| {
+            published.saturating_duration_since(e).as_secs_f64() * 1000.0
+        })
     };
-    let entry = first.entry(seg.speaker.clone()).or_insert((seg.utterance_seq, false));
+    let entry = first
+        .entry(seg.speaker.clone())
+        .or_insert((seg.utterance_seq, false));
     if entry.0 != seg.utterance_seq {
         *entry = (seg.utterance_seq, false);
     }

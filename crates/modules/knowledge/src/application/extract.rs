@@ -64,9 +64,11 @@ fn is_image(mime: &str, name: Option<&str>) -> bool {
     mime.starts_with("image/")
         || name.is_some_and(|n| {
             let n = n.to_ascii_lowercase();
-            [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"]
-                .iter()
-                .any(|e| n.ends_with(e))
+            [
+                ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
+            ]
+            .iter()
+            .any(|e| n.ends_with(e))
         })
 }
 
@@ -128,7 +130,9 @@ fn strip_front_matter(s: &str) -> &str {
 #[async_trait]
 impl TextExtractor for MarkdownExtractor {
     fn supports(&self, mime: &str, file_name: Option<&str>) -> bool {
-        mime == "text/markdown" || mime == "text/x-markdown" || has_ext(file_name, &[".md", ".markdown"])
+        mime == "text/markdown"
+            || mime == "text/x-markdown"
+            || has_ext(file_name, &[".md", ".markdown"])
     }
 
     async fn extract(&self, input: &ExtractInput<'_>) -> Result<ExtractedText, ExtractError> {

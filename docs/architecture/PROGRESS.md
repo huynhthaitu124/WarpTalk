@@ -36,9 +36,18 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [~] W9b knowledge/RAG (spec 14 + proposals): structure-aware chunking + citation page/timestamp, score filter + re-rank, purge vectors khi archived/AI-disallowed, embedding retry/DLQ, fact extraction, PII scan transcript, OCR hook, search-quality metrics
 - [ ] W10 assistant (WarpBot) chat + tools + confirmation gate; billing metering; notification; invitations/series/artifacts
 - [ ] Voice clone (spec 13)
+- [x] W11a External meeting analysis xong; [~] W11b bridge room API + bridge_token fix; [x] far-side dedupe;
 - [~] W11 External meeting (Meet/Teams/Zoom) phân tích → `docs/architecture/external-meeting.md`, rồi sửa lỗi + phát triển
 - [ ] W12 Test: functional e2e, failure injection, performance/latency (pipeline bench với fake provider, load test N room, đo mouth-to-ear)
+- [~] W14 `apps/web` (React/Vite/Tailwind 4) theo design system Linear + WarpTalk legacy, Playwright E2E trên backend thật (test plan + visual regression + a11y)
+- [x] W13a App macOS SwiftUI (chưa compile; xem apps/macos/README.md, VERIFY list) → sau W14 chuyển sang WebView shell + native bridge
 - [ ] W13 App macOS chạy được meeting (deadline: thứ 2 2026-11-23): consent gate runtime, progressive ladder, revocation/deletion
+
+## Bị chặn bởi môi trường (cần user quyết)
+
+- Không build được LiveKit Rust RTC (`webrtc-sys` cần clang ≥ 21; máy có clang 18). Tải LLVM 21 bị chặn bởi permission.
+- Không tải được `livekit-server` binary để test meeting thật bằng Playwright (permission). Meeting E2E dùng trạng thái "LiveKit not configured"/mock.
+- `openai.com`, `ai.google.dev`, `developers.google.com`, `developers.zoom.us`, `learn.microsoft.com` bị chặn → các claim liên quan đánh dấu UNVERIFIED.
 
 ## Nợ kỹ thuật đã biết
 

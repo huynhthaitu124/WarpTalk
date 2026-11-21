@@ -7,8 +7,8 @@ pub mod facts;
 pub mod payload;
 pub mod pii;
 pub mod profile;
-pub mod rerank;
 pub mod request;
+pub mod rerank;
 pub mod text;
 
 pub use chunker::{
@@ -24,6 +24,4 @@ pub use payload::{
 };
 pub use pii::{PiiKind, PiiMatch, PiiOutcome, PiiPolicy};
 pub use profile::EmbeddingProfile;
-pub use request::{
-    IndexContent, IndexRequest, IndexResult, PurgeRequest, RawChunk, ResultStatus,
-};
+pub use request::{IndexContent, IndexRequest, IndexResult, PurgeRequest, RawChunk, ResultStatus};

@@ -47,8 +47,8 @@ pub fn has_cjk(text: &str) -> bool {
 }
 
 const ABBREVIATIONS: &[&str] = &[
-    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "e.g", "i.e", "fig", "inc",
-    "ltd", "co", "st", "approx", "dept", "est", "tp", "ths", "ts", "gs",
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "e.g", "i.e", "fig", "inc", "ltd",
+    "co", "st", "approx", "dept", "est", "tp", "ths", "ts", "gs",
 ];
 
 fn is_closer(c: char) -> bool {
@@ -126,7 +126,8 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         if cjk_end || latin_end {
             // absorb run of terminators and closing quotes
             let mut j = i + 1;
-            while j < chars.len() && (matches!(chars[j], '.' | '!' | '?' | '…') || is_closer(chars[j]))
+            while j < chars.len()
+                && (matches!(chars[j], '.' | '!' | '?' | '…') || is_closer(chars[j]))
             {
                 buf.push(chars[j]);
                 j += 1;
@@ -171,7 +172,10 @@ pub fn split_oversized(s: &str, max_tokens: usize, char_limit: usize) -> Vec<Str
         if hard_end < chars.len() {
             // prefer a whitespace break in the second half of the window
             let min_end = start + budget / 2;
-            if let Some(p) = (min_end..hard_end).rev().find(|&p| chars[p].is_whitespace()) {
+            if let Some(p) = (min_end..hard_end)
+                .rev()
+                .find(|&p| chars[p].is_whitespace())
+            {
                 end = p;
             }
         }
@@ -271,7 +275,10 @@ mod tests {
     #[test]
     fn list_items_are_separate_sentences() {
         let s = split_sentences("Agenda:\n- budget review\n- hiring plan\n1. wrap up");
-        assert_eq!(s, ["Agenda:", "- budget review", "- hiring plan", "1. wrap up"]);
+        assert_eq!(
+            s,
+            ["Agenda:", "- budget review", "- hiring plan", "1. wrap up"]
+        );
     }
 
     #[test]
@@ -279,7 +286,11 @@ mod tests {
         let s = "word ".repeat(200);
         let parts = split_oversized(s.trim(), 20, 2000);
         assert!(parts.len() > 3);
-        assert!(parts.iter().all(|p| estimate_tokens(p) <= 40 && !p.is_empty()));
+        assert!(
+            parts
+                .iter()
+                .all(|p| estimate_tokens(p) <= 40 && !p.is_empty())
+        );
         let cjk = "あ".repeat(100);
         let parts = split_oversized(&cjk, 30, 2000);
         assert!(parts.iter().all(|p| p.chars().count() <= 30));

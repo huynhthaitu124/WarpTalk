@@ -179,25 +179,30 @@ fn raw_to_prepared(req: &IndexRequest, source_id: &str, raw: &RawChunk, ordinal:
         ])
     });
     let heading_path = match m.get("heading_path") {
-        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
         Some(Value::String(s)) if !s.is_empty() => {
             s.split('>').map(|p| p.trim().to_owned()).collect()
         }
         _ => Vec::new(),
     };
     let mut segment_ids: Vec<String> = match m.get("segment_ids") {
-        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
         _ => Vec::new(),
     };
     if let Some(s) = meta_str(m, &["segment_id"]) {
         segment_ids.push(s);
     }
-    let speakers = meta_str(m, &["speaker_name", "speaker"]).into_iter().collect();
-    let fact = meta_str(m, &["fact"]).and_then(|f| {
-        meta_str(m, &["fact_category"])
-            .and_then(|c| FactCategory::parse(&c))
-            .map(|c| (f, c))
-    });
+    let speakers = meta_str(m, &["speaker_name", "speaker"])
+        .into_iter()
+        .collect();
+    let fact = meta_str(m, &["fact"])
+        .zip(meta_str(m, &["fact_category"]).and_then(|c| FactCategory::parse(&c)));
     Prepared {
         id,
         ordinal: meta_u64(m, "chunk_index").map_or(ordinal, |n| n as u32),
@@ -245,10 +250,7 @@ fn gate_pages(pages: &[PageText], policy: PiiPolicy, c: &mut PiiCounters) -> Vec
                 .filter_map(|para| gate(para, policy, c))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            PageText {
-                page: p.page,
-                text,
-            }
+            PageText { page: p.page, text }
         })
         .collect()
 }
@@ -259,12 +261,7 @@ fn gate_segments(
     c: &mut PiiCounters,
 ) -> Vec<SegmentInput> {
     segs.iter()
-        .filter_map(|s| {
-            gate(&s.text, policy, c).map(|text| SegmentInput {
-                text,
-                ..s.clone()
-            })
-        })
+        .filter_map(|s| gate(&s.text, policy, c).map(|text| SegmentInput { text, ..s.clone() }))
         .collect()
 }
 
@@ -296,7 +293,14 @@ impl IndexingService {
         let attempts = match self
             .d
             .repo
-            .begin_job(ws, &req.job_id, req.source_type, &source_id, message_id, now)
+            .begin_job(
+                ws,
+                &req.job_id,
+                req.source_type,
+                &source_id,
+                message_id,
+                now,
+            )
             .await
         {
             Ok(JobStart::Started { attempts }) => attempts,
@@ -360,7 +364,14 @@ impl IndexingService {
         if let Err(e) = self
             .d
             .repo
-            .finish_job(req.workspace_id, &req.job_id, JobStatus::Dead, 0, Some(&msg), now)
+            .finish_job(
+                req.workspace_id,
+                &req.job_id,
+                JobStatus::Dead,
+                0,
+                Some(&msg),
+                now,
+            )
             .await
         {
             tracing::error!(error = %e, job = %req.job_id, "finish_job(dead) failed");
@@ -426,7 +437,10 @@ impl IndexingService {
         let mut report = PurgeReport::default();
         for p in self.d.repo.profiles(workspace).await? {
             report.vectors_deleted += self.d.vectors.count(&p.collection, Some(&filter)).await?;
-            self.d.vectors.delete_by_filter(&p.collection, &filter).await?;
+            self.d
+                .vectors
+                .delete_by_filter(&p.collection, &filter)
+                .await?;
             report.collections += 1;
         }
         let (chunks, facts) = self
@@ -477,11 +491,13 @@ impl IndexingService {
 
         // Removal and gating happen before any provider call (spec 14 G4).
         if req.deletion_state != "active" {
-            self.purge_source(ws, Some(req.source_type), Some(source_id)).await?;
+            self.purge_source(ws, Some(req.source_type), Some(source_id))
+                .await?;
             return Ok(Outcome::simple(ResultStatus::Deleted, "", profile));
         }
         if !req.ai_retrieval_allowed {
-            self.purge_source(ws, Some(req.source_type), Some(source_id)).await?;
+            self.purge_source(ws, Some(req.source_type), Some(source_id))
+                .await?;
             return Ok(Outcome::simple(
                 ResultStatus::Blocked,
                 "ai_retrieval_not_allowed",
@@ -489,7 +505,8 @@ impl IndexingService {
             ));
         }
         if req.retention_state != "active" {
-            self.purge_source(ws, Some(req.source_type), Some(source_id)).await?;
+            self.purge_source(ws, Some(req.source_type), Some(source_id))
+                .await?;
             return Ok(Outcome::simple(
                 ResultStatus::Blocked,
                 "source_not_active",
@@ -558,7 +575,16 @@ impl IndexingService {
                 && !content.is_empty()
             {
                 facts = self
-                    .index_facts(llm.clone(), src, &collection, profile.dims, cfg, &content, req, now)
+                    .index_facts(
+                        llm.clone(),
+                        src,
+                        &collection,
+                        profile.dims,
+                        cfg,
+                        &content,
+                        req,
+                        now,
+                    )
                     .await?;
             }
         }
@@ -610,9 +636,10 @@ impl IndexingService {
                 .collect()
         };
         match &req.content {
-            Some(IndexContent::Document { pages }) => {
-                mk(chunk_document(&gate_pages(pages, policy, counters), &params), None)
-            }
+            Some(IndexContent::Document { pages }) => mk(
+                chunk_document(&gate_pages(pages, policy, counters), &params),
+                None,
+            ),
             Some(IndexContent::Transcript {
                 meeting_id,
                 segments,
@@ -667,7 +694,9 @@ impl IndexingService {
         let meeting_id = p
             .meeting_id
             .clone()
-            .or_else(|| (req.source_type == SourceType::MeetingSummary).then(|| source_id.to_owned()))
+            .or_else(|| {
+                (req.source_type == SourceType::MeetingSummary).then(|| source_id.to_owned())
+            })
             .map(|m| normalize_id(&m));
         ChunkPayload {
             workspace_id: req.workspace_id,
@@ -773,9 +802,9 @@ impl IndexingService {
         let conc = (cfg.base.embedding_concurrency as usize).max(1);
         let timeout = Duration::from_millis(u64::from(cfg.base.embedding_timeout_ms));
         let model = cfg.base.embedding_model.clone();
-        let results: Vec<Result<Vec<Vec<f32>>, IndexError>> = futures::stream::iter(
-            texts.chunks(batch).map(|b| {
-                let inputs = b.to_vec();
+        let batches: Vec<Vec<String>> = texts.chunks(batch).map(<[String]>::to_vec).collect();
+        let results: Vec<Result<Vec<Vec<f32>>, IndexError>> = futures::stream::iter(batches)
+            .map(|inputs: Vec<String>| {
                 let model = model.clone();
                 async move {
                     let r = tokio::time::timeout(timeout, self.d.embeddings.embed(&model, &inputs))
@@ -797,11 +826,10 @@ impl IndexingService {
                     }
                     Ok(r.vectors)
                 }
-            }),
-        )
-        .buffered(conc)
-        .collect()
-        .await;
+            })
+            .buffered(conc)
+            .collect()
+            .await;
         let mut out = Vec::with_capacity(texts.len());
         for r in results {
             out.extend(r?);
@@ -829,15 +857,11 @@ impl IndexingService {
         req: &IndexRequest,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<usize, IndexError> {
-        let model = if cfg.ext.fact_model.is_empty() {
-            cfg.base.embedding_model.clone() // never an LLM name; extraction is skipped below
-        } else {
-            cfg.ext.fact_model.clone()
-        };
         if cfg.ext.fact_model.is_empty() {
             tracing::warn!("fact extraction enabled but `fact_model` is empty; skipping");
             return Ok(0);
         }
+        let model = cfg.ext.fact_model.clone();
         let chunks: Vec<(Uuid, String)> = content
             .iter()
             .map(|p| (p.chunk_id, p.text.clone()))
@@ -872,7 +896,13 @@ impl IndexingService {
                 continue;
             };
             let mut p = origin.clone();
-            p.chunk_id = derive_id(&[&ws, src.source_type.as_str(), src.source_id, "fact", &i.to_string()]);
+            p.chunk_id = derive_id(&[
+                &ws,
+                src.source_type.as_str(),
+                src.source_id,
+                "fact",
+                &i.to_string(),
+            ]);
             p.kind = ChunkKind::Fact;
             p.ordinal = i as u32;
             p.text = f.fact.clone();

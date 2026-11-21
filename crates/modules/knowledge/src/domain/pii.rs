@@ -164,7 +164,7 @@ fn luhn_ok(digits: &[u8]) -> bool {
         }
         sum += v;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Japanese My Number: 12 digits, the last is a check digit over the first eleven.
@@ -204,7 +204,8 @@ fn us_ssn_ok(d: &[u8]) -> bool {
     }
     let area = u16::from(d[0]) * 100 + u16::from(d[1]) * 10 + u16::from(d[2]);
     let group = d[3] * 10 + d[4];
-    let serial = u16::from(d[5]) * 1000 + u16::from(d[6]) * 100 + u16::from(d[7]) * 10 + u16::from(d[8]);
+    let serial =
+        u16::from(d[5]) * 1000 + u16::from(d[6]) * 100 + u16::from(d[7]) * 10 + u16::from(d[8]);
     area != 0 && area != 666 && area < 900 && group != 0 && serial != 0
 }
 
@@ -385,7 +386,8 @@ fn detect_digit_runs(text: &str, chars: &[(usize, char)], found: &mut Vec<PiiMat
     while i < chars.len() {
         let c = chars[i].1;
         let starts = c.is_ascii_digit() || c == '+' || c == '(';
-        let boundary_ok = i == 0 || !chars[i - 1].1.is_alphanumeric() || is_cjk_char(chars[i - 1].1);
+        let boundary_ok =
+            i == 0 || !chars[i - 1].1.is_alphanumeric() || is_cjk_char(chars[i - 1].1);
         if !starts || !boundary_ok {
             i += 1;
             continue;
@@ -432,7 +434,10 @@ mod tests {
 
     #[test]
     fn emails() {
-        assert_eq!(kinds("mail me at john.doe+x@example.co.uk, thanks"), [PiiKind::Email]);
+        assert_eq!(
+            kinds("mail me at john.doe+x@example.co.uk, thanks"),
+            [PiiKind::Email]
+        );
         assert!(kinds("handle @team and a@b").is_empty());
         let out = apply_policy("write to a.b@c.io now", PiiPolicy::Mask);
         assert_eq!(out.text.unwrap(), "write to [EMAIL] now");
