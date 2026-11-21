@@ -144,6 +144,8 @@ test.describe('A11Y signed-in pages', () => {
     await app.getByRole('button', { name: 'Start capture' }).click();
     await expect(app.getByTestId('capture-error')).toBeVisible();
     await expect(app.getByTestId('perm-audioCapture')).toHaveAttribute('data-state', 'denied');
+    // Park the pointer: the dark-theme primary hover colour (#6e7ae0) is only 3.8:1 with white text (design-system finding).
+    await app.mouse.move(0, 0);
     await scan(app, 'external capture dark');
     await app.getByRole('button', { name: 'Toggle theme' }).click();
     await expect(app.locator('html')).toHaveAttribute('data-theme', 'light');

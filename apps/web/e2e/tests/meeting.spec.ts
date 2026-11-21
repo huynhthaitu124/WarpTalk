@@ -73,7 +73,7 @@ test.describe('Meeting shell', () => {
     await expect(app.getByTestId('meeting-prejoin')).toBeVisible();
   });
 
-  test('MTG-05 host ends the meeting (LiveKit not configured): confirm dialog, room ends, back on room details', async ({ app, tokens, workspace }) => {
+  test('MTG-06 host ends the meeting (LiveKit not configured): confirm dialog, room ends, back on room details', async ({ app, tokens, workspace }) => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Wrap up' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     await app.goto(`/meetings/${room.id}`);
@@ -102,7 +102,7 @@ test.describe('Meeting shell', () => {
     await expect(app.getByRole('button', { name: 'End meeting' })).toHaveCount(0);
   });
 
-  test('MTG-06 only the host sees End meeting', async ({ tokens, workspace, browser, baseURL }) => {
+  test('MTG-07 only the host sees End meeting', async ({ tokens, workspace, browser, baseURL }) => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Hosted' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     const member = await createUser('member');
@@ -118,7 +118,7 @@ test.describe('Meeting shell', () => {
     }
   });
 
-  test('MTG-07 status indicators: connection, network and translation state with text labels', async ({ app, tokens, workspace }) => {
+  test('MTG-08 status indicators: connection, network and translation state with text labels', async ({ app, tokens, workspace }) => {
     const waiting = await createRoom(tokens.accessToken, workspace.id, { title: 'Not live yet' });
     await app.goto(`/meetings/${waiting.id}`);
     const strip = app.getByRole('list', { name: 'Meeting status' });
@@ -134,7 +134,7 @@ test.describe('Meeting shell', () => {
     await expect(app.getByTestId('status-translation')).toHaveText('Translation: Paused'); // room polls every 3s
   });
 
-  test('MTG-08 captions show original + translation per line with latency; translations merge into the same line', async ({ page }) => {
+  test('MTG-09 captions show original + translation per line with latency; translations merge into the same line', async ({ page }) => {
     await mountCaptions(page, {
       translationLang: 'en',
       room: { status: 'IN_PROGRESS', translationActive: true },
@@ -172,7 +172,7 @@ test.describe('Meeting shell', () => {
     await expect(page.getByTestId('status-translation')).toHaveText('Translation: Active');
   });
 
-  test('MTG-09 original audio listeners see the first available translation; connection states map to labels', async ({ page }) => {
+  test('MTG-10 original audio listeners see the first available translation; connection states map to labels', async ({ page }) => {
     await mountCaptions(page, {
       translationLang: 'original',
       room: { status: 'PAUSED', translationActive: true },
