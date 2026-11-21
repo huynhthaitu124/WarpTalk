@@ -50,7 +50,10 @@ mod tests {
     #[test]
     fn merges_objects_replaces_scalars_and_arrays() {
         let mut base = json!({"a": 1, "o": {"x": 1, "y": 2}, "l": [1, 2]});
-        deep_merge(&mut base, &json!({"a": 2, "o": {"y": 3}, "l": [9], "n": null}));
+        deep_merge(
+            &mut base,
+            &json!({"a": 2, "o": {"y": 3}, "l": [9], "n": null}),
+        );
         assert_eq!(base, json!({"a": 2, "o": {"x": 1, "y": 3}, "l": [9]}));
     }
 

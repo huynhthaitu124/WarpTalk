@@ -21,7 +21,7 @@ cargo fmt --all
 cargo clippy -p <your-crate> --all-targets -- -D warnings
 cargo test -p <your-crate>
 ```
-Local services for integration tests: Postgres `postgres://postgres@localhost:5432/warptalk` (trust auth), Redis `redis://localhost:6379`. Integration tests must skip (return early with a printed note) when `DATABASE_URL` / `REDIS_URL` env vars are unset.
+Local services for integration tests: Postgres `postgres://postgres@localhost:5432/warptalk` (trust auth), Redis `redis://localhost:6379`. If unreachable, run `scripts/dev-services.sh` (never edit pg_hba.conf, never start/stop other clusters).
 
 ## Report format (keep it short)
 List: files created/changed, public API added (signatures only), tests run with pass/fail counts, any deviation or blocker. Do not paste file contents.
