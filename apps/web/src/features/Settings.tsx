@@ -38,7 +38,7 @@ function WorkspaceTab({ ws }: { ws: Workspace }) {
       <CardHeader title={ws.name} description={ws.description || `Slug: ${ws.slug}`} actions={<StatusPill status={ws.myRole} />} />
       <CardBody>
         {!editable && <ReadOnlyNote role={ws.myRole} />}
-        <form onSubmit={submit} className="flex max-w-md flex-col gap-4">
+        <form onSubmit={submit} noValidate className="flex max-w-md flex-col gap-4">
           <Field label="Max participants" hint="Between 1 and 1000.">
             <Input type="number" min={1} max={1000} value={draft.maxParticipantsLimit} disabled={!editable} onChange={(e) => set('maxParticipantsLimit', Number(e.target.value))} />
           </Field>
@@ -98,6 +98,11 @@ const FIELDS: Record<Namespace, FieldDef[]> = {
     { key: 'catch_up_max_speed', label: 'Catch-up max speed', kind: 'number', step: 0.05 },
   ],
 };
+
+/** f32 values arrive as 0.550000011920929: show what a human typed. */
+function tidy(v: Json): Json {
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typeof x === 'number' && !Number.isInteger(x) ? Number(x.toPrecision(6)) : x]));
+}
 
 function RuntimeEditor({
   ns, scope, scopeId, initial, editable, overridden, version,
@@ -199,7 +204,7 @@ function RuntimeTab({ ws }: { ws: Workspace }) {
   const stored = useScopedSettings(ns, scope, scopeId || undefined, editable);
 
   const loading = eff.isLoading || (editable && stored.isLoading);
-  const initial = (stored.data?.value ?? eff.data?.value ?? {}) as Json;
+  const initial = tidy((stored.data?.value ?? eff.data?.value ?? {}) as Json);
   const overridden = stored.data?.value != null;
 
   return (

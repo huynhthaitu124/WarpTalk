@@ -25,17 +25,22 @@
 pub mod bench;
 pub mod config;
 pub mod downstream;
+pub mod fakes;
 pub mod host;
 #[cfg(feature = "livekit-rtc")]
 pub mod livekit_transport;
+pub mod prewarm;
 pub mod results;
 pub mod routes;
 pub mod simulated;
 pub mod transport;
+pub mod tuning;
 pub mod wav;
 pub mod worker;
 
-pub use downstream::{DownstreamContext, DownstreamStage, SttOnlyStage};
+pub use downstream::{
+    DownstreamContext, DownstreamStage, SttOnlyStage, TranslateDubDeps, TranslateDubStage,
+};
 pub use host::{HostConfig, HostDeps, PipelineHost, StartOutcome};
 pub use results::{MemoryResultSink, RedisResultSink, ResultSink};
 pub use routes::RoutesView;

@@ -8,8 +8,12 @@ use async_trait::async_trait;
 use redis::aio::ConnectionManager;
 use thiserror::Error;
 use warptalk_bus::BusError;
-use warptalk_contracts::events::SttResult;
-use warptalk_contracts::streams::{self, STT_RESULTS};
+use warptalk_contracts::events::{
+    SttResult, TranslateResult, TranslationRoomSystemEvent, TtsResult,
+};
+use warptalk_contracts::streams::{
+    self, STT_RESULTS, TRANSLATE_RESULTS, TRANSLATION_ROOM_SYSTEM_EVENTS, TTS_RESULTS,
+};
 use warptalk_kernel::RoomId;
 use warptalk_pipeline_runtime::SttSegment;
 
@@ -22,6 +26,24 @@ pub enum ResultError {
 #[async_trait]
 pub trait ResultSink: Send + Sync {
     async fn publish_stt(&self, result: &SttResult) -> Result<(), ResultError>;
+
+    /// `translate:results` (metadata and text of one translated sentence).
+    async fn publish_translate(&self, _result: &TranslateResult) -> Result<(), ResultError> {
+        Ok(())
+    }
+
+    /// `tts:results` (metadata only: the audio travels on the LiveKit track).
+    async fn publish_tts(&self, _result: &TtsResult) -> Result<(), ResultError> {
+        Ok(())
+    }
+
+    /// `translationRoom:system_events` (route degradation and the like).
+    async fn publish_system_event(
+        &self,
+        _event: &TranslationRoomSystemEvent,
+    ) -> Result<(), ResultError> {
+        Ok(())
+    }
 }
 
 /// `XADD stt:results` and the per-meeting copy `stt:results:{meetingId}` (spec 08 section 1),
@@ -51,15 +73,88 @@ impl ResultSink for RedisResultSink {
         b?;
         Ok(())
     }
+
+    async fn publish_translate(&self, r: &TranslateResult) -> Result<(), ResultError> {
+        self.xadd_pair(TRANSLATE_RESULTS, r, r.meeting_id).await
+    }
+
+    async fn publish_tts(&self, r: &TtsResult) -> Result<(), ResultError> {
+        self.xadd_pair(TTS_RESULTS, r, r.meeting_id).await
+    }
+
+    async fn publish_system_event(
+        &self,
+        e: &TranslationRoomSystemEvent,
+    ) -> Result<(), ResultError> {
+        let mut conn = self.conn.clone();
+        warptalk_bus::xadd_json(&mut conn, TRANSLATION_ROOM_SYSTEM_EVENTS, e, self.maxlen).await?;
+        Ok(())
+    }
+}
+
+impl RedisResultSink {
+    /// Global stream entry plus the per-meeting copy, issued concurrently.
+    async fn xadd_pair<T: serde::Serialize + Sync>(
+        &self,
+        stream: &str,
+        r: &T,
+        meeting: Option<RoomId>,
+    ) -> Result<(), ResultError> {
+        let mut global = self.conn.clone();
+        match meeting {
+            Some(m) => {
+                let mut per_meeting = self.conn.clone();
+                let copy = streams::per_meeting(stream, m);
+                let (a, b) = tokio::join!(
+                    warptalk_bus::xadd_json(&mut global, stream, r, self.maxlen),
+                    warptalk_bus::xadd_json(&mut per_meeting, &copy, r, self.maxlen),
+                );
+                a?;
+                b?;
+            }
+            None => {
+                warptalk_bus::xadd_json(&mut global, stream, r, self.maxlen).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Keeps results in memory (tests, bench, local runs without Redis).
 #[derive(Debug, Default)]
 pub struct MemoryResultSink {
     items: Mutex<Vec<(Instant, SttResult)>>,
+    translations: Mutex<Vec<(Instant, TranslateResult)>>,
+    tts: Mutex<Vec<(Instant, TtsResult)>>,
+    system_events: Mutex<Vec<TranslationRoomSystemEvent>>,
 }
 
 impl MemoryResultSink {
+    pub fn translations(&self) -> Vec<TranslateResult> {
+        self.translations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    pub fn tts_results(&self) -> Vec<TtsResult> {
+        self.tts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(_, r)| r.clone())
+            .collect()
+    }
+
+    pub fn system_events(&self) -> Vec<TranslationRoomSystemEvent> {
+        self.system_events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     pub fn results(&self) -> Vec<SttResult> {
         self.items
             .lock()
@@ -88,6 +183,33 @@ impl ResultSink for MemoryResultSink {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push((Instant::now(), r.clone()));
+        Ok(())
+    }
+
+    async fn publish_translate(&self, r: &TranslateResult) -> Result<(), ResultError> {
+        self.translations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((Instant::now(), r.clone()));
+        Ok(())
+    }
+
+    async fn publish_tts(&self, r: &TtsResult) -> Result<(), ResultError> {
+        self.tts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((Instant::now(), r.clone()));
+        Ok(())
+    }
+
+    async fn publish_system_event(
+        &self,
+        e: &TranslationRoomSystemEvent,
+    ) -> Result<(), ResultError> {
+        self.system_events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(e.clone());
         Ok(())
     }
 }

@@ -44,10 +44,10 @@ export function CommandMenuProvider({ items, children }: { items: CommandItem[];
           <RD.Content aria-label="Command menu" className="fixed left-1/2 top-[18vh] z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2 animate-pop-in overflow-hidden rounded-xl border border-hairline-strong bg-surface-2 shadow-pop focus:outline-none">
             <RD.Title className="sr-only">Command menu</RD.Title>
             <RD.Description className="sr-only">Type to search commands. Use arrow keys to navigate and Enter to run.</RD.Description>
-            <Command label="Command menu" loop>
+            <Command label="Search commands" loop>
               <div className="flex items-center gap-2 border-b border-hairline px-4">
                 <Search className="size-4 text-ink-subtle" aria-hidden />
-                <Command.Input aria-label="Search commands" placeholder="Type a command or search…" className="h-12 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-tertiary" />
+                <Command.Input placeholder="Type a command or search…" className="h-12 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-tertiary" />
                 <Kbd>esc</Kbd>
               </div>
               <Command.List className="max-h-80 overflow-y-auto p-2">

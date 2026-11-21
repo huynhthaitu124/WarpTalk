@@ -44,12 +44,16 @@ uuid = { workspace = true }
 warptalk-audio = { workspace = true }
 warptalk-bus = { workspace = true }
 warptalk-config = { workspace = true }
+warptalk-cartesia = { workspace = true }
 warptalk-contracts = { workspace = true }
 warptalk-db = { workspace = true }
 warptalk-ingress = { workspace = true }
 warptalk-kernel = { workspace = true }
 warptalk-livekit = { workspace = true }
+warptalk-llm = { workspace = true }
+warptalk-mt = { workspace = true }
 warptalk-pipeline-runtime = { workspace = true }
 warptalk-settings = { workspace = true }
 warptalk-stt = { workspace = true }
 warptalk-telemetry = { workspace = true }
+warptalk-tts = { workspace = true }

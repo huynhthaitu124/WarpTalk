@@ -4,7 +4,7 @@ import { Copy, Pause, Play, Square, UserCheck, UserX, Video, XCircle, RefreshCw,
 import {
   Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast, Avatar,
 } from '@/ui';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
   useGenerateRoutes, useJoinById, useLeaveRoom, useParticipantAction, useParticipants, useRoom, useRoomAction, useRoutes, type RoomAction,
@@ -173,15 +173,15 @@ export function RoomDetailPage() {
   const roomQ = useRoom(roomId);
   const partsQ = useParticipants(roomId);
   const leave = useLeaveRoom(roomId);
+  const profile = useProfile();
 
   if (roomQ.isLoading) return <div className="flex flex-col gap-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></div>;
   if (roomQ.isError) {
     const notFound = roomQ.error instanceof ApiError && roomQ.error.status === 404;
     return notFound ? (
       <div className="flex flex-col gap-4">
-        <PageHeader title="Room" description="You are not part of this room yet." />
-        <JoinRoomForm roomId={roomId} />
-        <Link to="/rooms" className="mx-auto text-body-sm">Back to rooms</Link>
+        <PageHeader title="Room not found" description="This room does not exist, or you have not joined it yet." />
+        <EmptyState title="Have a room code?" description="People outside the workspace can only enter a room with its 12-character code." action={<Link to="/join" className="text-body">Join by code</Link>} />
       </div>
     ) : <Alert tone="danger" title="Could not load room">{errMsg(roomQ.error)}</Alert>;
   }
@@ -209,7 +209,7 @@ export function RoomDetailPage() {
         actions={
           <>
             <Button
-              aria-label="Copy room code"
+              aria-label={`Copy room code ${room.roomCode}`}
               onClick={() => { void navigator.clipboard?.writeText(room.roomCode).catch(() => undefined); toast({ tone: 'info', title: 'Room code copied', description: room.roomCode }); }}
             >
               <Copy className="size-4" aria-hidden /><code data-testid="room-code">{room.roomCode}</code>
@@ -222,6 +222,7 @@ export function RoomDetailPage() {
           </>
         }
       />
+      {!self && !terminal && partsQ.isSuccess && <div className="mb-6"><JoinRoomForm roomId={room.id} defaultName={profile.data?.fullName} /></div>}
       {inLobby && <Alert tone="warning" title="Waiting for the host" className="mb-6">The host needs to admit you before you can enter the meeting. This page updates automatically.</Alert>}
       {self?.status === 'KICKED' && <Alert tone="danger" title="You were removed from this room" className="mb-6" />}
       {self?.status === 'CONNECTED' && !isHost && !terminal && (

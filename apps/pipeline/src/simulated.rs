@@ -33,6 +33,9 @@ pub enum SimSource {
         pause_ms: u32,
         utterances: Option<u32>,
         amplitude: f32,
+        /// Per-turn variation of the speech duration, +-this fraction (the cycle length stays
+        /// fixed, the pause absorbs it); deterministic in the turn number.
+        speech_jitter: f32,
     },
     /// A recording, already at its own rate.
     Pcm {
@@ -40,6 +43,18 @@ pub enum SimSource {
         sample_rate_hz: u32,
         looped: bool,
     },
+}
+
+/// Speech duration of turn `k`: `speech_ms` varied by +-`jitter` with a hash of `k`, leaving at
+/// least 600 ms of pause in the cycle.
+fn turn_speech_ms(speech_ms: u32, cycle: u64, jitter: f32, k: u64) -> u64 {
+    if jitter <= 0.0 {
+        return u64::from(speech_ms);
+    }
+    let h = k.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let u = ((h >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0;
+    let ms = f64::from(speech_ms) * (1.0 + f64::from(jitter * u));
+    (ms as u64).clamp(400, cycle.saturating_sub(600).max(400))
 }
 
 impl SimSource {
@@ -53,6 +68,7 @@ impl SimSource {
                 pause_ms,
                 utterances,
                 amplitude,
+                speech_jitter,
             } => {
                 let cycle = u64::from(speech_ms + pause_ms).max(1);
                 let mut out = Vec::with_capacity(n);
@@ -64,7 +80,7 @@ impl SimSource {
                     if utterances.is_some_and(|u| k >= u64::from(u)) {
                         done = true;
                         out.push(0.0);
-                    } else if within < u64::from(*speech_ms) {
+                    } else if within < turn_speech_ms(*speech_ms, cycle, *speech_jitter, k) {
                         let t = idx as f32 / rate as f32;
                         let voiced = (2.0 * PI * 140.0 * t).sin()
                             + 0.5 * (2.0 * PI * 280.0 * t).sin()
@@ -125,6 +141,7 @@ impl SimParticipant {
                 pause_ms,
                 utterances: None,
                 amplitude: 0.3,
+                speech_jitter: 0.0,
             },
             join_after: Duration::ZERO,
             leave_after: None,
@@ -171,6 +188,14 @@ impl SimParticipant {
 
     pub fn leave_after(mut self, d: Duration) -> Self {
         self.leave_after = Some(d);
+        self
+    }
+
+    /// Per-turn speech duration jitter of a synthetic source (+- fraction).
+    pub fn speech_jitter(mut self, jitter: f32) -> Self {
+        if let SimSource::Synthetic { speech_jitter, .. } = &mut self.source {
+            *speech_jitter = jitter.clamp(0.0, 0.9);
+        }
         self
     }
 

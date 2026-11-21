@@ -28,6 +28,9 @@ use crate::results::ResultSink;
 use crate::routes::RoutesView;
 use crate::transport::{MediaError, MediaEvent, MediaSession, MediaTransport, ParticipantAudio};
 
+/// How long a stopping room waits for its downstream stage to drain before aborting it.
+const DOWNSTREAM_DRAIN: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Counts audio blocks of participants that are not (yet) speakers.
 pub const AUDIO_IGNORED_METRIC: &str = "warptalk_pipeline_audio_ignored_blocks_total";
 
@@ -98,9 +101,9 @@ impl RoomWorker {
             tokio::spawn(async move { stage.run(ctx, segments).await })
         };
 
+        let closing = session.clone();
         let runner = Runner {
             room,
-            session,
             pipeline,
             events,
             routes_rx,
@@ -113,9 +116,19 @@ impl RoomWorker {
         let fin = finished.clone();
         let join = tokio::spawn(async move {
             runner.run().await;
-            if let Err(e) = downstream.await {
-                warn!(room = %room, error = %e, "downstream stage task failed");
+            // Let the downstream stage finish what is in flight (the last translations and the
+            // tail of the dub) BEFORE the session closes, bounded so a stuck vendor cannot hold
+            // the room open.
+            let mut downstream = downstream;
+            match tokio::time::timeout(DOWNSTREAM_DRAIN, &mut downstream).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(room = %room, error = %e, "downstream stage task failed"),
+                Err(_) => {
+                    warn!(room = %room, "downstream stage did not drain in time; aborting it");
+                    downstream.abort();
+                }
             }
+            closing.close().await;
             fin.store(true, Ordering::Release);
         });
         Ok(Self {
@@ -169,6 +182,9 @@ fn effective_config(base: &PipelineConfig, flash: Option<bool>) -> PipelineConfi
     if let Some(f) = flash {
         cfg.flash_mode = f;
     }
+    // The downstream stage uses the end-of-turn marker (empty text); transcript-only stages
+    // skip it.
+    cfg.emit_utterance_end = true;
     cfg
 }
 
@@ -179,7 +195,6 @@ struct ActiveSpeaker {
 
 struct Runner {
     room: RoomId,
-    session: Arc<dyn MediaSession>,
     pipeline: RoomPipeline,
     events: mpsc::Receiver<MediaEvent>,
     routes_rx: watch::Receiver<Arc<RoutesView>>,
@@ -229,7 +244,6 @@ impl Runner {
         // Drain every speaker (open utterance committed, transcripts forwarded), then close
         // the output channel, which ends the downstream stage.
         self.pipeline.shutdown().await;
-        self.session.close().await;
         self.speakers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

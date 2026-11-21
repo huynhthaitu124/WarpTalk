@@ -4,6 +4,7 @@ import { DoorOpen, Plus } from 'lucide-react';
 import {
   Alert, Badge, Button, Checkbox, Dialog, DialogContent, EmptyState, Field, Input, ListRow, PageHeader, Select, Skeleton, StatusPill, useToast,
 } from '@/ui';
+import { useProfile } from '@/lib/auth';
 import { useWorkspace } from '@/lib/workspace';
 import { useCreateRoom, useRooms } from '@/lib/queries';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
@@ -16,6 +17,7 @@ export function CreateRoomDialog({ open, onOpenChange }: { open: boolean; onOpen
   const create = useCreateRoom();
   const toast = useToast();
   const nav = useNavigate();
+  const profile = useProfile();
   const [title, setTitle] = useState('');
   const [source, setSource] = useState('vi');
   const [targets, setTargets] = useState<string[]>(['en']);
@@ -29,6 +31,7 @@ export function CreateRoomDialog({ open, onOpenChange }: { open: boolean; onOpen
     try {
       const r = await create.mutateAsync({
         workspaceId: current.id, title: title.trim(), sourceLanguage: source, targetLanguages: targets, requiresApproval: approval,
+        displayName: profile.data?.fullName,
       });
       toast({ tone: 'success', title: 'Room created', description: r.title });
       setTitle('');

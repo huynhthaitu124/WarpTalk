@@ -1,0 +1,100 @@
+import { createWorkspace, expect, rnd, test } from '../fixtures';
+import { test as raw } from '@playwright/test';
+
+raw.describe('Keyboard', () => {
+  raw('KBD-02 focus ring visible while tabbing the login form', async ({ page }) => {
+    await page.goto('/login');
+    const seen: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('Tab');
+      const info = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement;
+        const cs = getComputedStyle(el);
+        return { tag: el.tagName, name: el.getAttribute('aria-label') || el.textContent?.trim() || el.id, outlineW: parseFloat(cs.outlineWidth), outlineStyle: cs.outlineStyle, vis: el.matches(':focus-visible') };
+      });
+      if (info.tag === 'BODY') continue;
+      expect(info.vis, `focus-visible on ${info.tag}`).toBe(true);
+      expect(info.outlineStyle, `outline on ${info.name}`).not.toBe('none');
+      expect(info.outlineW, `outline width on ${info.name}`).toBeGreaterThan(0);
+      seen.push(info.tag);
+    }
+    expect(seen).toEqual(expect.arrayContaining(['INPUT', 'BUTTON', 'A']));
+  });
+});
+
+test.describe('Keyboard (signed in)', () => {
+  test('KBD-01 command menu: open, filter, run, escape', async ({ app }) => {
+    await app.goto('/rooms');
+    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await app.keyboard.press('ControlOrMeta+k');
+    const dialog = app.getByRole('dialog', { name: 'Command menu' });
+    await expect(dialog).toBeVisible();
+    await expect(app.getByRole('combobox', { name: 'Search commands' })).toBeFocused();
+    await app.keyboard.type('settings');
+    await expect(app.getByRole('option')).toHaveCount(1);
+    await app.keyboard.press('Enter');
+    await expect(app).toHaveURL(/\/settings/);
+    await expect(dialog).toHaveCount(0);
+    await app.keyboard.press('ControlOrMeta+k');
+    await expect(dialog).toBeVisible();
+    await app.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test('KBD-03 dialog traps focus, Escape restores focus', async ({ app }) => {
+    await app.goto('/rooms');
+    const trigger = app.getByRole('button', { name: 'Create room' }).first();
+    await trigger.focus();
+    await app.keyboard.press('Enter');
+    const dialog = app.getByRole('dialog', { name: 'Create room' });
+    await expect(dialog).toBeVisible();
+    for (let i = 0; i < 12; i++) {
+      await app.keyboard.press('Tab');
+      expect(await app.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'))).toBe(true);
+    }
+    await app.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test('KBD-04 skip link moves focus to main', async ({ app }) => {
+    await app.goto('/rooms');
+    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await app.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await app.keyboard.press('Tab');
+    const skip = app.getByRole('link', { name: 'Skip to content' });
+    await expect(skip).toBeFocused();
+    await app.keyboard.press('Enter');
+    await expect(app).toHaveURL(/#main$/);
+  });
+
+  test('KBD-05 workspace switcher by keyboard', async ({ app, tokens, workspace }) => {
+    const second = await createWorkspace(tokens.accessToken, `Keys ${rnd()}`);
+    await app.goto('/rooms');
+    const switcher = app.getByTestId('workspace-switcher');
+    const current = app.getByTestId('current-workspace');
+    await expect(current).toBeVisible();
+    const shown = (await current.textContent())!.trim();
+    const other = shown === workspace.name ? second : workspace;
+    await switcher.focus();
+    await app.keyboard.press('Enter');
+    await expect(app.getByRole('menu')).toBeVisible();
+    // Items: [ws..., Create workspace]; walk until the target is focused, then select it.
+    for (let i = 0; i < 4; i++) {
+      await app.keyboard.press('ArrowDown');
+      const focused = await app.evaluate(() => document.activeElement?.textContent?.trim());
+      if (focused === other.name) break;
+    }
+    await app.keyboard.press('Enter');
+    await expect(current).toHaveText(other.name);
+  });
+
+  test('KBD-06 command menu opens create-room dialog', async ({ app }) => {
+    await app.goto('/rooms');
+    await expect(app.getByTestId('current-workspace')).toBeVisible();
+    await app.keyboard.press('ControlOrMeta+k');
+    await app.keyboard.type('create room');
+    await app.keyboard.press('Enter');
+    await expect(app.getByRole('dialog', { name: 'Create room' })).toBeVisible();
+  });
+});

@@ -100,6 +100,7 @@ impl SpeakerPipeline {
             out,
             spec.room.clone(),
             spec.id.clone(),
+            cfg.emit_utterance_end,
         ));
         let mut worker = Worker {
             endpointer: Endpointer::new(cfg.endpointer.clone()),
@@ -202,8 +203,12 @@ struct TurnTracker {
 /// Pure; covers Latin, CJK and Devanagari terminators plus the ellipsis character.
 pub(crate) fn ends_sentence(text: &str) -> bool {
     text.trim_end()
-        .trim_end_matches(['"', '\'', ')', ']', '\u{201d}', '\u{2019}', '\u{bb}', '\u{300d}'])
-        .ends_with(['.', '!', '?', '\u{2026}', '\u{3002}', '\u{ff01}', '\u{ff1f}', '\u{0964}'])
+        .trim_end_matches([
+            '"', '\'', ')', ']', '\u{201d}', '\u{2019}', '\u{bb}', '\u{300d}',
+        ])
+        .ends_with([
+            '.', '!', '?', '\u{2026}', '\u{3002}', '\u{ff01}', '\u{ff1f}', '\u{0964}',
+        ])
 }
 
 struct SegmentInfo {
@@ -294,11 +299,13 @@ impl TurnTracker {
         info.stamps = t.stamps;
         info
     }
-    /// Pops the finished turn; returns its commit stamp when `stt_final` was not recorded yet.
-    fn on_done(&self) -> Option<Option<Instant>> {
+    /// Pops the finished turn. Returns the turn (for the end marker) and the commit stamp when
+    /// `stt_final` was not recorded yet.
+    fn on_done(&self) -> Option<(Turn, Option<Instant>)> {
         let mut g = self.lock();
         let t = g.committed.pop_front()?;
-        Some((!t.final_recorded).then_some(t.stamps.stt_commit).flatten())
+        let commit = (!t.final_recorded).then_some(t.stamps.stt_commit).flatten();
+        Some((t, commit))
     }
 }
 
@@ -314,9 +321,11 @@ async fn relay(
     out: mpsc::Sender<SttSegment>,
     room: RoomId,
     speaker: ParticipantId,
+    emit_end: bool,
 ) {
     let mut seq = 0u64;
     let mut out_open = true;
+    let mut last_lang = String::new();
     while let Some(ev) = rx.recv().await {
         let now = Instant::now();
         match ev {
@@ -337,6 +346,7 @@ async fn relay(
                 if info.record_final {
                     record_stage_latency(STAGE_STT_FINAL, since_ms(now, info.stamps.stt_commit));
                 }
+                last_lang.clone_from(&seg.lang);
                 seg.room = room.clone();
                 seg.speaker = speaker.clone();
                 seg.seq = seq;
@@ -350,8 +360,22 @@ async fn relay(
                 }
             }
             SttEvent::UtteranceDone { ok } => {
-                if let Some(Some(commit)) = tracker.on_done() {
-                    record_stage_latency(STAGE_STT_FINAL, since_ms(now, Some(commit)));
+                if let Some((turn, commit)) = tracker.on_done() {
+                    if let Some(commit) = commit {
+                        record_stage_latency(STAGE_STT_FINAL, since_ms(now, Some(commit)));
+                    }
+                    if emit_end && out_open && ok && turn.first_recorded {
+                        // Only turns that produced text get a marker.
+                        let mut m = SttSegment::end_marker(last_lang.clone());
+                        m.room = room.clone();
+                        m.speaker = speaker.clone();
+                        m.seq = seq;
+                        m.utterance_seq = turn.seq;
+                        m.stamps = turn.stamps;
+                        if out.send(m).await.is_err() {
+                            out_open = false;
+                        }
+                    }
                 }
                 record_stage_outcome(STAGE_STT, if ok { Outcome::Ok } else { Outcome::Error });
             }
@@ -669,5 +693,23 @@ impl Worker {
         if tokio::time::timeout(grace, &mut relay).await.is_err() {
             relay.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ends_sentence;
+
+    #[test]
+    fn sentence_terminators() {
+        assert!(ends_sentence("Hello there."));
+        assert!(ends_sentence("  Really?  "));
+        assert!(ends_sentence("Stop!\""));
+        assert!(ends_sentence("(done.)"));
+        assert!(ends_sentence("Xin chao\u{3002}"));
+        assert!(ends_sentence("wait\u{2026}"));
+        assert!(!ends_sentence("Hello there"));
+        assert!(!ends_sentence("3.14 is pi, and"));
+        assert!(!ends_sentence(""));
     }
 }

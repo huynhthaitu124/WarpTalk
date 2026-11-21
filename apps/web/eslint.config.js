@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'test-results', 'playwright-report', 'e2e/**/*-snapshots'] },
+  { ignores: ['dist', 'node_modules', 'test-results', 'playwright-report', 'e2e/__screenshots__'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -16,5 +16,10 @@ export default tseslint.config(
       'react-hooks/exhaustive-deps': 'warn',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
+  },
+  {
+    // Playwright fixtures use a `use` callback and empty destructuring by design.
+    files: ['e2e/**/*.ts'],
+    rules: { 'react-hooks/rules-of-hooks': 'off', 'no-empty-pattern': 'off' },
   },
 );

@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from 'react';
-import { MemoryRouter } from 'react-router-dom';
 import { DoorOpen, Inbox, Plus, Settings, Video, Moon, Sun, Search } from 'lucide-react';
 import {
   Alert, Avatar, Badge, Brand, Button, Card, CardBody, CardHeader, Checkbox, CommandMenuProvider, Dialog, DialogContent, DialogTrigger,
@@ -188,13 +187,11 @@ function Demos() {
           <TabsContent value="c"><p className="text-body text-ink-muted">Settings tab content.</p></TabsContent>
         </Tabs>
         <div className="w-60 rounded-lg border border-hairline bg-canvas p-3">
-          <MemoryRouter initialEntries={['/rooms']}>
             <SidebarNav label="Sidebar sample">
-              <SidebarLink to="/rooms" icon={<DoorOpen className="size-4" />}>Rooms</SidebarLink>
-              <SidebarLink to="/meetings" icon={<Video className="size-4" />}>Meetings</SidebarLink>
-              <SidebarLink to="/settings" icon={<Settings className="size-4" />}>Settings</SidebarLink>
+              <SidebarLink to="/design#rooms" active icon={<DoorOpen className="size-4" />}>Rooms</SidebarLink>
+              <SidebarLink to="/design#meetings" icon={<Video className="size-4" />}>Meetings</SidebarLink>
+              <SidebarLink to="/design#settings" icon={<Settings className="size-4" />}>Settings</SidebarLink>
             </SidebarNav>
-          </MemoryRouter>
         </div>
       </Section>
 

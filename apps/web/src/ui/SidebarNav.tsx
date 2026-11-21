@@ -6,7 +6,7 @@ export function SidebarNav({ children, label = 'Primary' }: { children: ReactNod
   return <nav aria-label={label} className="flex flex-col gap-0.5">{children}</nav>;
 }
 
-export function SidebarLink({ to, icon, children, end }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean }) {
+export function SidebarLink({ to, icon, children, end, active }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean; active?: boolean }) {
   return (
     <NavLink
       to={to}
@@ -14,7 +14,7 @@ export function SidebarLink({ to, icon, children, end }: { to: string; icon: Rea
       className={({ isActive }) =>
         cn(
           'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-body font-medium no-underline transition-colors focus-ring hover:no-underline',
-          isActive ? 'bg-surface-3 text-ink' : 'text-ink-subtle hover:bg-surface-2 hover:text-ink',
+          (active ?? isActive) ? 'bg-surface-3 text-ink' : 'text-ink-subtle hover:bg-surface-2 hover:text-ink',
         )
       }
     >

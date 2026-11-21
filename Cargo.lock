@@ -2782,6 +2782,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "warptalk-ai-plane"
+version = "0.1.0"
+
+[[package]]
 name = "warptalk-api"
 version = "0.1.0"
 dependencies = [
@@ -3128,16 +3132,20 @@ dependencies = [
  "uuid",
  "warptalk-audio",
  "warptalk-bus",
+ "warptalk-cartesia",
  "warptalk-config",
  "warptalk-contracts",
  "warptalk-db",
  "warptalk-ingress",
  "warptalk-kernel",
  "warptalk-livekit",
+ "warptalk-llm",
+ "warptalk-mt",
  "warptalk-pipeline-runtime",
  "warptalk-settings",
  "warptalk-stt",
  "warptalk-telemetry",
+ "warptalk-tts",
 ]
 
 [[package]]
@@ -3146,6 +3154,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "metrics",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "thiserror",

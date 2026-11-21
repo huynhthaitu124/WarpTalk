@@ -12,6 +12,8 @@ use warptalk_livekit::LiveKitConfig;
 use warptalk_pipeline_runtime::PipelineConfig;
 use warptalk_settings::PipelineSettings;
 
+use crate::tuning::LatencyTuning;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
     Simulated,
@@ -48,6 +50,11 @@ pub struct AppConfig {
     pub openai_api_key: Option<String>,
     /// `OPENAI_STT_MODEL` (optional override of the STT model).
     pub openai_stt_model: Option<String>,
+    /// `CARTESIA_API_KEY`: TTS for the dub. Without it the chain stops at translated captions.
+    pub cartesia_api_key: Option<String>,
+    /// `PIPELINE_FAKE_PROVIDERS=1`: fake MT/TTS with the spec 08 latency profile when no real
+    /// provider is configured (local demo; simulated transport only).
+    pub fake_providers: bool,
     /// `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (livekit transport only).
     pub livekit: Option<LiveKitConfig>,
     /// `SIM_PARTICIPANTS`: comma separated participant ids that speak in every simulated room.
@@ -67,10 +74,25 @@ impl fmt::Debug for AppConfig {
                 "openai_api_key",
                 &self.openai_api_key.as_ref().map(|_| "***"),
             )
+            .field(
+                "cartesia_api_key",
+                &self.cartesia_api_key.as_ref().map(|_| "***"),
+            )
+            .field("fake_providers", &self.fake_providers)
             .field("livekit", &self.livekit)
             .field("sim_participants", &self.sim_participants)
             .finish_non_exhaustive()
     }
+}
+
+/// `1`, `true`, `yes` and `on` (any case) are true; everything else, including unset, is false.
+pub fn truthy(v: Option<&str>) -> bool {
+    v.is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 impl AppConfig {
@@ -107,6 +129,8 @@ impl AppConfig {
             transport,
             openai_api_key: optional("OPENAI_API_KEY"),
             openai_stt_model: optional("OPENAI_STT_MODEL"),
+            cartesia_api_key: optional("CARTESIA_API_KEY"),
+            fake_providers: truthy(optional("PIPELINE_FAKE_PROVIDERS").as_deref()),
             livekit,
             sim_participants: optional("SIM_PARTICIPANTS")
                 .map(|v| {
@@ -126,6 +150,12 @@ impl AppConfig {
 /// `stt_min_avg_logprob` and `stream_maxlen` are consumed elsewhere (STT construction,
 /// `REDIS_STREAM_MAXLEN`).
 pub fn pipeline_config_from_settings(s: &PipelineSettings) -> PipelineConfig {
+    pipeline_config(s, &LatencyTuning::default())
+}
+
+/// [`pipeline_config_from_settings`] plus the latency flags that live in the runtime config
+/// (early endpoint). Always asks for the end-of-turn marker the downstream stage uses.
+pub fn pipeline_config(s: &PipelineSettings, tuning: &LatencyTuning) -> PipelineConfig {
     PipelineConfig {
         endpointer: EndpointerConfig {
             vad_threshold: s.vad_threshold,
@@ -136,9 +166,12 @@ pub fn pipeline_config_from_settings(s: &PipelineSettings) -> PipelineConfig {
             vad_seek_hangover_ms: s.vad_seek_hangover_ms,
             vad_short_turn_hangover_ms: s.vad_short_turn_hangover_ms,
             chunk_duration_ms: s.chunk_duration_ms,
+            vad_sentence_hint_hangover_ms: tuning.early_endpoint_hangover_ms,
             ..EndpointerConfig::default()
         },
         flash_mode: s.flash_mode_default,
+        segment_channel_capacity: tuning.stage_channel_capacity,
+        emit_utterance_end: true,
         ..PipelineConfig::default()
     }
 }
@@ -151,7 +184,13 @@ mod tests {
     #[test]
     fn default_settings_map_to_default_runtime_config() {
         let cfg = pipeline_config_from_settings(&PipelineSettings::default());
-        assert_eq!(cfg, PipelineConfig::default());
+        assert_eq!(
+            cfg,
+            PipelineConfig {
+                emit_utterance_end: true,
+                ..PipelineConfig::default()
+            }
+        );
         assert!(cfg.validate().is_ok());
     }
 
@@ -165,6 +204,28 @@ mod tests {
         let cfg = pipeline_config_from_settings(&s);
         assert_eq!(cfg.endpointer.vad_silence_hangover_ms, 400);
         assert!(!cfg.flash_mode);
+    }
+
+    #[test]
+    fn truthy_flag_values() {
+        assert!(truthy(Some("1")));
+        assert!(truthy(Some(" True ")));
+        assert!(!truthy(Some("0")));
+        assert!(!truthy(Some("")));
+        assert!(!truthy(None));
+    }
+
+    #[test]
+    fn latency_tuning_reaches_the_runtime_config() {
+        let t = LatencyTuning {
+            early_endpoint_hangover_ms: 250,
+            stage_channel_capacity: 16,
+            ..LatencyTuning::default()
+        };
+        let cfg = pipeline_config(&PipelineSettings::default(), &t);
+        assert_eq!(cfg.endpointer.vad_sentence_hint_hangover_ms, 250);
+        assert_eq!(cfg.segment_channel_capacity, 16);
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

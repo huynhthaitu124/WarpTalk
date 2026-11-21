@@ -93,6 +93,11 @@ pub struct SttSegment {
     /// Average token probability proxy (avg logprob); `None` when the model gave none.
     pub confidence: Option<f32>,
     pub is_early: bool,
+    /// Marker, not transcript: the turn `utterance_seq` is complete (STT reported it done; every
+    /// segment of it has been delivered). `text` is empty. It lets a consumer that prefers whole
+    /// turns release held early sentences without guessing, and carries the turn's final
+    /// stamps (`speech_end`). Consumers that only want transcript skip empty text.
+    pub utterance_end: bool,
     pub stamps: Stamps,
 }
 
@@ -115,7 +120,15 @@ impl SttSegment {
             lang: lang.into(),
             confidence,
             is_early,
+            utterance_end: false,
             stamps: Stamps::new(Instant::now()),
         }
+    }
+
+    /// End-of-turn marker (see [`SttSegment::utterance_end`]).
+    pub fn end_marker(lang: impl Into<String>) -> Self {
+        let mut s = Self::new("", lang, None, false);
+        s.utterance_end = true;
+        s
     }
 }

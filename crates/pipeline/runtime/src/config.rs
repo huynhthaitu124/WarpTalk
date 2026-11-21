@@ -26,6 +26,10 @@ pub struct PipelineConfig {
     pub eager_session_open: bool,
     /// Upper bound for draining one speaker on remove/shutdown.
     pub shutdown_grace_ms: u64,
+    /// Also emit an `SttSegment::utterance_end` marker (empty text) when a turn that produced
+    /// text is complete. Off by default (plain transcript consumers never see it). Applies to
+    /// speakers added afterwards.
+    pub emit_utterance_end: bool,
 }
 
 impl Default for PipelineConfig {
@@ -39,6 +43,7 @@ impl Default for PipelineConfig {
             segment_channel_capacity: 64,
             eager_session_open: true,
             shutdown_grace_ms: 5_000,
+            emit_utterance_end: false,
         }
     }
 }

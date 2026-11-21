@@ -12,6 +12,8 @@ export interface SessionInfo {
 }
 
 let accessToken: string | null = null;
+/** Bumped on every set()/clear(): lets callers tell whether the session rotated while a request was in flight. */
+let generation = 0;
 let info: SessionInfo | null = null;
 const listeners = new Set<Listener>();
 let inflight: Promise<AuthResponse | null> | null = null;
@@ -28,16 +30,19 @@ function safeSet(v: string | null) {
 
 export const session = {
   get accessToken() { return accessToken; },
+  get generation() { return generation; },
   get info() { return info; },
   get refreshToken() { return safeGet(); },
   subscribe(l: Listener) { listeners.add(l); return () => { listeners.delete(l); }; },
   set(r: AuthResponse) {
+    generation += 1;
     accessToken = r.accessToken;
     info = { userId: r.userId, email: r.email, expiresAt: Date.parse(r.accessTokenExpiresAt) };
     safeSet(r.refreshToken);
     listeners.forEach((l) => l());
   },
   clear() {
+    generation += 1;
     accessToken = null;
     info = null;
     safeSet(null);

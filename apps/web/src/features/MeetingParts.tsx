@@ -66,10 +66,9 @@ export function MeetingControls({
         disabled={micDisabled}
         aria-pressed={micOn}
         title={micHint}
-        aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'}
       >
         {micOn ? <Mic className="size-4" aria-hidden /> : <MicOff className="size-4" aria-hidden />}
-        {micOn ? 'Mic on' : 'Mic off'}
+        {micOn ? 'Mute' : 'Unmute'}
       </Button>
       <div className="w-52">
         <Select aria-label="Listen language" testId="listen-language" value={listen} onValueChange={onListen} options={LISTEN_OPTIONS} />

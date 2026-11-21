@@ -1,19 +1,44 @@
 import * as RD from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { createContext, useContext, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
-export const Dialog = RD.Root;
+const ReturnFocus = createContext<MutableRefObject<HTMLElement | null> | null>(null);
+
+/**
+ * Radix restores focus to a <DialogTrigger>. Dialogs opened from elsewhere (URL state, command
+ * menu) have no trigger, so remember the element that had focus when `open` turned true and
+ * give focus back to it on close.
+ */
+export function Dialog({ open, ...props }: RD.DialogProps) {
+  const ret = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  if (open && !wasOpen.current && typeof document !== 'undefined') {
+    const el = document.activeElement;
+    ret.current = el instanceof HTMLElement && el !== document.body ? el : null;
+  }
+  wasOpen.current = !!open;
+  return (
+    <ReturnFocus.Provider value={ret}>
+      <RD.Root open={open} {...props} />
+    </ReturnFocus.Provider>
+  );
+}
 export const DialogTrigger = RD.Trigger;
 export const DialogClose = RD.Close;
 
 export function DialogContent({
   title, description, children, footer, className,
 }: { title: string; description?: string; children?: ReactNode; footer?: ReactNode; className?: string }) {
+  const ret = useContext(ReturnFocus);
   return (
     <RD.Portal>
       <RD.Overlay className="fixed inset-0 z-50 animate-fade-in bg-overlay backdrop-blur-[2px]" />
       <RD.Content
+        onCloseAutoFocus={(e) => {
+          const el = ret?.current;
+          if (el?.isConnected) { e.preventDefault(); el.focus(); }
+        }}
         className={cn(
           'fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 animate-pop-in flex-col rounded-xl border border-hairline-strong bg-surface-2 shadow-pop focus:outline-none',
           className,

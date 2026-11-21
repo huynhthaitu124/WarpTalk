@@ -56,10 +56,14 @@ export async function api<S extends z.ZodType | undefined = undefined>(
   o: Opts<S> = {},
 ): Promise<S extends z.ZodType ? z.infer<S> : void> {
   const useAuth = o.auth !== false;
+  const sentGeneration = session.generation;
   let res = await send(path, o, useAuth ? session.accessToken : null);
   if (res.status === 401 && useAuth && session.refreshToken) {
-    const next = await session.refresh();
-    if (next) res = await send(path, o, next.accessToken);
+    // If the session already rotated while this request was in flight, just retry with the
+    // current token (compared by generation, not by string: tokens minted in the same second can be
+    // identical); otherwise refresh (single-flight, so concurrent 401s share one).
+    const token = session.generation !== sentGeneration ? session.accessToken : (await session.refresh())?.accessToken;
+    if (token) res = await send(path, o, token);
   }
   if (!res.ok) throw await toError(res);
   if (!o.schema || res.status === 204) return undefined as never;

@@ -19,7 +19,8 @@ export function EmptyState({
   );
 }
 
-const PALETTE = ['#5e6ad2', '#2f9e8f', '#d9913a', '#d0578f', '#4a8fdb', '#8c84ee'];
+// All >= 4.5:1 against white initials.
+const PALETTE = ['#5e6ad2', '#1f7a6e', '#a8650f', '#b0386f', '#2f6fd0', '#6a3fc0'];
 function hue(s: string) {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;

@@ -23,7 +23,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      <div aria-live="polite" aria-label="Notifications" className="pointer-events-none fixed bottom-4 right-4 z-[80] flex w-80 max-w-[calc(100vw-32px)] flex-col gap-2">
+      <div role="region" aria-live="polite" aria-label="Notifications" className="pointer-events-none fixed bottom-4 right-4 z-[80] flex w-80 max-w-[calc(100vw-32px)] flex-col gap-2">
         {items.map((t) => {
           const Icon = ICON[t.tone];
           return (

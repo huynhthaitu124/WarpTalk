@@ -20,7 +20,7 @@ function WorkspaceSwitcher() {
       <DropdownTrigger asChild>
         <button
           type="button"
-          aria-label={`Workspace: ${current?.name ?? 'none'}. Switch workspace`}
+          data-testid="workspace-switcher"
           className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-left hover:bg-surface-2 focus-ring"
         >
           <Avatar name={current?.name ?? 'WarpTalk'} size="sm" />
@@ -54,7 +54,7 @@ function AccountMenu() {
   return (
     <Dropdown>
       <DropdownTrigger asChild>
-        <button type="button" aria-label="Account menu" className="flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left hover:bg-surface-2 focus-ring">
+        <button type="button" data-testid="account-menu" className="flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left hover:bg-surface-2 focus-ring">
           <Avatar name={name} size="sm" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-body-sm font-medium text-ink" data-testid="account-name">{name}</span>
@@ -109,11 +109,11 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label="Open command menu"
-          className="flex h-8 w-56 items-center gap-2 rounded-md border border-hairline-strong bg-surface-1 px-2.5 text-body-sm text-ink-subtle hover:border-hairline-tertiary focus-ring max-sm:w-auto"
+          className="flex h-8 w-64 items-center gap-2 whitespace-nowrap rounded-md border border-hairline-strong bg-surface-1 px-2.5 text-body-sm text-ink-subtle hover:border-hairline-tertiary focus-ring max-sm:w-auto"
         >
           <Search className="size-4" aria-hidden />
           <span className="flex-1 text-left max-sm:hidden">Search or run a command…</span>
+          <span className="sr-only sm:hidden">Search</span>
           <Kbd>⌘K</Kbd>
         </button>
         <Tooltip content={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>

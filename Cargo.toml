@@ -64,6 +64,7 @@ warptalk-db = { path = "crates/shared/db" }
 warptalk-storage = { path = "crates/shared/storage" }
 warptalk-web = { path = "crates/shared/web" }
 warptalk-settings = { path = "crates/shared/settings" }
+warptalk-ai-plane = { path = "crates/shared/ai-plane" }
 warptalk-audio = { path = "crates/pipeline/audio" }
 warptalk-ingress = { path = "crates/pipeline/ingress" }
 warptalk-stt = { path = "crates/pipeline/stt" }
