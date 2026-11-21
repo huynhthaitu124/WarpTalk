@@ -101,7 +101,10 @@ impl OpenAiSttConfig {
 
 /// Base language code: `"ja-JP"` -> `"ja"`.
 pub fn base_language(lang: &str) -> String {
-    lang.split(['-', '_']).next().unwrap_or(lang).to_ascii_lowercase()
+    lang.split(['-', '_'])
+        .next()
+        .unwrap_or(lang)
+        .to_ascii_lowercase()
 }
 
 /// The discard floor on a completed transcript's average token logprob.
@@ -160,7 +163,8 @@ mod tests {
     #[test]
     fn deserializes_partial() {
         let c: OpenAiSttConfig =
-            serde_json::from_str(r#"{"pool_size":2,"min_avg_logprob_by_language":{"ja":-1.0}}"#).unwrap();
+            serde_json::from_str(r#"{"pool_size":2,"min_avg_logprob_by_language":{"ja":-1.0}}"#)
+                .unwrap();
         assert_eq!(c.pool_size, 2);
         assert_eq!(c.model, "gpt-live-transcribe");
     }

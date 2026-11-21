@@ -179,8 +179,14 @@ mod tests {
 
     #[test]
     fn append_commit_clear_serialize() {
-        let v = serde_json::to_value(ClientEvent::Append { audio: "AAA=".into() }).unwrap();
-        assert_eq!(v, json!({"type":"input_audio_buffer.append","audio":"AAA="}));
+        let v = serde_json::to_value(ClientEvent::Append {
+            audio: "AAA=".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({"type":"input_audio_buffer.append","audio":"AAA="})
+        );
         assert_eq!(
             serde_json::to_value(ClientEvent::Commit).unwrap(),
             json!({"type":"input_audio_buffer.commit"})
@@ -249,7 +255,12 @@ mod tests {
             r#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"item_1","content_index":0,"transcript":"Hello.","logprobs":[{"token":"Hello","logprob":-0.1,"bytes":[72]},{"token":".","logprob":-0.3,"bytes":[46]}]}"#,
         )
         .unwrap();
-        let ServerEvent::Completed { transcript, logprobs, .. } = done else {
+        let ServerEvent::Completed {
+            transcript,
+            logprobs,
+            ..
+        } = done
+        else {
             panic!("wrong variant");
         };
         assert_eq!(transcript, "Hello.");

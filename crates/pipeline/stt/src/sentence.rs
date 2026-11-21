@@ -124,7 +124,10 @@ mod tests {
 
     #[test]
     fn decimals_and_dotted_tokens_do_not_split() {
-        assert_eq!(split_sentences("Version 3.5 is out."), ["Version 3.5 is out."]);
+        assert_eq!(
+            split_sentences("Version 3.5 is out."),
+            ["Version 3.5 is out."]
+        );
         assert_eq!(split_sentences("see e.g.x now"), ["see e.g.x now"]);
     }
 
@@ -150,7 +153,10 @@ mod tests {
 
     #[test]
     fn japanese_runs_and_closing_quotes_stay_together() {
-        assert_eq!(split_sentences("本当！？そうです。"), ["本当！？", "そうです。"]);
+        assert_eq!(
+            split_sentences("本当！？そうです。"),
+            ["本当！？", "そうです。"]
+        );
         assert_eq!(
             split_sentences("彼は「はい。」と言った。次です。"),
             ["彼は「はい。」と言った。", "次です。"]
@@ -159,7 +165,10 @@ mod tests {
 
     #[test]
     fn newlines_split() {
-        assert_eq!(split_sentences("one\ntwo\r\nthree"), ["one", "two", "three"]);
+        assert_eq!(
+            split_sentences("one\ntwo\r\nthree"),
+            ["one", "two", "three"]
+        );
     }
 
     #[test]

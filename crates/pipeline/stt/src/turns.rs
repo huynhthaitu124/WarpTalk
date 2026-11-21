@@ -68,7 +68,20 @@ pub fn guess_language(text: &str) -> &'static str {
         match c {
             '\u{3040}'..='\u{30FF}' => return "ja",
             '\u{AC00}'..='\u{D7AF}' => return "ko",
-            'ă' | 'â' | 'đ' | 'ê' | 'ô' | 'ơ' | 'ư' | 'Ă' | 'Â' | 'Đ' | 'Ê' | 'Ô' | 'Ơ' | 'Ư'
+            'ă'
+            | 'â'
+            | 'đ'
+            | 'ê'
+            | 'ô'
+            | 'ơ'
+            | 'ư'
+            | 'Ă'
+            | 'Â'
+            | 'Đ'
+            | 'Ê'
+            | 'Ô'
+            | 'Ơ'
+            | 'Ư'
             | '\u{1EA0}'..='\u{1EF9}' => vi = true,
             _ => {}
         }
@@ -270,7 +283,9 @@ impl TurnMachine {
                     warn!(code = ?error.code, message = ?error.message, "realtime error event");
                 }
             }
-            ServerEvent::SessionCreated {} | ServerEvent::SessionUpdated {} | ServerEvent::Other => {}
+            ServerEvent::SessionCreated {}
+            | ServerEvent::SessionUpdated {}
+            | ServerEvent::Other => {}
         }
         self.pump(&mut out);
         out
@@ -303,7 +318,8 @@ impl TurnMachine {
                 return;
             };
             let lang_for = |hint: &Option<String>, text: &str| {
-                hint.clone().unwrap_or_else(|| guess_language(text).to_string())
+                hint.clone()
+                    .unwrap_or_else(|| guess_language(text).to_string())
             };
             if !buf.deltas.is_empty() {
                 let d = std::mem::take(&mut buf.deltas);
@@ -442,7 +458,11 @@ mod tests {
         m.expect_commit(Some("en".into()));
         m.on_event(committed("i1"));
         m.on_event(delta("i1", "Hello there. How are you? I am fine."));
-        let out = m.on_event(completed("i1", "Hello there. How are you? I am fine.", None));
+        let out = m.on_event(completed(
+            "i1",
+            "Hello there. How are you? I am fine.",
+            None,
+        ));
         assert_eq!(out, vec![Out::Done { ok: true }]); // all flushed early, nothing left
         assert_eq!(m.outstanding(), 0);
 
@@ -470,7 +490,10 @@ mod tests {
             after_flushed_prefix("すみません。それは本当", "すみません。"),
             Some("それは本当".into())
         );
-        assert_eq!(after_flushed_prefix("0.2.27 ok", "0. 2. 27"), Some("ok".into()));
+        assert_eq!(
+            after_flushed_prefix("0.2.27 ok", "0. 2. 27"),
+            Some("ok".into())
+        );
         assert_eq!(after_flushed_prefix("different", "Hello"), None);
     }
 
@@ -518,7 +541,10 @@ mod tests {
         m.on_event(committed("b"));
         // b's events arrive first: nothing may be emitted ahead of a.
         assert!(m.on_event(delta("b", "Second one. rest")).is_empty());
-        assert!(m.on_event(completed("b", "Second one. rest", None)).is_empty());
+        assert!(
+            m.on_event(completed("b", "Second one. rest", None))
+                .is_empty()
+        );
         let out = m.on_event(completed("a", "First.", None));
         assert_eq!(
             out,
