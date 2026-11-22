@@ -2,15 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowsClockwise, X } from '@phosphor-icons/react';
 import { Badge, Button, useToast } from '@/ui';
 import { cn } from '@/lib/cn';
+import { languageLabel } from '@/lib/languages';
 import { mergeCaption, parseCaption, pickTranslation, type CaptionLine } from '@/lib/captions';
-import { useParticipantAction, useParticipants, useRoomAction } from '@/lib/queries';
+import { useParticipantAction, useParticipants, useRoomAction, useUpdateMyLanguages } from '@/lib/queries';
 import type { Room } from '@/lib/schemas';
 import { StatusStrip } from '../MeetingParts';
 import { errMsg } from '../errors';
 import { ControlBar } from './ControlBar';
 import { EndMeetingDialog, LeaveDialog } from './Dialogs';
 import { roomLanguages } from './PreJoin';
-import { parseChat, parseReaction, type ChatMessage } from './protocol';
+import { parseReaction } from './protocol';
+import { useMeetingChat } from './useChat';
 import { SidePanel, type PanelTab, type PersonRow } from './SidePanel';
 import { Stage, type TileInfo } from './Stage';
 import type { MeetingSession } from './types';
@@ -42,13 +44,13 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const toast = useToast();
   const parts = useParticipants(room.id);
   const roomAction = useRoomAction(room.id);
+  const langs = useUpdateMyLanguages(room.id);
   const partAction = useParticipantAction(room.id);
   const isHost = !!selfUserId && (room.effectiveHostId === selfUserId || room.hostId === selfUserId);
   const [panelOpen, setPanelOpen] = useState(wideScreen);
   const [tab, setTab] = useState<PanelTab>('transcript');
   const [captionsOn, setCaptionsOn] = useState(true);
   const [lines, setLines] = useState<CaptionLine[]>([]);
-  const [chat, setChat] = useState<ChatMessage[]>([]);
   const [unread, setUnread] = useState(0);
   const [hands, setHands] = useState<Record<string, boolean>>({});
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
@@ -59,6 +61,18 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const view = useRef({ panelOpen, tab });
   view.current = { panelOpen, tab };
 
+  const chat = useMeetingChat({
+    roomId: room.id,
+    session,
+    selfUserId,
+    selfName,
+    panelOpen,
+    onIncoming: () => { if (!view.current.panelOpen || view.current.tab !== 'chat') setUnread((n) => n + 1); },
+  });
+  const hideChat = useCallback((id: string) => {
+    chat.hideMessage(id).catch((e: unknown) => toast({ tone: 'danger', title: 'Could not hide the message', description: errMsg(e) }));
+  }, [chat, toast]);
+
   const local = session.participants.find((p) => p.isLocal);
   const localId = local?.identity ?? selfUserId ?? 'me';
   const handRaised = !!hands[localId];
@@ -68,13 +82,6 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   useEffect(() => subscribe('captions', (m) => {
     const line = parseCaption(m.payload, m.from?.name || m.from?.identity || 'Speaker', ++seq.current);
     if (line) setLines((cur) => mergeCaption(cur, line));
-  }), [subscribe]);
-
-  useEffect(() => subscribe('chat', (m) => {
-    const c = parseChat(m.payload);
-    if (!c) return;
-    setChat((cur) => (cur.some((x) => x.id === c.id) ? cur : [...cur, { id: c.id, from: m.from?.name || m.from?.identity || 'Someone', fromIdentity: m.from?.identity, text: c.text, ts: c.ts, mine: false }]));
-    if (!view.current.panelOpen || view.current.tab !== 'chat') setUnread((n) => n + 1);
   }), [subscribe]);
 
   useEffect(() => subscribe('reactions', (m) => {
@@ -113,10 +120,25 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
     setTimeout(() => setFloating((f) => f.filter((x) => x.id !== id)), REACTION_MS);
     void session.send('reactions', { t: 'reaction', emoji }).catch(() => undefined);
   }
-  function sendChat(text: string) {
-    const msg = { id: `${localId}-${Date.now()}-${++seq.current}`, text, ts: Date.now() };
-    setChat((cur) => [...cur, { id: msg.id, from: selfName, fromIdentity: localId, text, ts: msg.ts, mine: true }]);
-    void session.send('chat', msg).catch((e: unknown) => toast({ tone: 'danger', title: 'Message not sent', description: errMsg(e) }));
+  const me = useMemo(() => (parts.data ?? []).find((p) => !!selfUserId && p.userId === selfUserId), [parts.data, selfUserId]);
+  const speak = me?.speakLanguage ?? room.sourceLanguage;
+  // Mid-meeting listen switch: record it on the participant first (routes are re-planned server side), then move the
+  // `dub-{lang}` subscription. "Original audio" is a local choice only: the server has no language code for it.
+  async function changeListen(l: string) {
+    if (l === listen) return;
+    if (l === 'original') { onListen(l); return; }
+    try {
+      await langs.mutateAsync({ listenLanguage: l });
+      onListen(l);
+      toast({ tone: 'success', title: `Now listening in ${languageLabel(l)}` });
+    } catch (e) { toast({ tone: 'danger', title: 'Could not change the listen language', description: errMsg(e) }); }
+  }
+  async function changeSpeak(l: string) {
+    if (l === speak) return;
+    try {
+      await langs.mutateAsync({ speakLanguage: l });
+      toast({ tone: 'success', title: l === 'none' ? 'You are now listen-only' : `You now speak ${languageLabel(l)}` });
+    } catch (e) { toast({ tone: 'danger', title: 'Could not change the speak language', description: errMsg(e) }); }
   }
 
   const roster = useMemo(() => (parts.data ?? []).filter((p) => SHOWN.includes(p.status)), [parts.data]);
@@ -211,8 +233,18 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
               onDeny={(id) => void moderate(id, 'kick')}
               onAdmitAll={() => void admitAll()}
               moderating={partAction.isPending}
-              chat={chat}
-              onSend={sendChat}
+              chat={{
+                messages: chat.messages,
+                lang: captionLang,
+                onSend: chat.send,
+                onRetry: chat.retry,
+                onDismiss: chat.dismiss,
+                onHide: isHost ? hideChat : undefined,
+                hasOlder: chat.hasOlder,
+                loadingOlder: chat.loadingOlder,
+                onLoadOlder: () => void chat.loadOlder(),
+                loadError: chat.loadError,
+              }}
               unread={unread}
             />
             <Button variant="ghost" size="icon" className="absolute right-2 top-1 lg:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="size-4" aria-hidden /></Button>
@@ -230,8 +262,11 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
         captionsOn={captionsOn}
         onCaptions={() => setCaptionsOn((v) => !v)}
         listen={listen}
-        onListen={onListen}
+        onListen={(l) => void changeListen(l)}
         languages={roomLanguages(room)}
+        speak={speak}
+        onSpeak={(l) => void changeSpeak(l)}
+        languagesBusy={langs.isPending}
         handRaised={handRaised}
         onHand={toggleHand}
         onReact={react}

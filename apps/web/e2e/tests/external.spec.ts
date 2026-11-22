@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import {
-  addWorkspaceMember, BLACKHOLE, call, createUser, emitNative, expect, expireBridgeLease, installNativeMock, login, mockSet, nativeCalls, ok,
+  BLACKHOLE, call, createUser, emitNative, expect, expireBridgeLease, inviteAndAccept, installNativeMock, login, mockSet, nativeCalls, ok,
   seedSession, signedInContext, test, ZOOM, CHROME, type TestUser, type Tokens,
 } from '../fixtures';
 
@@ -150,7 +150,7 @@ test.describe('External meeting: claim', () => {
     const code = meetCode();
     const first = await apiClaim(tokens.accessToken, workspace.id, code);
     const viewer: TestUser = await createUser('viewer');
-    addWorkspaceMember(workspace.id, viewer.userId);
+    await inviteAndAccept(tokens.accessToken, workspace.id, viewer);
     const v = await signedInContext(browser, viewer, baseURL);
     try {
       await installNativeMock(v.page);

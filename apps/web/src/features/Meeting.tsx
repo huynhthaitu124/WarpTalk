@@ -112,7 +112,11 @@ export function MeetingPage() {
           grant={phase.grant}
           media={phase.media}
           listen={listen}
-          onListen={setListen}
+          onListen={(v) => {
+            setListen(v);
+            // Captions follow the last dubbed language while the original audio is selected.
+            if (v !== 'original') setPhase((p) => (p.kind === 'joined' ? { ...p, joinedListen: v } : p));
+          }}
           onLeave={leave}
           onEnded={ended}
           onDisconnected={(kind) => {

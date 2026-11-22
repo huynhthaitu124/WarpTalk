@@ -9,7 +9,12 @@ import { useWorkspace } from '@/lib/workspace';
 import type { Room } from '@/lib/schemas';
 import { errMsg } from './errors';
 
+/** Rooms people can open (everything that is not scheduled or finished). */
 export const LIVE_STATUSES = ['IN_PROGRESS', 'PAUSED', 'OPEN', 'WAITING'];
+/** Truly live: translation is running. Home's "Live now" shows only these. */
+export const RUNNING_STATUSES = ['IN_PROGRESS'];
+/** Open but not running: the lobby is open, the host has not started (or has paused) translation. */
+export const WAITING_STATUSES = ['WAITING', 'OPEN', 'PAUSED'];
 export const UPCOMING_STATUSES = ['SCHEDULED'];
 export const TERMINAL_STATUSES = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'];
 

@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowClockwise, EnvelopeSimple, ProhibitInset, UserPlus, Users } from '@phosphor-icons/react';
+import { ArrowClockwise, Crown, DotsThree, EnvelopeSimple, ProhibitInset, ShieldCheck, UserMinus, UserPlus, Users } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill,
-  Table, TBody, TD, TH, THead, TR, useToast,
+  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
+  EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
 } from '@/ui';
+import { useAuth } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
-import { useInvitations, useInvite, useMembers, useResendInvitation, useRevokeInvitation } from '@/lib/queries';
+import { useChangeRole, useInvitations, useInvite, useMembers, useRemoveMember, useResendInvitation, useRevokeInvitation, useTransferOwnership } from '@/lib/queries';
 import type { Invitation, Member, Workspace } from '@/lib/schemas';
 import { PendingInvitations, formatWhen } from './common';
 import { errMsg } from './errors';
@@ -50,9 +51,83 @@ function InviteDialog({ ws, open, onOpenChange }: { ws: Workspace; open: boolean
   );
 }
 
+type Action =
+  | { kind: 'role'; member: Member; role: 'ADMIN' | 'MEMBER' }
+  | { kind: 'remove'; member: Member }
+  | { kind: 'transfer'; member: Member };
+
+const nameOf = (m: Member) => m.fullName || m.email || 'this member';
+
+/** What the caller may do to `target` (mirrors the server rules: owner changes roles/transfers; admins remove plain members). */
+export function memberActions(me: Workspace['myRole'], target: Member, selfId: string | null): ('ADMIN' | 'MEMBER' | 'transfer' | 'remove')[] {
+  if (target.userId === selfId || target.role === 'OWNER') return [];
+  if (me === 'OWNER') return [target.role === 'ADMIN' ? 'MEMBER' : 'ADMIN', 'transfer', 'remove'];
+  if (me === 'ADMIN' && target.role === 'MEMBER') return ['remove'];
+  return [];
+}
+
+function MemberMenu({ member, ws, selfId, onAction }: { member: Member; ws: Workspace; selfId: string | null; onAction(a: Action): void }) {
+  const acts = memberActions(ws.myRole, member, selfId);
+  if (acts.length === 0) return null;
+  return (
+    <Dropdown>
+      <DropdownTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label={`Actions for ${nameOf(member)}`}><DotsThree size={18} weight="bold" aria-hidden /></Button>
+      </DropdownTrigger>
+      <DropdownContent align="end">
+        {acts.includes('ADMIN') && <DropdownItem icon={<ShieldCheck size={16} aria-hidden />} onSelect={() => onAction({ kind: 'role', member, role: 'ADMIN' })}>Make admin</DropdownItem>}
+        {acts.includes('MEMBER') && <DropdownItem icon={<Users size={16} aria-hidden />} onSelect={() => onAction({ kind: 'role', member, role: 'MEMBER' })}>Make member</DropdownItem>}
+        {acts.includes('transfer') && <DropdownItem icon={<Crown size={16} aria-hidden />} onSelect={() => onAction({ kind: 'transfer', member })}>Transfer ownership…</DropdownItem>}
+        {acts.includes('remove') && <><DropdownSeparator /><DropdownItem danger icon={<UserMinus size={16} aria-hidden />} onSelect={() => onAction({ kind: 'remove', member })}>Remove from workspace</DropdownItem></>}
+      </DropdownContent>
+    </Dropdown>
+  );
+}
+
+function ConfirmMember({ ws, action, onClose }: { ws: Workspace; action: Action | null; onClose(): void }) {
+  const change = useChangeRole(ws.id);
+  const remove = useRemoveMember(ws.id);
+  const transfer = useTransferOwnership(ws.id);
+  const toast = useToast();
+  const busy = change.isPending || remove.isPending || transfer.isPending;
+  const error = change.error ?? remove.error ?? transfer.error;
+  const close = () => { change.reset(); remove.reset(); transfer.reset(); onClose(); };
+  if (!action) return <Dialog open={false} onOpenChange={() => undefined} />;
+  const n = nameOf(action.member);
+  const copy = action.kind === 'remove'
+    ? { title: `Remove ${n}?`, body: `${n} loses access to ${ws.name}, its meetings and glossaries. They can be invited again later.`, cta: 'Remove member', danger: true }
+    : action.kind === 'transfer'
+      ? { title: `Transfer ownership to ${n}?`, body: `${n} becomes the owner of ${ws.name}. You stay as an admin and can no longer change roles or transfer ownership.`, cta: 'Transfer ownership', danger: true }
+      : { title: `Make ${n} ${action.role === 'ADMIN' ? 'an admin' : 'a member'}?`, body: action.role === 'ADMIN' ? 'Admins can invite members, manage glossaries and settings.' : 'Members can join meetings and read glossaries, but cannot change settings.', cta: action.role === 'ADMIN' ? 'Make admin' : 'Make member', danger: false };
+  async function run() {
+    if (!action) return;
+    try {
+      if (action.kind === 'remove') await remove.mutateAsync(action.member.userId);
+      else if (action.kind === 'transfer') await transfer.mutateAsync(action.member.userId);
+      else await change.mutateAsync({ userId: action.member.userId, role: action.role });
+      toast({ tone: 'success', title: action.kind === 'remove' ? 'Member removed' : action.kind === 'transfer' ? 'Ownership transferred' : 'Role updated', description: n });
+      close();
+    } catch { /* shown inline */ }
+  }
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) close(); }}>
+      <DialogContent
+        title={copy.title}
+        description={copy.body}
+        footer={<><Button onClick={close}>Cancel</Button><Button variant={copy.danger ? 'danger' : 'primary'} loading={busy} onClick={() => void run()}>{copy.cta}</Button></>}
+      >
+        {error && <Alert tone="danger">{errMsg(error)}</Alert>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MembersCard({ ws }: { ws: Workspace }) {
   const q = useMembers(ws.id);
+  const { userId } = useAuth();
+  const [action, setAction] = useState<Action | null>(null);
   const items: Member[] = q.data?.items ?? [];
+  const manage = ws.myRole === 'OWNER' || ws.myRole === 'ADMIN';
   return (
     <Card>
       <CardHeader title={`Members${q.data ? ` (${q.data.total})` : ''}`} description="People who can use this workspace." />
@@ -60,14 +135,15 @@ function MembersCard({ ws }: { ws: Workspace }) {
         <>
           <div className="max-sm:hidden">
             <Table bare aria-label="Workspace members">
-              <THead><tr><TH>Member</TH><TH>Email</TH><TH>Role</TH><TH>Joined</TH></tr></THead>
+              <THead><tr><TH>Member</TH><TH>Email</TH><TH>Role</TH><TH>Joined</TH>{manage && <TH className="w-12"><span className="sr-only">Actions</span></TH>}</tr></THead>
               <TBody>
                 {items.map((m) => (
-                  <TR key={m.userId}>
-                    <TD><span className="flex items-center gap-2"><Avatar name={m.fullName || m.email || 'Member'} size="sm" /><span className="max-w-56 truncate" title={m.fullName ?? undefined}>{m.fullName || '—'}</span></span></TD>
+                  <TR key={m.userId} data-testid="member-row" data-user-id={m.userId}>
+                    <TD><span className="flex items-center gap-2"><Avatar name={m.fullName || m.email || 'Member'} size="sm" /><span className="max-w-56 truncate" title={m.fullName ?? undefined}>{m.fullName || '—'}{m.userId === userId ? ' (you)' : ''}</span></span></TD>
                     <TD className="max-w-64 truncate text-ink-muted" title={m.email ?? undefined}>{m.email ?? '—'}</TD>
                     <TD><StatusPill status={m.role} /></TD>
                     <TD className="whitespace-nowrap text-ink-subtle">{new Date(m.joinedAt).toLocaleDateString()}</TD>
+                    {manage && <TD className="text-right"><MemberMenu member={m} ws={ws} selfId={userId} onAction={setAction} /></TD>}
                   </TR>
                 ))}
               </TBody>
@@ -78,15 +154,17 @@ function MembersCard({ ws }: { ws: Workspace }) {
               <li key={m.userId} className="flex items-center gap-3 px-4 py-3">
                 <Avatar name={m.fullName || m.email || 'Member'} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-body font-medium" title={m.fullName ?? undefined}>{m.fullName || '—'}</p>
+                  <p className="truncate text-body font-medium" title={m.fullName ?? undefined}>{m.fullName || '—'}{m.userId === userId ? ' (you)' : ''}</p>
                   <p className="truncate text-caption text-ink-subtle" title={m.email ?? undefined}>{m.email ?? '—'}</p>
                 </div>
                 <StatusPill status={m.role} />
+                {manage && <MemberMenu member={m} ws={ws} selfId={userId} onAction={setAction} />}
               </li>
             ))}
           </ul>
         </>
       )}
+      <ConfirmMember ws={ws} action={action} onClose={() => setAction(null)} />
     </Card>
   );
 }

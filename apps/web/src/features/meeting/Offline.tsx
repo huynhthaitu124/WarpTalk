@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { Plugs } from '@phosphor-icons/react';
 import { Alert, Button, Card, EmptyState } from '@/ui';
 import type { Participant, Room } from '@/lib/schemas';
-import { SidePanel, type PanelTab, type PersonRow } from './SidePanel';
+import { chatUnavailable, SidePanel, type PanelTab, type PersonRow } from './SidePanel';
+
+const CHAT_OFFLINE = chatUnavailable('Chat is available once you are connected to the meeting.');
 
 /** Room info + (empty) transcript and live roster shown when no media session exists (LiveKit not configured). */
 export function OfflineRoom({ room, roster, selfUserId, onRetry }: { room: Room; roster: Participant[]; selfUserId: string | null; onRetry(): void }) {
@@ -28,9 +30,7 @@ export function OfflineRoom({ room, roster, selfUserId, onRetry }: { room: Room;
           onDeny={() => undefined}
           onAdmitAll={() => undefined}
           moderating={false}
-          chat={[]}
-          onSend={() => undefined}
-          chatDisabledReason="Chat is available once you are connected to the meeting."
+          chat={CHAT_OFFLINE}
           unread={0}
         />
       </Card>

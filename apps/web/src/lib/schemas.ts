@@ -257,3 +257,70 @@ export const aiConfig = z.object({
 });
 export type AiConfig = z.infer<typeof aiConfig>;
 export const aiTest = z.object({ ok: z.boolean(), latencyMs: z.number(), errorCode: z.string().nullable().optional() });
+
+// ---- meeting chat (crates/modules/meeting/src/http/dto.rs)
+export const chatMessage = z.object({
+  messageId: uuid,
+  senderId: uuid.nullable().optional(),
+  senderName: z.string(),
+  content: z.string(),
+  createdAt: ts,
+  hidden: z.boolean(),
+  /** Translations by target language code. */
+  translations: z.record(z.string(), z.string()).default({}),
+});
+export type ChatMessageDto = z.infer<typeof chatMessage>;
+
+// ---- glossary (crates/modules/transcript/src/http/glossary.rs)
+export const glossary = z.object({
+  id: uuid,
+  workspaceId: uuid,
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  sourceLanguage: z.string(),
+  targetLanguage: z.string(),
+  termCount: z.number(),
+  createdAt: ts,
+  updatedAt: ts.nullable().optional(),
+});
+export type Glossary = z.infer<typeof glossary>;
+export const glossaryTerm = z.object({
+  id: uuid,
+  glossaryId: uuid,
+  sourceTerm: z.string(),
+  targetTerm: z.string(),
+  caseSensitive: z.boolean(),
+  notes: z.string().nullable().optional(),
+  createdAt: ts,
+});
+export type GlossaryTerm = z.infer<typeof glossaryTerm>;
+export const importResult = z.object({ imported: z.number(), skipped: z.number() });
+
+export const GLOBAL_STATUSES = ['draft', 'published', 'archived'] as const;
+export type GlobalStatus = (typeof GLOBAL_STATUSES)[number];
+export const globalTerm = z.object({
+  id: uuid,
+  term: z.string(),
+  preferredTranslation: z.string(),
+  sourceLanguage: z.string().nullable().optional(),
+  targetLanguage: z.string().nullable().optional(),
+  businessDomain: z.string().nullable().optional(),
+  definition: z.string().nullable().optional(),
+  usageNote: z.string().nullable().optional(),
+  priority: z.number(),
+  status: z.enum(GLOBAL_STATUSES),
+  version: z.number(),
+  createdAt: ts,
+  updatedAt: ts.nullable().optional(),
+});
+export type GlobalTerm = z.infer<typeof globalTerm>;
+export const globalAudit = z.object({
+  id: uuid,
+  termId: uuid,
+  action: z.string(),
+  beforeJson: z.unknown().optional(),
+  afterJson: z.unknown().optional(),
+  actorUserId: uuid,
+  createdAt: ts,
+});
+export type GlobalAudit = z.infer<typeof globalAudit>;

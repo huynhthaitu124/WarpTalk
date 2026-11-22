@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
-import { Brain, GearSix, SlidersHorizontal, User } from '@phosphor-icons/react';
+import { BookBookmark, Brain, GearSix, SlidersHorizontal, User } from '@phosphor-icons/react';
 import {
   Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
 } from '@/ui';
 import { cn } from '@/lib/cn';
 import { AiSettings } from './AiSettings';
+import { GlobalGlossaryAdmin } from './GlobalGlossary';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
@@ -254,10 +255,21 @@ const SECTIONS = [
   { id: 'account', label: 'Account', icon: User, group: 'Personal', admin: false },
   { id: 'general', label: 'General', icon: GearSix, group: 'Workspace', admin: false },
   { id: 'ai', label: 'AI providers', icon: Brain, group: 'Workspace', admin: true },
-  { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal, group: 'Workspace', admin: true },
+  { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal, group: 'Workspace', admin: true, system: false },
+  /** Platform-wide: only for system administrators, listed right under Advanced. */
+  { id: 'global-glossary', label: 'Global glossary', icon: BookBookmark, group: 'Workspace', admin: false, system: true },
 ] as const;
 
+function SystemCard({ to }: { to: string }) {
+  return (
+    <Card className="mt-6">
+      <CardHeader title="Global glossary" description="Platform-wide terms applied to every workspace. System administrators only." actions={<Link to={to} className="text-body-sm">Manage global glossary</Link>} />
+    </Card>
+  );
+}
+
 export function SettingsPage() {
+  const profile = useProfile();
   const { current, loading, wsPath } = useWorkspace();
   const { section } = useParams();
   const [params] = useSearchParams();
@@ -269,7 +281,8 @@ export function SettingsPage() {
     return <Navigate to={wsPath(`/settings/${id}`)} replace />;
   }
   const admin = canAdmin(current);
-  const visible = SECTIONS.filter((s) => !s.admin || admin);
+  const sysAdmin = !!profile.data?.systemAdmin;
+  const visible = SECTIONS.filter((s) => (!s.admin || admin) && (!('system' in s) || !s.system || sysAdmin));
   const active = visible.find((s) => s.id === section);
   return (
     <>
@@ -298,7 +311,8 @@ export function SettingsPage() {
             : !current ? <EmptyState title="No workspace" description="Create a workspace to configure it." />
             : active.id === 'general' ? <WorkspaceTab ws={current} />
             : active.id === 'ai' ? <AiSettings ws={current} />
-            : <RuntimeTab ws={current} />}
+            : active.id === 'global-glossary' ? <GlobalGlossaryAdmin />
+            : <><RuntimeTab ws={current} />{sysAdmin && <SystemCard to={wsPath('/settings/global-glossary')} />}</>}
         </div>
       </div>
     </>

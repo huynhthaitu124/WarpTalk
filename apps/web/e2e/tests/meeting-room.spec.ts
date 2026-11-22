@@ -2,7 +2,7 @@
 // captions merge, reactions, hand raise, host controls (real backend), states and visual snapshots.
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { addWorkspaceMember, call, createRoom, createUser, expect, joinByCode, login, ok, test, signedInContext } from '../fixtures';
+import { call, createRoom, createUser, expect, inviteAndAccept, joinByCode, login, ok, seedMeetingRow, signedInContext, test } from '../fixtures';
 import { mountMeeting, script, sent } from '../harness/helpers';
 
 const ANA = { identity: 'u-ana', name: 'Ana Pereira' };
@@ -121,10 +121,20 @@ test.describe('In-meeting UI', () => {
     await expect(app.getByTestId('reaction')).toHaveCount(0, { timeout: 8000 });
   });
 
-  test('MTG-15 chat: send and receive on the chat topic, unread badge, local only', async ({ app, tokens, user, workspace }) => {
-    await meet(app, tokens, user, workspace.id);
+  test('MTG-15 chat: REST-backed send, instant data-channel copy, dedupe by messageId, unread badge', async ({ app, tokens, user, workspace }) => {
+    const history = app.waitForResponse((r) => r.url().includes('/chat/messages') && r.request().method() === 'GET');
+    const c = await meet(app, tokens, user, workspace.id);
+    await history;
+    seedMeetingRow(c.roomId, user.userId);
+    // A real participant posts through the API; the data channel delivers an instant copy of the same message.
+    const guest = await createUser('ana');
+    const code = (await ok(call<{ roomCode: string }>(`/translation-rooms/${c.roomId}`, { token: tokens.accessToken }))).roomCode;
+    await joinByCode((await login(guest)).accessToken, code, { displayName: 'Ana Pereira' });
+    const posted = await ok(call<Record<string, unknown>>(`/meetings/${c.roomId}/chat/messages`, { token: (await login(guest)).accessToken, body: { content: 'Hello team', clientMessageId: 'mtg15-ana' } }));
+    const ana = (o: Record<string, unknown>) => ({ type: 'chat.message', ...posted, ...o });
+    const deliver = (body: unknown) => app.evaluate(([b, id]) => (window as unknown as { __meeting: { data(t: string, b: unknown, f: unknown): void } }).__meeting.data('chat', b, { identity: id as string, name: 'Ana Pereira' }), [body, guest.userId]);
     // Chat arrives while the Transcript tab is open: unread badge on the tab and on the panel button.
-    await app.evaluate(() => (window as unknown as { __meeting: { data(t: string, b: unknown, f: unknown): void } }).__meeting.data('chat', { id: 'm1', text: 'Hello team', ts: Date.now() }, { identity: 'u-ana', name: 'Ana Pereira' }));
+    await deliver(ana({}));
     await expect(app.getByTestId('chat-unread')).toHaveText(/1/);
     await expect(app.getByTestId('panel-badge')).toHaveText(/1/);
     await app.getByRole('tab', { name: /^Chat/ }).click();
@@ -140,15 +150,20 @@ test.describe('In-meeting UI', () => {
     await send.click();
     await expect(app.getByTestId('chat-message').nth(1)).toHaveAttribute('data-mine', 'true');
     await expect(app.getByTestId('chat-message').nth(1)).toContainText('Hi Ana');
+    await expect(app.getByTestId('chat-message').nth(1)).toHaveAttribute('data-status', 'sent');
+    // Stored by the backend and mirrored on the data channel for everybody else.
+    const stored = await ok(call<{ content: string; messageId: string }[]>(`/meetings/${c.roomId}/chat/messages`, { token: tokens.accessToken }));
+    expect(stored.map((m) => m.content)).toEqual(['Hello team', 'Hi Ana']);
     const msgs = (await sent(app)).filter((m) => m.topic === 'chat');
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.payload).toMatchObject({ text: 'Hi Ana' });
-    await expect(app.getByText('Messages are not saved')).toBeVisible();
-    // Enter submits too; duplicate ids from the wire are ignored.
+    expect(msgs[0]!.payload).toMatchObject({ content: 'Hi Ana', messageId: stored[1]!.messageId });
+    // The "local only" notice is gone: history is saved.
+    await expect(app.getByText('Messages are not saved')).toHaveCount(0);
+    // Enter submits too; a duplicate messageId from the wire is ignored.
     await app.getByRole('textbox', { name: 'Message' }).fill('second');
     await app.keyboard.press('Enter');
     await expect(app.getByTestId('chat-message')).toHaveCount(3);
-    await app.evaluate(() => (window as unknown as { __meeting: { data(t: string, b: unknown, f: unknown): void } }).__meeting.data('chat', { id: 'm1', text: 'Hello team', ts: Date.now() }, { identity: 'u-ana', name: 'Ana Pereira' }));
+    await deliver(ana({}));
     await expect(app.getByTestId('chat-message')).toHaveCount(3);
   });
 
@@ -180,7 +195,7 @@ test.describe('In-meeting UI', () => {
     const c = await meet(app, tokens, user, workspace.id, { approval: true });
     const guestA = await createUser('gina');
     const guestB = await createUser('gus');
-    for (const g of [guestA, guestB]) addWorkspaceMember(workspace.id, g.userId);
+    for (const g of [guestA, guestB]) await inviteAndAccept(tokens.accessToken, workspace.id, g);
     const code = (await ok(call<{ roomCode: string }>(`/translation-rooms/${c.roomId}`, { token: tokens.accessToken }))).roomCode;
     const ga = await login(guestA);
     const gb = await login(guestB);
@@ -253,7 +268,7 @@ test.describe('In-meeting UI', () => {
     const room2 = await createRoom(tokens.accessToken, workspace.id, { title: 'Second' });
     await ok(call(`/translation-rooms/${room2.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     const member = await createUser('member');
-    addWorkspaceMember(workspace.id, member.userId);
+    await inviteAndAccept(tokens.accessToken, workspace.id, member);
     const m = await signedInContext(browser, member, baseURL);
     try {
       await mountMeeting(m.page, 'live', { roomId: room2.id, selfUserId: member.userId, selfName: 'Mem', participants: [{ identity: member.userId, name: 'Mem', isLocal: true }, ANA] });

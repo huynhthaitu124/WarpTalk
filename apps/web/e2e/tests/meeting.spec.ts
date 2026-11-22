@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { addWorkspaceMember, call, createRoom, createUser, expect, ok, signedInContext, test } from '../fixtures';
+import { call, inviteAndAccept, createRoom, createUser, expect, ok, signedInContext, test } from '../fixtures';
 
 const HARNESS = '/e2e/harness/captions.tsx';
 interface Harness {
@@ -119,7 +119,7 @@ test.describe('Meeting shell', () => {
     const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Hosted' });
     await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
     const member = await createUser('member');
-    addWorkspaceMember(workspace.id, member.userId);
+    await inviteAndAccept(tokens.accessToken, workspace.id, member);
     const m = await signedInContext(browser, member, baseURL);
     try {
       await m.page.goto(`/meetings/${room.id}`);

@@ -15,3 +15,4 @@ export * from './SidebarNav';
 export * from './Table';
 export * from './Misc';
 export * from './Brand';
+export * from './Drawer';

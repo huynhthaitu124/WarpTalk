@@ -1,7 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const WEB_PORT = 5199;
-const API = 'http://127.0.0.1:18080';
+// Ports can be moved (E2E_WEB_PORT / E2E_API_PORT) to run next to another stack on the defaults.
+const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 5199);
+const API_PORT = Number(process.env.E2E_API_PORT ?? 18080);
+const API = `http://127.0.0.1:${API_PORT}`;
 const baseURL = `http://127.0.0.1:${WEB_PORT}`;
 
 // Optional override when the bundled browser build does not match the installed Playwright:
@@ -57,7 +59,7 @@ export default defineConfig({
   webServer: [
     {
       // Real Rust backend: dev services + migrator + warptalk-api on :18080 (LiveKit unset).
-      command: 'bash ../../scripts/e2e-backend.sh',
+      command: `E2E_API_BIND=127.0.0.1:${API_PORT} bash ../../scripts/e2e-backend.sh`,
       url: `${API}/health`,
       timeout: 15 * 60_000,
       reuseExistingServer: !process.env.CI,
@@ -66,7 +68,7 @@ export default defineConfig({
       gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     },
     {
-      command: `WEB_PORT=${WEB_PORT} npx vite --strictPort`,
+      command: `WEB_PORT=${WEB_PORT} VITE_API_PROXY=${API} npx vite --strictPort`,
       url: baseURL,
       timeout: 60_000,
       reuseExistingServer: !process.env.CI,

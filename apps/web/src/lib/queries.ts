@@ -16,6 +16,33 @@ export function useMembers(wsId: string | undefined) {
   });
 }
 
+export function useChangeRole(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { userId: string; role: Exclude<WorkspaceRole, 'OWNER'> }) =>
+      api(`/workspaces/${wsId}/members/${v.userId}/role`, { method: 'PUT', body: { role: v.role } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
+  });
+}
+export function useRemoveMember(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api(`/workspaces/${wsId}/members/${userId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', wsId] }),
+  });
+}
+/** Owner-only: the target becomes OWNER and the caller drops to ADMIN. */
+export function useTransferOwnership(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (newOwnerId: string) => api(`/workspaces/${wsId}/transfer-ownership`, { method: 'POST', body: { newOwnerId } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['members', wsId] });
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    },
+  });
+}
+
 // ---- invitations (members page)
 export function useInvitations(wsId: string | undefined, enabled: boolean) {
   return useQuery({
@@ -244,6 +271,15 @@ export function useJoinById(roomId: string) {
 export function useJoinByCode() {
   return useMutation({
     mutationFn: (b: JoinInput & { roomCode: string }) => api('/translation-rooms/join', { method: 'POST', body: b, schema: joinResult }),
+  });
+}
+/** Mid-meeting language change. `speakLanguage: 'none'` makes the person listen-only. */
+export function useUpdateMyLanguages(roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { speakLanguage?: string; listenLanguage?: string }) =>
+      api(`/translation-rooms/${roomId}/participants/me/languages`, { method: 'PUT', body: b, schema: participant }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['participants', roomId] }),
   });
 }
 export function useLeaveRoom(id: string) {

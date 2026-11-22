@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import {
-  Camera, CameraSlash, CaretUp, ChatCircleText, Check, ClosedCaptioning, Hand, Microphone, MicrophoneSlash, MonitorArrowUp, Pause, Play, ShieldCheck, SignOut, Smiley, Stop, Translate, UsersThree, Users,
+  Camera, CameraSlash, CaretUp, ChatCircleText, Check, ClosedCaptioning, GearSix, Hand, Microphone, MicrophoneSlash, MonitorArrowUp, Pause, Play, ShieldCheck, SignOut, Smiley, Stop, Translate, UsersThree, Users,
 } from '@phosphor-icons/react';
 import { Badge, Button, Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator, DropdownTrigger, Tooltip } from '@/ui';
 import { cn } from '@/lib/cn';
@@ -31,6 +31,8 @@ export interface ControlBarProps {
   onMic(): void; onCamera(): void; onShare(): void;
   captionsOn: boolean; onCaptions(): void;
   listen: string; onListen(v: string): void; languages: string[];
+  /** Own speak language (`none` = listen-only) and its setter; shown in the settings menu. */
+  speak: string; onSpeak(v: string): void; languagesBusy: boolean;
   handRaised: boolean; onHand(): void; onReact(emoji: string): void;
   panelOpen: boolean; onPanel(): void; panelBadge: number;
   host: null | { status: RoomStatus; translationActive: boolean; busy: boolean; lobby: number; onAction(a: RoomAction): void; onAdmitAll(): void };
@@ -71,8 +73,23 @@ export function ControlBar(p: ControlBarProps) {
         <DropdownContent align="center" side="top">
           <DropdownLabel>I want to hear</DropdownLabel>
           {['original', ...p.languages].map((l) => (
-            <DropdownItem key={l} icon={<Check className={cn('size-4', l !== p.listen && 'invisible')} aria-hidden />} onSelect={() => p.onListen(l)} data-testid={`listen-${l}`} data-current={l === p.listen}>
+            <DropdownItem key={l} disabled={p.languagesBusy} icon={<Check className={cn('size-4', l !== p.listen && 'invisible')} aria-hidden />} onSelect={() => p.onListen(l)} data-testid={`listen-${l}`} data-current={l === p.listen}>
               {l === 'original' ? 'Original audio' : `Dubbed: ${languageLabel(l)}`}{l === p.listen && <span className="sr-only"> (current)</span>}
+            </DropdownItem>
+          ))}
+        </DropdownContent>
+      </Dropdown>
+      <Dropdown>
+        <Tip label="Meeting settings">
+          <DropdownTrigger asChild>
+            <Button className={iconBtn} aria-label="Meeting settings" data-speak={p.speak}><GearSix className="size-5" aria-hidden /></Button>
+          </DropdownTrigger>
+        </Tip>
+        <DropdownContent align="center" side="top">
+          <DropdownLabel>I speak</DropdownLabel>
+          {[...p.languages, 'none'].map((l) => (
+            <DropdownItem key={l} disabled={p.languagesBusy} icon={<Check className={cn('size-4', l !== p.speak && 'invisible')} aria-hidden />} onSelect={() => p.onSpeak(l)} data-testid={`speak-${l}`} data-current={l === p.speak}>
+              {l === 'none' ? 'Listen only (I do not speak)' : languageLabel(l)}{l === p.speak && <span className="sr-only"> (current)</span>}
             </DropdownItem>
           ))}
         </DropdownContent>

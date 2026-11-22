@@ -3,7 +3,7 @@
 // LiveKit room. Everything that talks to the backend (roster, admit/deny, start/stop translation,
 // end meeting) is the real code calling the real API; only the media layer is fake.
 import { createRoot } from 'react-dom/client';
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider, TooltipProvider } from '@/ui';
 import { useParticipants, useRoom } from '@/lib/queries';
@@ -105,6 +105,7 @@ export class MockMeeting {
 function Live({ opts, mock }: { opts: HarnessOptions; mock: MockMeeting }) {
   const session = useSyncExternalStore(mock.watch, mock.snapshot);
   const room = useRoom(opts.roomId);
+  const [listen, setListen] = useState(opts.listen ?? 'en');
   if (!room.data) return null;
   return (
     <InMeeting
@@ -112,9 +113,9 @@ function Live({ opts, mock }: { opts: HarnessOptions; mock: MockMeeting }) {
       session={session}
       selfUserId={opts.selfUserId}
       selfName={opts.selfName}
-      listen={opts.listen ?? 'en'}
-      onListen={() => undefined}
-      captionLang={opts.captionLang ?? 'en'}
+      listen={listen}
+      onListen={(v) => { setListen(v); document.body.dataset.listen = v; }}
+      captionLang={opts.captionLang ?? (listen === 'original' ? 'en' : listen)}
       onLeave={() => { document.body.dataset.meetingLeft = 'true'; }}
       onEnded={() => { document.body.dataset.meetingEnded = 'true'; }}
     />

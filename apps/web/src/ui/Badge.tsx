@@ -25,6 +25,7 @@ const STATUS_TONE: Record<string, VariantProps<typeof badge>['tone']> = {
   SCHEDULED: 'info', WAITING: 'warning', OPEN: 'info', IN_PROGRESS: 'success', PAUSED: 'warning',
   ENDED: 'neutral', CANCELLED: 'neutral', EXPIRED: 'neutral', FAILED: 'danger',
   CONNECTED: 'success', DISCONNECTED: 'neutral', LEFT: 'neutral', KICKED: 'danger', REJECTED: 'danger', INVITED: 'info',
+  DRAFT: 'warning', PUBLISHED: 'success', ARCHIVED: 'neutral',
   OWNER: 'primary', ADMIN: 'info', MEMBER: 'neutral', HOST: 'primary', PARTICIPANT: 'neutral',
 };
 const LABEL: Record<string, string> = { IN_PROGRESS: 'Live' };

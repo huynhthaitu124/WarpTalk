@@ -6,7 +6,7 @@ import { useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import { useRoomList } from '@/lib/queries';
 import type { Room } from '@/lib/schemas';
-import { LIVE_STATUSES, PendingInvitations, RoomRow, TERMINAL_STATUSES, UPCOMING_STATUSES, roomMoment } from './common';
+import { PendingInvitations, RUNNING_STATUSES, RoomRow, TERMINAL_STATUSES, UPCOMING_STATUSES, WAITING_STATUSES, roomMoment } from './common';
 import { errMsg } from './errors';
 
 function Quick({ to, icon, title, hint, primary }: { to: string; icon: ReactNode; title: string; hint: string; primary?: boolean }) {
@@ -49,7 +49,8 @@ export function HomePage() {
   const nav = useNavigate();
   const rooms = useRoomList(current?.id);
   const all = useMemo(() => rooms.data?.pages.flatMap((p) => p.items) ?? [], [rooms.data]);
-  const live = useMemo(() => all.filter((r) => LIVE_STATUSES.includes(r.status)).slice(0, 6), [all]);
+  const live = useMemo(() => all.filter((r) => RUNNING_STATUSES.includes(r.status)).slice(0, 6), [all]);
+  const waiting = useMemo(() => all.filter((r) => WAITING_STATUSES.includes(r.status)).slice(0, 6), [all]);
   const upcoming = useMemo(
     () => all.filter((r) => UPCOMING_STATUSES.includes(r.status)).sort((a, b) => Date.parse(roomMoment(a) ?? '') - Date.parse(roomMoment(b) ?? '')).slice(0, 5),
     [all],
@@ -83,6 +84,7 @@ export function HomePage() {
         <div className="grid min-w-0 gap-6 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-6">
             <RoomsCard title="Live now" description="Meetings you can join right now." items={live} emptyTitle="Nothing live" emptyHint="Start a meeting and it shows up here." viewAll={wsPath('/meetings')} showOpen />
+            {waiting.length > 0 && <RoomsCard title="Waiting to start" description="Open rooms where translation is not running yet." items={waiting} emptyTitle="" emptyHint="" viewAll={wsPath('/meetings')} showOpen />}
             <RoomsCard title="Upcoming" description="Scheduled meetings." items={upcoming} emptyTitle="Nothing scheduled" emptyHint="Scheduled meetings appear here in time order." viewAll={`${wsPath('/meetings')}?status=SCHEDULED`} />
           </div>
           <RoomsCard title="Recent history" description="The latest finished meetings." items={recent} emptyTitle="No past meetings yet" emptyHint="Ended and cancelled meetings are kept in History." viewAll={`${wsPath('/meetings')}?tab=history`} />
