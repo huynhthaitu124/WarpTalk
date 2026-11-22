@@ -13,7 +13,7 @@ Without the feature, `MEDIA_TRANSPORT=livekit` exits with an error pointing here
 
 Two manifests need a change (neither is done yet; the root one is owned by the workspace owner).
 
-Root `Cargo.toml`, in `[workspace.dependencies]`:
+Already applied in the repo (root `Cargo.toml`, `[workspace.dependencies]`):
 
 ```toml
 livekit = { version = "0.12", default-features = false, features = ["tokio", "rustls-tls-webpki-roots"] }
@@ -22,7 +22,7 @@ livekit = { version = "0.12", default-features = false, features = ["tokio", "ru
 (`default-features = false` drops `native-tls`; the `tokio` feature selects the tokio runtime.
 If your toolchain prefers the platform TLS, use `features = ["tokio", "native-tls"]` instead.)
 
-`apps/pipeline/Cargo.toml`:
+`apps/pipeline/Cargo.toml` (already applied):
 
 ```toml
 [features]

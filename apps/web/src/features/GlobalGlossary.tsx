@@ -54,7 +54,7 @@ function TermDialog({ term, onClose }: { term: GlobalTerm | 'new'; onClose(): vo
             <Field label="Business domain" hint="Optional."><Input maxLength={100} value={v.businessDomain} onChange={(e) => set('businessDomain')(e.target.value)} /></Field>
             <Field label="Priority" hint="Higher wins when terms overlap."><Input type="number" min={0} max={100} value={v.priority} onChange={(e) => set('priority')(e.target.value)} /></Field>
           </div>
-          <Field label="Definition" hint="Optional."><Textarea maxLength={1000} value={v.definition} onChange={(e) => set('definition')(e.target.value)} /></Field>
+          <Field label="Definition" hint="Optional for drafts, required to publish."><Textarea maxLength={1000} value={v.definition} onChange={(e) => set('definition')(e.target.value)} /></Field>
           <Field label="Usage note" hint="Optional."><Textarea maxLength={1000} value={v.usageNote} onChange={(e) => set('usageNote')(e.target.value)} /></Field>
           {save.isError && <Alert tone="danger">{errMsg(save.error)}</Alert>}
         </form>
@@ -75,7 +75,7 @@ function AuditDrawer({ term, onClose }: { term: GlobalTerm | null; onClose(): vo
             <li key={a.id} data-testid="audit-entry" className="rounded-lg border border-hairline bg-surface-1 p-3">
               <p className="flex items-center justify-between gap-2 text-body font-medium"><span className="capitalize">{a.action}</span><span className="text-caption font-normal text-ink-subtle">{formatWhen(a.createdAt)}</span></p>
               <p className="mt-0.5 break-all text-caption text-ink-subtle">By {a.actorUserId}</p>
-              {a.afterJson != null && <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-2 p-2 font-mono text-caption text-ink-muted">{JSON.stringify(a.afterJson, null, 2)}</pre>}
+              {a.afterJson != null && <pre className="mt-2 whitespace-pre-wrap break-words rounded-md bg-surface-2 p-2 font-mono text-caption text-ink-muted">{JSON.stringify(a.afterJson, null, 2)}</pre>}
             </li>
           ))}
         </ol>

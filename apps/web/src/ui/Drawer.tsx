@@ -21,7 +21,7 @@ export function Drawer({ open, onOpenChange, title, description, children, class
             </div>
             <RD.Close aria-label="Close drawer" className="-mr-2 -mt-1 rounded-md p-1.5 text-ink-subtle hover:bg-surface-3 hover:text-ink focus-ring"><X className="size-4" aria-hidden /></RD.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div tabIndex={0} role="region" aria-label={title} className="min-h-0 flex-1 overflow-y-auto px-5 py-4 focus-ring">{children}</div>
         </RD.Content>
       </RD.Portal>
     </RD.Root>

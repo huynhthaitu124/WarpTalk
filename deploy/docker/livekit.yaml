@@ -1,0 +1,27 @@
+# LiveKit server cho DEV (chay voi --dev, xem docker-compose.yml). KHONG dung cho production.
+# Khoa dev: devkey / secret  ->  LIVEKIT_API_KEY=devkey, LIVEKIT_API_SECRET=secret.
+port: 7880
+bind_addresses:
+  - ""
+log_level: info
+
+rtc:
+  # TCP fallback + dai UDP nho (phai khop voi phan ports cua docker-compose.yml).
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # Docker Desktop (macOS) khong co host networking: quang cao dia chi 127.0.0.1 de trinh duyet
+  # va app macOS tren cung may ket noi duoc ICE. Muon cho may khac trong LAN vao: dat node_ip
+  # thanh IP LAN cua may (vd 192.168.1.20) va LIVEKIT_URL=ws://<IP LAN>:7880.
+  use_external_ip: false
+  node_ip: 127.0.0.1
+
+keys:
+  devkey: secret
+
+# API gui su kien phong (participant_joined, room_finished...) toi webhook cua module meeting.
+# Cong 8080 = cong API mac dinh cua scripts/dev-up.sh. Doi cong API thi doi ca dong nay.
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:8080/api/v1/meetings/webhooks/livekit

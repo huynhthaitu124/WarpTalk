@@ -10,3 +10,6 @@ obj/
 # Rust
 target/
 dump.rdb
+
+.logs/
+!.env.example

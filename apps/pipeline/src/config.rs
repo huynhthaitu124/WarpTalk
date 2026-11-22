@@ -44,7 +44,7 @@ pub struct AppConfig {
     pub lease_ttl: Duration,
     /// `PIPELINE_SCAN_INTERVAL_MS` (default 5000; 0 disables the scan).
     pub scan_interval: Option<Duration>,
-    /// `MEDIA_TRANSPORT` (`livekit` default; `simulated` for local runs).
+    /// `MEDIA_TRANSPORT` (default `livekit` when built with `livekit-rtc`, else `simulated`).
     pub transport: TransportKind,
     /// `OPENAI_API_KEY`.
     pub openai_api_key: Option<String>,
@@ -97,7 +97,14 @@ pub fn truthy(v: Option<&str>) -> bool {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
-        let transport: TransportKind = parse_or("MEDIA_TRANSPORT", TransportKind::LiveKit)?;
+        let transport: TransportKind = parse_or(
+            "MEDIA_TRANSPORT",
+            if cfg!(feature = "livekit-rtc") {
+                TransportKind::LiveKit
+            } else {
+                TransportKind::Simulated
+            },
+        )?;
         let lease_ms: u64 = parse_or("PIPELINE_LEASE_TTL_MS", 15_000)?;
         if lease_ms < 1_000 {
             return Err(ConfigError::Invalid {

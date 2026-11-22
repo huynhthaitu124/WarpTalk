@@ -108,4 +108,17 @@ test.describe('Workspaces', () => {
     await quick.getByRole('link', { name: /Join by code/ }).click();
     await expect(app.getByRole('dialog', { name: 'Join a meeting' })).toBeVisible();
   });
+
+  test('WS-09 Home: "Live now" lists only running rooms; waiting rooms get their own "Waiting to start" group', async ({ app, tokens, workspace }) => {
+    const live = await createRoom(tokens.accessToken, workspace.id, { title: 'Running room' });
+    const waiting = await createRoom(tokens.accessToken, workspace.id, { title: 'Not started room' });
+    await ok(call(`/translation-rooms/${live.id}/start`, { token: tokens.accessToken, method: 'POST' }));
+    await app.goto(`/${workspace.slug}/home`);
+    const liveList = app.getByRole('list', { name: 'Live now' });
+    await expect(liveList.getByRole('link', { name: live.title, exact: true })).toBeVisible();
+    await expect(liveList.getByRole('link', { name: waiting.title, exact: true })).toHaveCount(0);
+    const wait = app.getByRole('list', { name: 'Waiting to start' });
+    await expect(wait.getByRole('link', { name: waiting.title, exact: true })).toBeVisible();
+    await expect(wait.getByRole('link', { name: live.title, exact: true })).toHaveCount(0);
+  });
 });

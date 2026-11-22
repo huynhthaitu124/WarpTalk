@@ -6,7 +6,7 @@ Update screenshots: `npx playwright test --update-snapshots`.
 
 Conventions
 - Every test creates fresh random users/workspaces (`e2e-<label>-<hex>@example.com`), so the suite is re-runnable against a dirty DB.
-- Email verification and invitations: the test backend runs with `DEV_MAIL_CAPTURE=1`, which stores the raw token in Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`). Fixtures read it with `redis-cli GET` and call `POST /auth/verify-email` / `POST /invitations/accept` (`fixtures/api.ts`: `verifyEmail`, `inviteAndAccept`). No psql for verification or membership any more (psql remains only for `expireBridgeLease` and the deprecated `addWorkspaceMember` still used by meeting specs).
+- Email verification and invitations: the test backend runs with `DEV_MAIL_CAPTURE=1`, which stores the raw token in Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`). Fixtures read it with `redis-cli GET` and call `POST /auth/verify-email` / `POST /invitations/accept` (`fixtures/api.ts`: `verifyEmail`, `inviteAndAccept`). No psql for verification or membership (`addWorkspaceMember` is deleted). psql remains only for state with no public API: `expireBridgeLease`, `seedMeetingRow` (the meeting row a LiveKit join creates), `seedChatTranslation` (what the AI translation worker stores) and `makeSystemAdmin`.
 - Signed-in state is arranged by seeding the refresh token into localStorage; the app boots through its real silent-refresh path. Auth specs use the real login form.
 - Priority: P0 = must pass for any release, P1 = important, P2 = nice to have / not automated yet (status `todo`).
 - Projects: `chromium` (all specs), `macos-webview` (1280x800, WKWebView-style UA; specs `webview`, `visual`, `a11y`).
@@ -213,6 +213,69 @@ The macOS host is replaced by a scriptable `window.warptalkNative` mock injected
 | VR-04/09 | | P1 | Visual: meetings and home (dark+light), re-baselined login/design/room/settings/external | visual |
 
 Not automated: production-build check that the "Design system" link is absent (DS-11; tests run against the dev server where it is shown), real knowledge hits (the e2e backend has no embedding keys), saving a real AI key (no `AI_KEYS_KEK`; covered with mocked routes).
+
+## 11. Meeting chat (CHAT) - `e2e/tests/chat.spec.ts`
+
+REST is the source of truth (`POST/GET /meetings/{id}/chat/messages`, `POST .../{id}/hide`); the LiveKit `chat` topic only speeds delivery up. The e2e backend has no LiveKit, so a meeting row is seeded and the panel runs in the meeting harness against the real API.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| CHAT-01 | P0 | API: post twice with one `clientMessageId`; empty, 1001 chars, bad id; outsider; no meeting row; ended room | 201 then 200 with the same id, one stored message; 400s; 403; 404 + empty history; 409 | auto |
+| CHAT-02 | P0 | API: 7 messages, `limit` + `before` paging | Oldest-first pages 5-7, 2-4, 1, then empty | auto |
+| CHAT-03 | P0 | API: member and host hide | Member 403; host 200 idempotent; host history flags `hidden`, others do not see it | auto |
+| CHAT-04 | P0 | UI: 52 stored messages, open Chat | Last 50 shown, "Load older messages" adds the rest, button disappears | auto |
+| CHAT-05 | P0 | UI: slow POST | Bubble at once as "Sending…" (`data-status=sending`), then `sent`, one stored | auto |
+| CHAT-06 | P0 | UI: response lost after the server stored it | Automatic retry with the same `clientMessageId`; stored exactly once | auto |
+| CHAT-07 | P1 | UI: server 503 | "Not sent: ..." with Retry/Discard; Retry delivers once; Discard drops it | auto |
+| CHAT-08 | P0 | UI: translation rows appear for a message (no push) | Shown under the message in the listen language within the 5 s poll; follows a listen switch | auto |
+| CHAT-09 | P1 | UI: `chat.translated` on the data channel | Immediate refetch, translation shown | auto |
+| CHAT-10 | P1 | UI: REST-only message; data-channel copy of a stored message; copy with a spoofed sender | Unread badge via poll; no duplicate bubble; spoofed copy ignored | auto |
+| CHAT-11 | P1 | UI: host hides a member message; member view | Host sees "Hidden from participants"; member sees neither text nor Hide control | auto |
+| CHAT-12 | P1 | axe on the chat tab (history, translation, hidden), dark + light | No serious/critical | auto |
+| CHAT-13 | P2 | Real LiveKit data delivery and a realtime hub pushing `chat.translated` | | todo (needs LiveKit server and hub) |
+
+MTG-15 (section 5) covers the harness path: REST post, data-channel mirror, dedupe, unread badge, no "not saved" notice.
+
+## 12. Mid-meeting language switch (LANG) - `e2e/tests/language.spec.ts`
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| LANG-01 | P0 | API: `PUT .../participants/me/languages` listen, speak `none`, listen `none`, empty, bad code | 200 with updated participant; 4xx for the rest | auto |
+| LANG-02 | P0 | Listen menu: Dubbed Vietnamese, then Original audio | PUT first, then the subscription switches (`onListen`); "Original" sends nothing | auto |
+| LANG-03 | P1 | PUT answers 500 | Toast "Could not change the listen language"; subscription unchanged | auto |
+| LANG-04 | P0 | Meeting settings menu: I speak English, then Listen only | Server `speakLanguage` `en`, then `none`; current marked | auto |
+| LANG-05 | P2 | Real LiveKit: `dub-{lang}` track subscription follows the switch | | todo (needs LiveKit) |
+
+## 13. Glossary (GLOS) - `e2e/tests/glossary.spec.ts`
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| GLOS-01 | P0 | Glossary nav item, New glossary: empty name, same languages, valid; duplicate name | Inline validation; lands on detail; API list matches; 409 shown in the dialog | auto |
+| GLOS-02 | P0 | Inline add (validation, duplicate), inline edit, delete with confirm | Terms table and API agree; Cancel keeps the term | auto |
+| GLOS-03 | P0 | CSV import (header, quoted comma, duplicate of existing), malformed file, Export CSV | "Imported 2 terms, skipped 1."; failure alert; download contains the terms | auto |
+| GLOS-04 | P0 | Workspace member | Read-only note, no create/import/edit/delete/add form, export available; API writes 403, reads 200 | auto |
+| GLOS-05 | P1 | Edit and delete a glossary; outsider read | Heading renames; confirm names the term count; list empties; outsider refused; 404 after delete | auto |
+| GLOS-06 | P0 | Plain owner vs system admin on Settings > Global glossary: draft, publish (definition required), edit, audit drawer, archive, delete | No entry/403 for owners; published term is in `/glossaries/global` and read-only on a member's Glossary page; audit entries listed; drawer passes axe | auto |
+| GLOS-07 | P1 | Glossary list and detail, dark + light, 1280 and 390 | No overflow, axe clean, `glossary-{list,detail}-{1280,390}-{theme}.png` | auto |
+
+## 14. Members management (MEM) - `e2e/tests/members.spec.ts`
+
+MEM-01..03 (invite, resend, revoke) are in `pages.spec.ts`.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| MEM-04 | P0 | Owner: Actions -> Make admin, Cancel then confirm | No change on Cancel; role ADMIN in UI and API; menu now offers Make member | auto |
+| MEM-05 | P0 | Owner removes a member | Dialog explains the loss of access; row gone; API role undefined; member refused | auto |
+| MEM-06 | P0 | Admin, member and owner views; direct API calls | Admin only gets Remove on members; member and owner row/self row have no controls; server answers 403 | auto |
+| MEM-07 | P0 | Owner transfers ownership to an admin | New owner OWNER, previous owner ADMIN and without controls | auto |
+| MEM-08 | P1 | Remove answers 409 | Message shown inline in the dialog; row stays | auto |
+
+## Fixes in this round
+
+| ID | Case | Spec |
+|---|---|---|
+| WS-09 | Home "Live now" lists only `IN_PROGRESS`; WAITING/OPEN/PAUSED are under "Waiting to start" | workspace |
+| - | `meeting`, `meeting-room`, `external` specs use `inviteAndAccept`; `addWorkspaceMember` deleted; `lucide-react` removed from the project | all |
 
 ## Counts
 

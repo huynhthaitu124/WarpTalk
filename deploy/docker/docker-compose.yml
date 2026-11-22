@@ -1,0 +1,127 @@
+# WarpTalk: ha tang DEV (khong cho production). Chay binary Rust bang cargo, khong co container app.
+#
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
+#   (hoac chay scripts/dev-up.sh, no lam tat ca)
+#
+# Dich vu: postgres:16, redis:7, qdrant, livekit-server (--dev), minio (profile "minio", tuy chon).
+name: warptalk
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # DEV: trust auth (khop CLAUDE.md va e2e/cargo test: postgres://postgres@localhost). Chi bind 127.0.0.1.
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: ${POSTGRES_DB:-warptalk}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-warptalk}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+    # Khong healthcheck (anh qdrant khong co curl/wget): scripts/dev-up.sh doi http://localhost:6333/readyz.
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: ["--dev", "--config", "/etc/livekit.yaml", "--bind", "0.0.0.0"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"            # signalling (ws://localhost:7880) + HTTP API
+      - "7881:7881"            # RTC qua TCP
+      - "50000-50100:50000-50100/udp"   # RTC qua UDP (khop livekit.yaml)
+    extra_hosts:
+      # de webhook toi API chay tren may host (Linux can dong nay; Docker Desktop da co san)
+      - "host.docker.internal:host-gateway"
+    # Khong healthcheck: anh livekit-server la binary tinh (khong shell/curl).
+    # scripts/dev-up.sh tu kiem tra http://localhost:7880 (tra "OK").
+
+  # Tuy chon: S3 tuong thich cho upload tai lieu (chua noi vao code; dung de thu sau).
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  # ---------------------------------------------------------------------------------------------
+  # App containers: KHONG co. Repo hien chua co Dockerfile (deploy/docker chi co file nay,
+  # .env.example, livekit.yaml). Khi co Dockerfile (vd deploy/docker/Dockerfile voi ARG BIN),
+  # bo comment cac khoi duoi day va chay: docker compose --profile apps up -d
+  #
+  # api:
+  #   profiles: ["apps"]
+  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-api } }
+  #   env_file: .env
+  #   environment:
+  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
+  #     REDIS_URL: redis://redis:6379
+  #     QDRANT_URL: http://qdrant:6333
+  #     LIVEKIT_URL: ws://localhost:7880      # URL trinh duyet dung, KHONG phai ten service
+  #     HTTP_BIND: 0.0.0.0:8080
+  #   ports: ["8080:8080"]
+  #   depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+  # worker:
+  #   profiles: ["apps"]
+  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-worker } }
+  #   env_file: .env
+  #   environment:
+  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
+  #     REDIS_URL: redis://redis:6379
+  #     QDRANT_URL: http://qdrant:6333
+  # pipeline:
+  #   profiles: ["apps"]
+  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-pipeline } }
+  #   env_file: .env
+  #   environment:
+  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
+  #     REDIS_URL: redis://redis:6379
+  #     LIVEKIT_URL: ws://livekit:7880        # pipeline noi tu trong mang compose
+  # migrator: chay mot lan truoc cac app (one-shot, restart: "no", cung image voi BIN=warptalk-migrator)
+
+volumes:
+  pgdata:
+  redisdata:
+  qdrantdata:
+  miniodata:

@@ -138,6 +138,7 @@ Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes 
 | `Dialog` / `DialogContent` | `title` (required), `description`, `footer` | Radix: focus trap, Escape, `aria-labelledby`. Focus returns to the opener even when opened by URL/command (see `Dialog.tsx`). |
 | `Dropdown*` | `DropdownItem icon shortcut danger` | Radix menu: arrow keys, typeahead. |
 | `CommandMenuProvider` / `useCommandMenu` | `items: {id, group, label, icon?, shortcut?, run}[]` | Cmd/Ctrl+K toggles; cmdk filtering; dialog named "Command menu", input named "Search commands". |
+| `Drawer` | `open`, `onOpenChange`, `title` (required), `description` | Right-hand sheet on `surface-2` (Radix dialog: focus trap, Escape, focus return). Body is a focusable scroll region. Used for the global-glossary audit history. |
 | `Tabs*` | Radix Tabs | Underline style; active = ink + primary underline. |
 | `Tooltip` | `content`, `side` | Never the only carrier of essential info. |
 | `ToastProvider` / `useToast()` | `toast({tone, title, description})` | `role="region"` + polite live region; 4.5s (8s for errors). |
@@ -151,7 +152,7 @@ Weights: 400 body, 500 labels/buttons, 600 headings (never 700+). Display sizes 
 ## 4. Usage rules
 
 - Compose class names with `cn()`; never concatenate strings that include Tailwind colour/size tokens.
-- Icons: `@phosphor-icons/react`, `weight="duotone"` for navigation and empty states, `bold`/`regular` for inline glyphs; give them `size`/`size-N`. lucide is retired outside the meeting stage.
+- Icons: `@phosphor-icons/react`, `weight="duotone"` for navigation and empty states, `bold`/`regular` for inline glyphs; give them `size`/`size-N`. `lucide-react` has been removed from the project.
 - Tertiary ink usage: placeholders and hints on surface-1..3 only. Control borders use `border-control`; `hairline*` never draws an input boundary.
 - Destructive: solid `danger` only for the confirm button of a dialog; in-page End/Leave/Revoke use `danger-soft`. One primary per region; destructive page actions go in a "More" menu with a confirm dialog.
 - Long text: `truncate` plus a `title` tooltip; rows stack below 640px; no page may scroll horizontally at 390px (asserted in e2e).

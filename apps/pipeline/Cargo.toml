@@ -24,9 +24,10 @@ default = []
 # LiveKit RTC transport (src/livekit_transport.rs). OFF by default: the `livekit` crate
 # (webrtc-sys) needs clang >= 21 to build. Enabling it also needs the optional dependency
 # lines listed in LIVEKIT.md (they are not in the root Cargo.toml yet).
-livekit-rtc = []
+livekit-rtc = ["dep:livekit"]
 
 [dependencies]
+livekit = { workspace = true, optional = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
