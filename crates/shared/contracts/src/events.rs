@@ -430,7 +430,10 @@ mod tests {
         assert!(j["routes"][0].get("target_user_id").is_none());
         // Old snapshots without the user ids still parse.
         let mut old = j.clone();
-        old["routes"][0].as_object_mut().unwrap().remove("source_user_id");
+        old["routes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_user_id");
         let back: AudioRoutesSnapshot = serde_json::from_value(old).unwrap();
         assert_eq!(back.routes[0].source_user_id, None);
         assert_eq!(

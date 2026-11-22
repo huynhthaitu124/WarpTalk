@@ -112,6 +112,7 @@ impl RoomWorker {
             flash_override: deps.flash_override,
             speakers: speakers.clone(),
             active: HashMap::new(),
+            identities: HashMap::new(),
         };
         let fin = finished.clone();
         let join = tokio::spawn(async move {
@@ -203,6 +204,8 @@ struct Runner {
     flash_override: Option<bool>,
     speakers: Arc<Mutex<BTreeSet<ParticipantId>>>,
     active: HashMap<ParticipantId, ActiveSpeaker>,
+    /// LiveKit identity -> speaker of the current routes.
+    identities: HashMap<String, ParticipantId>,
 }
 
 impl Runner {
@@ -252,7 +255,12 @@ impl Runner {
     }
 
     fn on_audio(&mut self, a: ParticipantAudio) {
-        match self.active.get_mut(&a.participant) {
+        // Media is identified by LiveKit identity (a user id); speakers are participants.
+        let speaker = self
+            .identities
+            .get(&a.participant)
+            .unwrap_or(&a.participant);
+        match self.active.get_mut(speaker) {
             Some(sp) => {
                 let handle = &sp.handle;
                 sp.chunker.push(&a.frame, a.captured_at, |f| {
@@ -264,6 +272,11 @@ impl Runner {
     }
 
     async fn reconcile(&mut self, view: &RoutesView) {
+        self.identities = view
+            .identities
+            .iter()
+            .map(|(i, p)| (i.clone(), p.clone()))
+            .collect();
         let desired = view.active_speakers();
         for (id, info) in &desired {
             if self.active.contains_key(*id) {

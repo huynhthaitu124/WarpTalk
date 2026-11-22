@@ -57,7 +57,7 @@ pub use downstream::{
 };
 pub use host::{HostConfig, HostDeps, PipelineHost, StartOutcome};
 pub use results::{MemoryResultSink, RedisResultSink, ResultSink};
-pub use routes::RoutesView;
+pub use routes::{BRIDGE_IDENTITY, RoutesView};
 pub use simulated::{SimParticipant, SimulatedTransport};
 pub use transport::{MediaEvent, MediaSession, MediaTransport, PcmChunk};
 pub use worker::{RoomWorker, RoomWorkerDeps};

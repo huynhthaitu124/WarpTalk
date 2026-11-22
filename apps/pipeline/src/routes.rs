@@ -6,6 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use warptalk_contracts::events::{AudioRoute, AudioRoutesSnapshot, RouteStatus};
 use warptalk_pipeline_runtime::ParticipantId;
 
+/// LiveKit identity of the external bridge stand-in seat (same value as the meeting module's
+/// `BRIDGE_IDENTITY` and the room module's `STAND_IN_USER_ID`).
+pub const BRIDGE_IDENTITY: &str = "00000000-0000-0000-0000-00000000b21d";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpeakerRoutes {
     /// Declared spoken language of the speaker (the routes' `source_language`).
@@ -24,6 +28,13 @@ pub struct RoutesView {
     pub speakers: BTreeMap<ParticipantId, SpeakerRoutes>,
     /// Union of target languages over live routes.
     pub targets: BTreeSet<String>,
+    /// LiveKit identity -> speaker (participant id). Tokens are minted with identity = user id
+    /// (the bridge stand-in with [`BRIDGE_IDENTITY`], which is the stand-in's user id), while
+    /// routes are keyed by participant id. Identities without an entry are treated as
+    /// participant ids (snapshots without user ids).
+    pub identities: BTreeMap<String, ParticipantId>,
+    /// Participant id -> user id: the key of the per-user voice consent / profile state.
+    pub users: BTreeMap<ParticipantId, String>,
     /// Live routes (paused/ending/completed ones are filtered out).
     pub routes: Vec<AudioRoute>,
 }
@@ -53,6 +64,8 @@ impl RoutesView {
         let mut speakers: BTreeMap<ParticipantId, SpeakerRoutes> = BTreeMap::new();
         let mut targets = BTreeSet::new();
         let mut routes = Vec::new();
+        let mut identities = BTreeMap::new();
+        let mut users = BTreeMap::new();
         for r in s.routes.iter().filter(|r| is_live(r.status)) {
             let sp = speakers
                 .entry(r.source_participant_id.to_string())
@@ -61,6 +74,11 @@ impl RoutesView {
                     target_languages: BTreeSet::new(),
                 });
             sp.target_languages.insert(r.target_language.clone());
+            if let Some(u) = r.source_user_id {
+                let (pid, uid) = (r.source_participant_id.to_string(), u.to_string());
+                identities.insert(uid.clone(), pid.clone());
+                users.insert(pid, uid);
+            }
             targets.insert(r.target_language.clone());
             routes.push(r.clone());
         }
@@ -69,9 +87,23 @@ impl RoutesView {
             ended: is_terminal(&s.room_status),
             room_status: s.room_status.clone(),
             speakers,
+            identities,
+            users,
             targets,
             routes,
         }
+    }
+
+    /// The speaker (participant id) a LiveKit identity belongs to.
+    pub fn speaker_for_identity<'a>(&'a self, identity: &'a str) -> &'a str {
+        self.identities
+            .get(identity)
+            .map_or(identity, String::as_str)
+    }
+
+    /// The user id of a speaker, for consent lookups (the speaker itself when unknown).
+    pub fn user_of<'a>(&'a self, speaker: &'a str) -> &'a str {
+        self.users.get(speaker).map_or(speaker, String::as_str)
     }
 
     /// Speakers whose audio should be transcribed right now.
@@ -135,6 +167,28 @@ mod tests {
         assert_eq!(v.targets.len(), 2);
         assert_eq!(v.active_speakers().len(), 1);
         assert!(!v.ended);
+    }
+
+    #[test]
+    fn identities_map_to_participants_incl_bridge_and_fall_back() {
+        let (a, b, c) = (Pid::new(), Pid::new(), Pid::new());
+        let (ua, bridge) = (
+            warptalk_kernel::UserId::new(),
+            BRIDGE_IDENTITY.parse().unwrap(),
+        );
+        let mut ra = route(a, "en", "vi", RouteStatus::Broadcasting);
+        ra.source_user_id = Some(ua);
+        let mut rb = route(b, "vi", "en", RouteStatus::Broadcasting);
+        rb.source_user_id = Some(warptalk_kernel::UserId::from_uuid(bridge));
+        let rc = route(c, "en", "vi", RouteStatus::Broadcasting); // no user id
+        let v = RoutesView::from_snapshot(&snap(vec![ra, rb, rc], true, "Active"));
+        assert_eq!(v.speaker_for_identity(&ua.to_string()), a.to_string());
+        assert_eq!(v.speaker_for_identity(BRIDGE_IDENTITY), b.to_string());
+        // no user id: the identity is taken as the participant id, as before
+        assert_eq!(v.speaker_for_identity(&c.to_string()), c.to_string());
+        assert_eq!(v.user_of(&a.to_string()), ua.to_string());
+        assert_eq!(v.user_of(&b.to_string()), BRIDGE_IDENTITY);
+        assert_eq!(v.user_of(&c.to_string()), c.to_string());
     }
 
     #[test]

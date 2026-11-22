@@ -2,8 +2,9 @@
 //! has no database).
 //!
 //! The api writes `voice:consent:{userId}` on every consent / enrollment change:
-//! `{"consent": bool, "voiceId": string?}`. A missing key means no consent. The speaker id of
-//! a pipeline route is the user id.
+//! `{"consent": bool, "voiceId": string?}`. A missing key means no consent. A pipeline speaker is
+//! a participant: the downstream stage resolves it to the user id (from the routes snapshot's
+//! `source_user_id`) before asking, so the `speaker` argument here is always a user id.
 //!
 //! Lookups are cached in process for a short TTL (default 2 s) so a revoke takes effect within
 //! seconds without a Redis round trip per sentence. Transport errors are NOT cached and fail

@@ -48,8 +48,8 @@ use warptalk_pipeline_runtime::SttSegment;
 use warptalk_telemetry::{Outcome, record_stage_latency, record_stage_outcome};
 use warptalk_tts::{
     CloneLadder, ConsentChecker, DubChunk, NoConsent, NoProfiles, Synthesizer, TtsCache, TtsConfig,
-    TtsDeps, TtsEvent, TtsOutputs, TtsStage, VoiceCatalogProvider, VoiceCloner, VoiceProfiles,
-    VoiceResolver,
+    TtsDeps, TtsError, TtsEvent, TtsOutputs, TtsStage, VoiceCatalogProvider, VoiceCloner,
+    VoiceProfiles, VoiceResolver,
 };
 
 use crate::prewarm::PrewarmSynthesizer;
@@ -328,6 +328,57 @@ fn targets_for(view: &RoutesView, speaker: &str, source_lang: &str) -> Vec<Strin
         .unwrap_or_default()
 }
 
+/// Consent and voice profiles are stored per USER (`voice:consent:{userId}`) while a pipeline
+/// speaker is a participant: resolve through the room's current routes (the speaker itself when
+/// the snapshot carries no user id).
+struct UserKeyed<T: ?Sized> {
+    inner: Arc<T>,
+    routes: watch::Receiver<Arc<RoutesView>>,
+}
+
+impl<T: ?Sized> UserKeyed<T> {
+    fn user(&self, speaker: &str) -> String {
+        self.routes.borrow().user_of(speaker).to_owned()
+    }
+}
+
+#[async_trait]
+impl ConsentChecker for UserKeyed<dyn ConsentChecker> {
+    async fn voice_clone_consented(&self, room: &str, speaker: &str) -> Result<bool, TtsError> {
+        self.inner
+            .voice_clone_consented(room, &self.user(speaker))
+            .await
+    }
+}
+
+#[async_trait]
+impl VoiceProfiles for UserKeyed<dyn VoiceProfiles> {
+    async fn carried_clone(&self, room: &str, speaker: &str) -> Option<String> {
+        self.inner.carried_clone(room, &self.user(speaker)).await
+    }
+
+    async fn chosen_dub_voice(&self, room: &str, speaker: &str) -> Option<String> {
+        self.inner.chosen_dub_voice(room, &self.user(speaker)).await
+    }
+}
+
+/// The shared resolver with consent / profile lookups keyed by user for one room.
+fn room_voices(v: &VoiceResolver, routes: &watch::Receiver<Arc<RoutesView>>) -> Arc<VoiceResolver> {
+    Arc::new(VoiceResolver {
+        cfg: v.cfg.clone(),
+        consent: Arc::new(UserKeyed {
+            inner: v.consent.clone(),
+            routes: routes.clone(),
+        }),
+        ladder: v.ladder.clone(),
+        profiles: Arc::new(UserKeyed {
+            inner: v.profiles.clone(),
+            routes: routes.clone(),
+        }),
+        catalog: v.catalog.clone(),
+    })
+}
+
 /// MT's port over the room's routes watch: always the current listener languages.
 struct RoutesTargets {
     routes: watch::Receiver<Arc<RoutesView>>,
@@ -534,6 +585,8 @@ fn combine(mut segs: Vec<SttSegment>) -> Option<SttSegment> {
 struct Ingest {
     ctx: Arc<DownstreamContext>,
     deps: Arc<TranslateDubDeps>,
+    /// Voice resolver of this room (consent keyed by user).
+    voices: Arc<VoiceResolver>,
     mt_tx: mpsc::Sender<SttSegment>,
     tracker: Arc<E2eTracker>,
     held: HashMap<String, Held>,
@@ -677,7 +730,7 @@ impl Ingest {
         if targets.is_empty() {
             return;
         }
-        let (voices, synth) = (self.deps.voices.clone(), self.deps.synth.clone());
+        let (voices, synth) = (self.voices.clone(), self.deps.synth.clone());
         let (room, speaker) = (seg.room.clone(), seg.speaker.clone());
         tokio::spawn(async move {
             for lang in targets {
@@ -872,6 +925,7 @@ impl DownstreamStage for TranslateDubStage {
         let ctx = Arc::new(ctx);
         let deps = &*self.deps;
         let cap = deps.tuning.borrow().stage_channel_capacity.max(1);
+        let voices = room_voices(&deps.voices, &ctx.routes);
         let (mt_in_tx, mt_in_rx) = mpsc::channel(cap);
         let (tr_tx, tr_rx) = mpsc::channel(cap);
         let (mt_ev_tx, mt_ev_rx) = mpsc::channel(256);
@@ -901,7 +955,7 @@ impl DownstreamStage for TranslateDubStage {
             TtsDeps {
                 synth: deps.synth.clone(),
                 cache: deps.tts_cache.clone(),
-                voices: deps.voices.clone(),
+                voices: voices.clone(),
             },
             deps.tts_cfg.clone(),
             tts_in_rx,
@@ -925,6 +979,7 @@ impl DownstreamStage for TranslateDubStage {
         Ingest {
             ctx: ctx.clone(),
             deps: self.deps.clone(),
+            voices,
             mt_tx: mt_in_tx,
             tracker,
             held: HashMap::new(),
@@ -939,5 +994,71 @@ impl DownstreamStage for TranslateDubStage {
         tts.join().await;
         let _ = dubs.await;
         let _ = events.await;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod user_keyed_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<String>>);
+
+    #[async_trait]
+    impl ConsentChecker for Recorder {
+        async fn voice_clone_consented(
+            &self,
+            _room: &str,
+            speaker: &str,
+        ) -> Result<bool, TtsError> {
+            self.0.lock().unwrap().push(speaker.to_owned());
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn consent_is_asked_for_the_user_not_the_participant() {
+        use chrono::Utc;
+        use warptalk_contracts::events::{AudioRoute, AudioRoutesSnapshot};
+        use warptalk_kernel::{ParticipantId as Pid, UserId};
+        let (pid, uid, other) = (Pid::new(), UserId::new(), Pid::new());
+        let view = RoutesView::from_snapshot(&AudioRoutesSnapshot {
+            generated_at: Utc::now(),
+            room_status: "Active".into(),
+            translation_active: true,
+            room_languages: vec![],
+            routes: vec![AudioRoute {
+                route_id: Uuid::now_v7(),
+                source_participant_id: pid,
+                target_participant_id: Pid::new(),
+                source_user_id: Some(uid),
+                target_user_id: None,
+                source_language: "en".into(),
+                target_language: "vi".into(),
+                voice_clone_enabled: true,
+                status: warptalk_contracts::events::RouteStatus::Broadcasting,
+            }],
+        });
+        let (_tx, rx) = watch::channel(Arc::new(view));
+        let rec = Arc::new(Recorder::default());
+        let keyed = UserKeyed::<dyn ConsentChecker> {
+            inner: rec.clone(),
+            routes: rx,
+        };
+        keyed
+            .voice_clone_consented("r", &pid.to_string())
+            .await
+            .unwrap();
+        // unknown speaker (no user id in the snapshot): used as is
+        keyed
+            .voice_clone_consented("r", &other.to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            *rec.0.lock().unwrap(),
+            vec![uid.to_string(), other.to_string()]
+        );
     }
 }

@@ -172,6 +172,9 @@ async fn audio_by_user_identity_reaches_speaker_keyed_by_participant() {
     tokio::time::sleep(Duration::from_millis(3500)).await;
     worker.stop().await;
     let r = results.results();
-    assert!(!r.is_empty(), "no transcripts: audio of identity {uid} was dropped");
+    assert!(
+        !r.is_empty(),
+        "no transcripts: audio of identity {uid} was dropped"
+    );
     assert!(r.iter().all(|x| x.speaker_id == pid.to_string()));
 }
