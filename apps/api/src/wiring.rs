@@ -27,7 +27,8 @@ use warptalk_bus::publish_json;
 use warptalk_config::JwtConfig;
 use warptalk_contracts::events::{DomainEventEnvelope, MEETING_PRODUCER};
 use warptalk_identity::{
-    IdentityDeps, IdentityModule, IdentityQueries, Policy, VerificationMailer,
+    CartesiaVoice, IdentityDeps, IdentityModule, IdentityQueries, Policy, RedisVoiceStatePublisher,
+    VerificationMailer, VoiceDeps,
 };
 use warptalk_kernel::{
     AppError, AppResult, Clock, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole,
@@ -48,11 +49,11 @@ use warptalk_room::RoomDeps;
 use warptalk_room::RoomModule;
 use warptalk_room::RoomQueries;
 use warptalk_room::application::ports::{
-    NoopRoomEventPublisher, NoopVoiceConsentDirectory, RoomEventPublisher, VoiceConsentDirectory,
-    WorkspacePolicy,
+    NoopRoomEventPublisher, RoomEventPublisher, VoiceConsentDirectory, WorkspacePolicy,
 };
 use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_settings::{SettingsStore, namespaces};
+use warptalk_storage::ObjectStore;
 use warptalk_transcript::application::glossary_ports::WorkspaceRoles;
 use warptalk_transcript::application::ports::{
     AccessTarget, AlwaysSaveRoomPolicy, RoomDetails, RoomHost, StaticAiPolicy, TranscriptReadAccess,
@@ -61,8 +62,9 @@ use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 use warptalk_workspace::application::ports::UserDirectory;
 use warptalk_workspace::{
-    DEFAULT_INVITATION_TTL_DAYS, InvitationMailer, LogInvitationMailer, UserSummary, WorkspaceDeps,
-    WorkspaceModule, WorkspaceQueries,
+    DEFAULT_INVITATION_TTL_DAYS, DocumentsConfig, DocumentsDeps, InvitationMailer,
+    LogInvitationMailer, NoopDocumentIndexPublisher, RedisDocumentIndexPublisher, UserSummary,
+    WorkspaceDeps, WorkspaceModule, WorkspaceQueries,
 };
 
 /// Adapter: workspace's `UserDirectory` port backed by identity's read facade.
@@ -140,12 +142,14 @@ impl RoomDirectory for RoomDirectoryAdapter {
     }
 }
 
-/// Adapter: knowledge's `DocumentAccess` port backed by workspace roles.
+/// Adapter: knowledge's `DocumentAccess` port backed by workspace roles and documents.
 ///
 /// Owners and admins get the role (the knowledge module treats them as unscoped). Members get
-/// empty allowlists (fail closed).
-/// TODO: members' documents once workspace documents exist; members' meetings = rooms they
-/// participated in (needs a `RoomQueries` method listing a user's rooms in a workspace).
+/// the documents they may see: active, AI-allowed, indexed documents whose access level is not
+/// `ADMIN_ONLY` (spec 14 section 4.2; at most 500). Any failure surfaces as an error (fail
+/// closed).
+/// TODO: members' meetings = rooms they participated in (needs a `RoomQueries` method listing a
+/// user's rooms in a workspace).
 pub struct KnowledgeAccessAdapter(pub WorkspaceQueries);
 
 #[async_trait]
@@ -156,9 +160,14 @@ impl DocumentAccess for KnowledgeAccessAdapter {
             .member_role(ws, user)
             .await?
             .ok_or_else(|| AppError::forbidden("not a member of this workspace"))?;
+        let allowed_document_ids = match role {
+            // Unscoped: the allowlist is ignored.
+            WorkspaceRole::Owner | WorkspaceRole::Admin => Vec::new(),
+            WorkspaceRole::Member => self.0.ai_retrievable_document_ids(ws, role).await?,
+        };
         Ok(AccessScope {
             role,
-            allowed_document_ids: Vec::new(),
+            allowed_document_ids,
             allowed_meeting_ids: Vec::new(),
         })
     }
@@ -386,6 +395,72 @@ pub struct ApiOptions {
     pub key_validator: Option<Arc<dyn KeyValidator>>,
     /// Workspace invitation mailer; `None` uses `LogInvitationMailer` (tokens are not sent).
     pub invitation_mailer: Option<Arc<dyn InvitationMailer>>,
+    /// Overrides the document object store (tests); default is built from `STORAGE_PROVIDER`
+    /// (`local` | `s3`). When neither works, document routes answer 503.
+    pub object_store: Option<Arc<dyn ObjectStore>>,
+    /// Overrides the document upload settings (tests); default reads `DOCUMENT_MAX_UPLOAD_MB`.
+    pub documents_config: Option<DocumentsConfig>,
+    /// `CARTESIA_API_KEY`: enables voice cloning and provider-side voice deletion. `None`:
+    /// `POST /me/voice/enroll` answers 503 `VOICE_CLONING_UNAVAILABLE`.
+    pub cartesia_api_key: Option<String>,
+    /// Overrides the voice cloner / provider admin (tests); default is Cartesia when keyed.
+    pub voice_cloner: Option<Arc<dyn warptalk_identity::VoiceCloner>>,
+    pub voice_admin: Option<Arc<dyn warptalk_identity::VoiceProviderAdmin>>,
+}
+
+/// Room's consent port backed by identity's voice-consent facade (BR-94).
+pub struct IdentityConsentDirectory(pub IdentityQueries);
+
+#[async_trait]
+impl VoiceConsentDirectory for IdentityConsentDirectory {
+    async fn has_voice_clone_consent(&self, user: UserId) -> AppResult<bool> {
+        self.0.voice_clone_consent(user).await
+    }
+}
+
+fn voice_deps(opts: &ApiOptions, redis: Option<&ConnectionManager>) -> VoiceDeps {
+    let mut deps = VoiceDeps::default();
+    if let Some(key) = opts
+        .cartesia_api_key
+        .as_deref()
+        .filter(|k| !k.trim().is_empty())
+    {
+        match CartesiaVoice::new(key) {
+            Ok(c) => {
+                let c = Arc::new(c);
+                deps.cloner = c.clone();
+                deps.admin = c;
+            }
+            Err(e) => tracing::error!(error = %e, "cartesia voice adapter unavailable"),
+        }
+    }
+    if let Some(c) = &opts.voice_cloner {
+        deps.cloner = c.clone();
+    }
+    if let Some(a) = &opts.voice_admin {
+        deps.admin = a.clone();
+    }
+    if let Some(conn) = redis {
+        deps.publisher = Arc::new(RedisVoiceStatePublisher::new(conn.clone()));
+    }
+    deps
+}
+
+/// The object store for workspace documents: the override, else `STORAGE_PROVIDER` (`local`
+/// default | `s3`). `None` (logged) leaves the document routes answering 503.
+fn document_store(over: Option<Arc<dyn ObjectStore>>) -> Option<Arc<dyn ObjectStore>> {
+    if over.is_some() {
+        return over;
+    }
+    let built = warptalk_storage::StorageConfig::from_env()
+        .and_then(|cfg| warptalk_storage::build_store(&cfg));
+    match built {
+        Ok(store) => Some(store),
+        Err(e) => {
+            tracing::error!(error = %e, "object storage unavailable: document routes answer 503");
+            None
+        }
+    }
 }
 
 /// Rejects the routes that mint LiveKit tokens when LiveKit is not configured.
@@ -431,6 +506,7 @@ pub async fn build(
         clock: clock.clone(),
         mailer,
         policy,
+        voice: voice_deps(&opts, redis.as_ref()),
     });
     let invitation_mailer = opts
         .invitation_mailer
@@ -445,8 +521,22 @@ pub async fn build(
         invitation_mailer,
         DEFAULT_INVITATION_TTL_DAYS,
     );
+    let workspace = match document_store(opts.object_store) {
+        Some(store) => workspace.with_documents(DocumentsDeps {
+            store,
+            publisher: match &redis {
+                Some(conn) => Arc::new(RedisDocumentIndexPublisher::new(conn.clone())),
+                None => Arc::new(NoopDocumentIndexPublisher),
+            },
+            config: opts
+                .documents_config
+                .unwrap_or_else(DocumentsConfig::from_env),
+        }),
+        None => workspace,
+    };
 
-    let consent: Arc<dyn VoiceConsentDirectory> = Arc::new(NoopVoiceConsentDirectory); // TODO: identity voice consent
+    let consent: Arc<dyn VoiceConsentDirectory> =
+        Arc::new(IdentityConsentDirectory(identity.queries()));
     let meeting_events: Arc<dyn MeetingEventPublisher> = match &redis {
         Some(conn) => Arc::new(RedisMeetingEventPublisher::new(conn.clone())),
         None => Arc::new(NoopMeetingEventPublisher),

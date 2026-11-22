@@ -30,6 +30,7 @@ warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-identity = { workspace = true }
 warptalk-workspace = { workspace = true }
+warptalk-storage = { workspace = true }
 warptalk-room = { workspace = true }
 warptalk-bus = { workspace = true }
 redis = { workspace = true }

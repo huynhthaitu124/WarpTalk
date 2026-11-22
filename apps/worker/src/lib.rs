@@ -38,6 +38,9 @@ use warptalk_meeting::infrastructure::{
 };
 use warptalk_qdrant::VectorStore;
 use warptalk_settings::{AiProvidersSettings, NS_AI_PROVIDERS, ScopeChain, SettingsStore};
+use warptalk_workspace::{
+    NoopUserDirectory, WorkspaceDeps, WorkspaceModule, document_results_consumer_config,
+};
 
 /// Model pipelines the suggestion worker runs at once across rooms.
 const SUGGESTION_MAX_PIPELINES: usize = 8;
@@ -185,6 +188,22 @@ pub fn knowledge_consumers(k: &KnowledgeModule) -> Vec<(ConsumerConfig, Arc<dyn 
         (index_consumer_config(), k.index_handler()),
         (purge_consumer_config(), k.purge_handler()),
     ]
+}
+
+/// Consumer of `embedding:index_results` that updates workspace document status
+/// (indexed / blocked / failed / deleted), group `workspace-document-embedding-results`.
+pub fn workspace_document_consumer(pool: PgPool) -> (ConsumerConfig, Arc<dyn StreamHandler>) {
+    // The worker mounts no HTTP routes: keys and user directory only make the module constructible.
+    let workspace = WorkspaceModule::new(WorkspaceDeps {
+        pool,
+        jwt: dummy_jwt(),
+        clock: Arc::new(SystemClock),
+        users: Arc::new(NoopUserDirectory),
+    });
+    (
+        document_results_consumer_config(),
+        workspace.document_results_handler(),
+    )
 }
 
 /// Start the suggestion worker on its own Redis connection.

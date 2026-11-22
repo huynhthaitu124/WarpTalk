@@ -8,6 +8,7 @@ use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_worker::{
     build_ai_plane, build_settings, build_transcript_module, chat_translate_consumer,
     join_consumers, knowledge_consumers, spawn_consumers, spawn_suggestion,
+    workspace_document_consumer,
 };
 
 /// Resolves on Ctrl-C or SIGTERM.
@@ -48,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = warptalk_db::connect(&db.url, db.max_connections)
         .await
         .context("connecting to PostgreSQL")?;
-    for module in ["transcript", "assistant", "meeting"] {
+    for module in ["transcript", "assistant", "meeting", "workspace"] {
         let migrated: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
         )
@@ -91,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
     let mut consumers = transcript.consumers();
     consumers.extend(knowledge_consumers(&plane.knowledge));
     consumers.push(chat_translate);
+    consumers.push(workspace_document_consumer(pool.clone()));
     let mut handles = spawn_consumers(&redis_cfg.url, consumers, &rx).await?;
     handles.push(spawn_suggestion(&redis_cfg.url, plane.suggestion.clone(), &rx).await?);
     tracing::info!(consumers = handles.len(), "worker started");

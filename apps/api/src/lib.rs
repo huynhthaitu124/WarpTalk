@@ -3,4 +3,7 @@
 pub mod settings_http;
 pub mod wiring;
 
-pub use wiring::{ApiOptions, IdentityUserDirectory, LiveKitSettings, build as build_router};
+pub use wiring::{
+    ApiOptions, IdentityConsentDirectory, IdentityUserDirectory, LiveKitSettings,
+    build as build_router,
+};

@@ -177,6 +177,7 @@ async fn full_flow() {
             )),
             key_validator: None,
             invitation_mailer: Some(invitations.clone()),
+            ..warptalk_api::ApiOptions::default()
         },
     )
     .await;
@@ -237,6 +238,39 @@ async fn full_flow() {
     assert_eq!(s, StatusCode::OK, "{b}");
     let access = b["accessToken"].as_str().unwrap().to_owned();
     let refresh = b["refreshToken"].as_str().unwrap().to_owned();
+
+    // voice consent (BR-94): off by default, enrollment gated, grant is visible in GET /me/voice
+    let (s, b) = call(&app, "GET", "/api/v1/me/voice", None, Some(&access)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["consent"]["granted"], false);
+    assert_eq!(b["cloneEnabled"], false);
+    let (s, b) = call(
+        &app,
+        "POST",
+        "/api/v1/me/voice/enroll",
+        Some(json!({"sampleBase64": "AAAA"})),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert_eq!(b["code"], "VOICE_CONSENT_REQUIRED");
+    let (s, b) = call(
+        &app,
+        "POST",
+        "/api/v1/me/voice/consent",
+        Some(json!({
+            "granted": true,
+            "consentVersion": "2026-09-29.v2",
+            "acknowledgementHash": "0".repeat(64),
+        })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (s, b) = call(&app, "GET", "/api/v1/me/voice", None, Some(&access)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["consent"]["granted"], true);
+    assert_eq!(b["consent"]["consentVersion"], "2026-09-29.v2");
 
     let ws_name = format!("E2E {}", uuid::Uuid::new_v4().simple());
     let (s, b) = call(

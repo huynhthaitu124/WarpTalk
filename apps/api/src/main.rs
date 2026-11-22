@@ -77,6 +77,11 @@ async fn main() -> anyhow::Result<()> {
         vault: None,
         key_validator: None,
         invitation_mailer: None,
+        object_store: None,
+        documents_config: None,
+        cartesia_api_key: std::env::var("CARTESIA_API_KEY").ok(),
+        voice_cloner: None,
+        voice_admin: None,
     };
     let (verification_mailer, invitation_mailer): (
         Arc<dyn VerificationMailer>,

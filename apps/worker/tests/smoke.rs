@@ -27,6 +27,7 @@ async fn binary_runs_and_exits_cleanly_on_sigterm() {
     warptalk_db::run_migrations(
         &pool,
         &[
+            warptalk_workspace::MIGRATIONS,
             warptalk_transcript::MIGRATIONS,
             warptalk_meeting::MIGRATIONS,
         ],

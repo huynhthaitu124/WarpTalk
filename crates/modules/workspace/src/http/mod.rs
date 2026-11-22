@@ -1,5 +1,6 @@
 //! HTTP surface: axum routes, handlers, DTOs.
 
+mod documents;
 mod dto;
 mod handlers;
 
@@ -10,6 +11,7 @@ use axum::extract::FromRef;
 use axum::routing::{delete, get, post, put};
 use warptalk_web::JwtKeys;
 
+use crate::application::documents::DocumentService;
 use crate::application::invitations::InvitationService;
 use crate::application::service::WorkspaceService;
 
@@ -17,6 +19,8 @@ use crate::application::service::WorkspaceService;
 pub struct AppState {
     pub service: Arc<WorkspaceService>,
     pub invitations: Arc<InvitationService>,
+    /// `None`: document routes answer 503 `STORAGE_NOT_CONFIGURED`.
+    pub documents: Option<Arc<DocumentService>>,
     pub jwt: JwtKeys,
 }
 
@@ -27,7 +31,12 @@ impl FromRef<AppState> for JwtKeys {
 }
 
 pub fn router(state: AppState) -> Router {
+    let doc_routes = match &state.documents {
+        Some(d) => documents::routes(d.max_upload_bytes()),
+        None => documents::unavailable_routes(),
+    };
     Router::new()
+        .merge(doc_routes)
         .route("/workspaces", post(handlers::create).get(handlers::list))
         .route(
             "/workspaces/{id}",
