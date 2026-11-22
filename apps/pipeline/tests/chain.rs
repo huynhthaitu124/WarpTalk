@@ -620,3 +620,192 @@ async fn multi_sentence_segment_captions_are_cumulative() {
         "[vi] Three more things."
     );
 }
+
+// ---- real pipeline output into the real transcript consumers -------------------------------------
+
+mod transcript_roundtrip {
+    use super::*;
+    use std::collections::HashMap;
+    use warptalk_bus::{StreamHandler, StreamMessage, xadd_json};
+    use warptalk_config::JwtConfig;
+    use warptalk_contracts::streams;
+    use warptalk_kernel::{SystemClock, WorkspaceId};
+    use warptalk_transcript::application::ports::{
+        AlwaysSaveRoomPolicy, InMemoryReadAccess, InMemoryRooms, StaticAiPolicy,
+    };
+    use warptalk_transcript::infrastructure::consumers::{
+        SttResultsHandler, TranslateResultsHandler, TtsResultsHandler,
+    };
+    use warptalk_transcript::{MIGRATIONS, TranscriptDeps, TranscriptModule};
+    use warptalk_web::JwtKeys;
+
+    async fn deliver<T: serde::Serialize>(
+        redis: &redis::aio::ConnectionManager,
+        base: &str,
+        value: &T,
+        handler: &dyn StreamHandler,
+    ) {
+        let stream = format!("{base}:pipeline-test-{}", Uuid::new_v4());
+        let mut conn = redis.clone();
+        let id = xadd_json(&mut conn, &stream, value, 100).await.unwrap();
+        let entries: Vec<(String, HashMap<String, String>)> = redis::cmd("XRANGE")
+            .arg(&stream)
+            .arg("-")
+            .arg("+")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let _: i64 = redis::cmd("EXPIRE")
+            .arg(&stream)
+            .arg(60)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let (eid, fields) = entries.into_iter().next().unwrap();
+        assert_eq!(eid, id);
+        handler
+            .handle(&StreamMessage {
+                stream,
+                id: eid,
+                fields,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// B-05, B-06, B-07, R-02, R-03: what the real stages publish is stored by the real
+    /// transcript consumers with a human speaker name, offsets that fit, a probability
+    /// confidence, every sentence of the translation, and flash sentences indexed as final.
+    #[tokio::test]
+    async fn pipeline_results_are_stored_correctly_by_the_transcript_module() {
+        let (Ok(db), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
+        else {
+            println!("DATABASE_URL / REDIS_URL unset; skipping");
+            return;
+        };
+        let pool = warptalk_db::connect(&db, 5).await.unwrap();
+        warptalk_db::run_migrations(&pool, &[MIGRATIONS])
+            .await
+            .unwrap();
+        let redis = warptalk_bus::connect(&redis_url).await.unwrap();
+        let rooms = Arc::new(InMemoryRooms::default());
+        let module = TranscriptModule::new(TranscriptDeps {
+            pool: pool.clone(),
+            redis: redis.clone(),
+            jwt: JwtKeys::from_config(&JwtConfig {
+                secret: "test-secret-test-secret-test-secret-1234".into(),
+                issuer: "test".into(),
+                audience: "test".into(),
+                access_ttl_seconds: 900,
+                refresh_ttl_seconds: 3600,
+            }),
+            clock: Arc::new(SystemClock),
+            rooms: rooms.clone(),
+            room_policy: Arc::new(AlwaysSaveRoomPolicy),
+            workspace_ai: Arc::new(StaticAiPolicy {
+                retrieval: true,
+                external_llm: true,
+            }),
+            host: rooms.clone(),
+            read_access: Arc::new(InMemoryReadAccess::default()),
+        });
+        let ingest = module.ingest();
+        let (stt_h, tr_h, tts_h) = (
+            SttResultsHandler::new(ingest.clone()),
+            TranslateResultsHandler::new(ingest.clone()),
+            TtsResultsHandler::new(ingest),
+        );
+
+        // Real producer: the chain stage fed with a flash sentence and a 3-sentence segment.
+        let chain = chain_with(true, false, fast_tts(), fast_mt());
+        let (pid, user) = (ParticipantId::new(), UserId::new());
+        let rig = rig_with_view(&chain, named_view(pid, user, "Ann Lee", &["vi"])).await;
+        let mut flash = seg(pid, 0, 0, "A flash sentence.", true);
+        flash.confidence = Some(-0.3);
+        let long = seg(
+            pid,
+            0,
+            1,
+            "One fine day. Two good ideas. Three more things.",
+            false,
+        );
+        let (flash_id, long_id) = (flash.segment_id, long.segment_id);
+        for s in [flash, long, marker(pid, 0)] {
+            rig.tx.send(s).await.unwrap();
+        }
+        drop(rig.tx);
+        rig.run.await.unwrap();
+
+        let ws = WorkspaceId::new();
+        rooms.set(rig.room, ws, UserId::new());
+        // stt first (a translation needs its segment), then translations, then dubbing metadata
+        for r in rig.results.results() {
+            deliver(&redis, streams::STT_RESULTS, &r, &stt_h).await;
+        }
+        for r in rig.results.translations() {
+            deliver(&redis, streams::TRANSLATE_RESULTS, &r, &tr_h).await;
+        }
+        for r in rig.results.tts_results() {
+            deliver(&redis, streams::TTS_RESULTS, &r, &tts_h).await;
+        }
+
+        type Row = (Uuid, String, Option<i32>, Option<i32>, Option<f64>, bool);
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT s.id, s.speaker_name, s.start_time_ms, s.end_time_ms, s.confidence::float8, s.is_final \
+             FROM transcript.transcript_segments s \
+             JOIN transcript.transcripts t ON t.id = s.transcript_id \
+             WHERE t.translation_room_id = $1 ORDER BY s.sequence_order",
+        )
+        .bind(rig.room.as_uuid())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        for (_, name, start, end, _, is_final) in &rows {
+            assert_eq!(name, "Ann Lee", "a name, not the participant id");
+            let (s, e) = (start.unwrap(), end.unwrap());
+            assert!((0..3_600_000).contains(&s) && e >= s, "{s} {e}");
+            assert!(is_final, "flash sentences are final");
+        }
+        let flash_row = rows.iter().find(|r| r.0 == flash_id).unwrap();
+        assert!(
+            (flash_row.4.unwrap() - (-0.3f64).exp()).abs() < 1e-3,
+            "{:?}",
+            flash_row.4
+        );
+
+        let combined: Vec<String> = sqlx::query_scalar(
+            "SELECT c.translated_text FROM transcript.segment_translation_links l \
+             JOIN transcript.translation_contents c ON c.id = l.translation_content_id \
+             WHERE l.segment_id = $1 AND l.is_current AND l.target_language = 'vi'",
+        )
+        .bind(long_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            combined,
+            vec!["[vi] One fine day. [vi] Two good ideas. [vi] Three more things."]
+        );
+
+        // Both segments (the flash one included) were sent to indexing, under the human name.
+        let mut conn = redis.clone();
+        let reqs: Vec<(String, HashMap<String, String>)> = redis::cmd("XREVRANGE")
+            .arg(streams::EMBEDDING_INDEX_REQUESTS)
+            .arg("+")
+            .arg("-")
+            .arg("COUNT")
+            .arg(500)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let texts: Vec<String> = reqs
+            .into_iter()
+            .filter(|(_, f)| f.get("workspace_id") == Some(&ws.to_string()))
+            .filter_map(|(_, f)| f.get("chunks_json").cloned())
+            .collect();
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert!(texts.iter().all(|t| t.contains("[Ann Lee] ")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("A flash sentence.")));
+    }
+}

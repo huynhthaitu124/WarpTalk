@@ -180,3 +180,96 @@ async fn audio_by_user_identity_reaches_speaker_keyed_by_participant() {
     );
     assert!(r.iter().all(|x| x.speaker_id == pid.to_string()));
 }
+
+/// B-09: LiveKit identities are `{userId}` or `{userId}:{clientTag}`. The primary connection
+/// (and the bridge stand-in under its plain identity) is transcribed as its participant; the
+/// secondary tagged connections (`:listener`, `:bridge-listener`) are ignored.
+async fn run_identities(
+    identities: Vec<String>,
+) -> (
+    Vec<warptalk_contracts::events::SttResult>,
+    ParticipantId,
+    ParticipantId,
+) {
+    use warptalk_kernel::UserId;
+    let room = RoomId::new();
+    let (human, bridge) = (ParticipantId::new(), ParticipantId::new());
+    let user = UserId::new();
+    let bridge_user: UserId = warptalk_pipeline::BRIDGE_IDENTITY.parse().unwrap();
+    let mut snapshot = AudioRoutesSnapshot {
+        generated_at: Utc::now(),
+        room_status: "Active".into(),
+        translation_active: true,
+        room_languages: vec!["en".into(), "vi".into()],
+        routes: vec![],
+    };
+    for (pid, uid) in [(human, user), (bridge, bridge_user)] {
+        snapshot.routes.push(AudioRoute {
+            route_id: Uuid::now_v7(),
+            source_participant_id: pid,
+            target_participant_id: ParticipantId::new(),
+            source_user_id: Some(uid),
+            target_user_id: None,
+            source_display_name: None,
+            source_language: "en".into(),
+            target_language: "vi".into(),
+            voice_clone_enabled: false,
+            status: RouteStatus::Broadcasting,
+        });
+    }
+    let transport = Arc::new(SimulatedTransport::with_participants(
+        identities
+            .into_iter()
+            .map(|i| {
+                SimParticipant::synthetic(i.replace("{user}", &user.to_string()), 1200, 1200)
+                    .utterances(1)
+            })
+            .collect(),
+    ));
+    let results = Arc::new(MemoryResultSink::default());
+    let (_tx, cfg) = watch::channel(PipelineConfig::default());
+    let worker = RoomWorker::start(RoomWorkerDeps {
+        room,
+        transport,
+        stt: Arc::new(FakeStt::default()),
+        vad_factory: energy_vad_factory(),
+        downstream: Arc::new(SttOnlyStage),
+        results: results.clone(),
+        config: cfg,
+        flash_override: None,
+        identity: "agent".into(),
+        initial_routes: RoutesView::from_snapshot(&snapshot),
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    worker.stop().await;
+
+    (results.results(), human, bridge)
+}
+
+#[tokio::test]
+async fn primary_identities_map_to_their_participants() {
+    let (r, human, bridge) = run_identities(vec![
+        "{user}".into(),
+        warptalk_pipeline::BRIDGE_IDENTITY.into(),
+    ])
+    .await;
+    let speakers: std::collections::BTreeSet<_> = r.iter().map(|x| x.speaker_id.clone()).collect();
+    assert_eq!(
+        speakers,
+        [human.to_string(), bridge.to_string()]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[tokio::test]
+async fn tagged_secondary_identities_are_never_transcribed() {
+    let (r, _, _) = run_identities(vec![
+        "{user}:listener".into(),
+        format!("{}:bridge-listener", warptalk_pipeline::BRIDGE_IDENTITY),
+    ])
+    .await;
+    assert!(r.is_empty(), "tagged connections carry no speech: {r:?}");
+}

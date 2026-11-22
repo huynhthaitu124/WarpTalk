@@ -285,3 +285,148 @@ async fn scan_discovers_active_snapshot() {
     t.await.unwrap();
     assert!(h.active_rooms().is_empty());
 }
+
+// ---- B-11: pipeline settings at workspace and room scope ----------------------------------------
+
+type Seen = (
+    RoomId,
+    Option<warptalk_kernel::WorkspaceId>,
+    watch::Receiver<PipelineConfig>,
+);
+
+struct RecordingConfig {
+    inner: warptalk_pipeline::SettingsRoomConfig,
+    seen: std::sync::Mutex<Vec<Seen>>,
+}
+
+#[async_trait::async_trait]
+impl warptalk_pipeline::RoomConfigSource for RecordingConfig {
+    async fn config_for(
+        &self,
+        room: RoomId,
+        workspace: Option<warptalk_kernel::WorkspaceId>,
+    ) -> watch::Receiver<PipelineConfig> {
+        let rx = self.inner.config_for(room, workspace).await;
+        self.seen
+            .lock()
+            .unwrap()
+            .push((room, workspace, rx.clone()));
+        rx
+    }
+}
+
+/// The real host resolves the room's workspace from Redis and the real `SettingsStore` merges
+/// platform < workspace < room: the room's `PipelineConfig` reflects the overrides and follows
+/// later changes (including `flash_mode_default`, the per-room flash mode).
+#[tokio::test]
+async fn room_scope_pipeline_settings_apply_to_the_started_room() {
+    use warptalk_kernel::WorkspaceId;
+    use warptalk_settings::{NS_PIPELINE, Scope, SettingsStore, register_defaults};
+    let Some(env) = env().await else { return };
+    let Ok(db) = std::env::var("DATABASE_URL") else {
+        println!("DATABASE_URL unset, skipping");
+        return;
+    };
+    let pool = warptalk_db::connect(&db, 5).await.unwrap();
+    warptalk_db::run_migrations(&pool, &[warptalk_settings::MIGRATIONS])
+        .await
+        .unwrap();
+    let store = SettingsStore::new(pool, Some(env.conn.clone()));
+    register_defaults(&store);
+    let (ws, room, other_room) = (WorkspaceId::new(), RoomId::new(), RoomId::new());
+    store
+        .put(
+            Scope::Workspace(ws),
+            NS_PIPELINE,
+            serde_json::json!({"vad_silence_hangover_ms": 400}),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .put(
+            Scope::Room(room),
+            NS_PIPELINE,
+            serde_json::json!({"flash_mode_default": false}),
+            None,
+        )
+        .await
+        .unwrap();
+    for r in [room, other_room] {
+        let mut c = env.conn.clone();
+        let _: () = redis::cmd("SET")
+            .arg(format!("translationRoom:{r}:workspace"))
+            .arg(ws.to_string())
+            .arg("EX")
+            .arg(60)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+        put_snapshot(&env, r, &snapshot(&[ParticipantId::new()], true, "Active")).await;
+    }
+
+    let (_keep, platform) = watch::channel(PipelineConfig::default());
+    let recording = Arc::new(RecordingConfig {
+        inner: warptalk_pipeline::SettingsRoomConfig::new(store.clone(), platform.clone()),
+        seen: Default::default(),
+    });
+    let mut cfg = HostConfig::new("host-cfg", Duration::from_millis(900));
+    cfg.scan_pattern = None;
+    cfg.scan_interval = None;
+    let host = PipelineHost::new(
+        cfg,
+        HostDeps {
+            redis: env.conn.clone(),
+            redis_url: env.url.clone(),
+            transport: Arc::new(SimulatedTransport::with_participants(vec![])),
+            stt: Arc::new(FakeStt::default()),
+            vad_factory: energy_vad_factory(),
+            downstream: Arc::new(SttOnlyStage),
+            results: Arc::new(MemoryResultSink::default()),
+            config: platform,
+            room_config: Some(recording.clone()),
+        },
+    );
+    assert_eq!(host.ensure_room(room).await.unwrap(), StartOutcome::Started);
+    assert_eq!(
+        host.ensure_room(other_room).await.unwrap(),
+        StartOutcome::Started
+    );
+
+    let seen = recording.seen.lock().unwrap().clone();
+    let of = |r: RoomId| seen.iter().find(|(id, _, _)| *id == r).unwrap().clone();
+    let (_, w, mut rx) = of(room);
+    assert_eq!(
+        w,
+        Some(ws),
+        "workspace read from translationRoom:{{id}}:workspace"
+    );
+    assert!(!rx.borrow().flash_mode, "room override");
+    assert_eq!(
+        rx.borrow().endpointer.vad_silence_hangover_ms,
+        400,
+        "workspace override"
+    );
+    let (_, _, rx_other) = of(other_room);
+    assert!(rx_other.borrow().flash_mode, "other room: platform default");
+    assert_eq!(rx_other.borrow().endpointer.vad_silence_hangover_ms, 400);
+
+    // hot reload of the room override
+    store
+        .put(
+            Scope::Room(room),
+            NS_PIPELINE,
+            serde_json::json!({"flash_mode_default": true}),
+            None,
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !rx.borrow_and_update().flash_mode {
+            rx.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("room config follows the settings change");
+    host.shutdown_all().await;
+}

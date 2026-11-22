@@ -1022,5 +1022,5 @@ async fn stt_offsets_confidence_and_names() {
             .fetch_one(&c.pool)
             .await
             .unwrap();
-    assert!(dur >= 63_500 && dur < 100_000, "{dur}");
+    assert!((63_500..100_000).contains(&dur), "{dur}");
 }

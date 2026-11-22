@@ -58,3 +58,7 @@ warptalk-settings = { workspace = true }
 warptalk-stt = { workspace = true }
 warptalk-telemetry = { workspace = true }
 warptalk-tts = { workspace = true }
+
+[dev-dependencies]
+warptalk-transcript = { workspace = true }
+warptalk-web = { workspace = true }
