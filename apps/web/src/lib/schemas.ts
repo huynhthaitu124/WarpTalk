@@ -324,3 +324,51 @@ export const globalAudit = z.object({
   createdAt: ts,
 });
 export type GlobalAudit = z.infer<typeof globalAudit>;
+
+// ---- documents (crates/modules/workspace/src/http/documents.rs)
+export const DOC_CATEGORIES = ['GENERAL', 'TECHNICAL', 'FINANCIAL', 'LEGAL', 'MEETING_NOTES'] as const;
+export const DOC_ACCESS_LEVELS = ['PUBLIC', 'MEMBERS_ONLY', 'ADMIN_ONLY'] as const;
+export type DocAccessLevel = (typeof DOC_ACCESS_LEVELS)[number];
+export const INGESTION_STATUSES = ['pending', 'completed', 'skipped', 'failed'] as const;
+export const document = z.object({
+  id: uuid,
+  workspaceId: uuid,
+  title: z.string(),
+  fileName: z.string(),
+  fileExtension: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number(),
+  category: z.string(),
+  accessLevel: z.string(),
+  aiRetrievalAllowed: z.boolean(),
+  aiEligible: z.boolean(),
+  ingestionStatus: z.string(),
+  ingestionFailureReason: z.string().nullable().optional(),
+  lastIndexedAt: ts.nullable().optional(),
+  uploadedBy: uuid.nullable().optional(),
+  createdAt: ts,
+  updatedAt: ts.nullable().optional(),
+});
+export type WorkspaceDocument = z.infer<typeof document>;
+
+// ---- voice profile (crates/modules/identity/src/http/dto.rs)
+export const voiceStatus = z.object({
+  consent: z.object({ granted: z.boolean(), consentVersion: z.string().nullable().optional(), grantedAt: ts.nullable().optional() }),
+  profile: z.object({
+    id: uuid,
+    status: z.string(),
+    language: z.string().nullable().optional(),
+    qualityScore: z.number().nullable().optional(),
+    createdAt: ts,
+  }).nullable().optional(),
+  cloneEnabled: z.boolean(),
+});
+export type VoiceStatus = z.infer<typeof voiceStatus>;
+export const voiceEnrollResult = z.object({
+  profileId: uuid,
+  status: z.string(),
+  qualityScore: z.number(),
+  durationSeconds: z.number(),
+  language: z.string(),
+});
+export type VoiceEnrollResult = z.infer<typeof voiceEnrollResult>;

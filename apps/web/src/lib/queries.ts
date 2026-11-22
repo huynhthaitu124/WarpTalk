@@ -1,8 +1,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
-import { api, ApiError } from './api';
+import { api, apiResponse, apiUpload, ApiError } from './api';
 import {
-  acceptResult, aiConfig, aiCredential, aiTest, invitation, joinGrant, knowledgeSearch, member, page, participant, room, routes, settingsRead,
+  acceptResult, document as documentSchema, voiceEnrollResult, voiceStatus, aiConfig, aiCredential, aiTest, invitation, joinGrant, knowledgeSearch, member, page, participant, room, routes, settingsRead,
   settingsWrite, workspace, workspaceSettings,
   type AiProvider, type WorkspaceRole, type WorkspaceSettings,
 } from './schemas';
@@ -368,5 +368,102 @@ export function useEndMeeting(roomId: string) {
       qc.setQueryData(['room', roomId], r);
       void qc.invalidateQueries({ queryKey: ['rooms'] });
     },
+  });
+}
+
+// ---- documents
+export interface DocumentFilters { page: number; search: string; category: string }
+export const DOCUMENT_PAGE_SIZE = 20;
+/** Polls every 3s while any listed document is still being indexed. */
+export function useDocuments(wsId: string | undefined, f: DocumentFilters) {
+  return useQuery({
+    queryKey: ['documents', wsId, f.page, f.search, f.category],
+    enabled: !!wsId,
+    retry: false,
+    placeholderData: (prev) => prev,
+    refetchInterval: (q) => (q.state.data?.items.some((d) => d.ingestionStatus === 'pending') ? 3000 : false),
+    queryFn: () => api(`/workspaces/${wsId}/documents`, {
+      query: { page: f.page, pageSize: DOCUMENT_PAGE_SIZE, search: f.search.trim() || undefined, category: f.category === 'all' ? undefined : f.category },
+      schema: page(documentSchema),
+    }),
+  });
+}
+export interface UploadDocumentInput { file: File; title: string; category: string; accessLevel: string; aiRetrievalAllowed: boolean }
+export function useUploadDocument(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: UploadDocumentInput & { onProgress?: (f: number) => void }) => {
+      const form = new FormData();
+      if (v.title.trim()) form.set('title', v.title.trim());
+      form.set('category', v.category);
+      form.set('accessLevel', v.accessLevel);
+      form.set('aiRetrievalAllowed', String(v.aiRetrievalAllowed));
+      form.set('file', v.file, v.file.name);
+      return apiUpload(`/workspaces/${wsId}/documents`, form, documentSchema, v.onProgress);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', wsId] }),
+  });
+}
+export function usePatchDocument(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; title?: string; category?: string; accessLevel?: string; aiRetrievalAllowed?: boolean }) => {
+      const { id, ...body } = v;
+      return api(`/workspaces/${wsId}/documents/${id}`, { method: 'PATCH', body, schema: documentSchema });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', wsId] }),
+  });
+}
+export function useArchiveDocument(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/workspaces/${wsId}/documents/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', wsId] }),
+  });
+}
+/** Downloads through the authenticated API (the file is not publicly addressable) and hands it to the browser. */
+export async function downloadDocument(wsId: string, doc: { id: string; fileName: string }) {
+  const res = await apiResponse(`/workspaces/${wsId}/documents/${doc.id}/download`);
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = doc.fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
+// ---- voice profile
+export function useVoiceStatus(userId: string | null) {
+  return useQuery({
+    queryKey: ['voice', userId],
+    enabled: !!userId,
+    retry: false,
+    queryFn: () => api('/me/voice', { schema: voiceStatus }),
+  });
+}
+export function useGrantVoiceConsent(userId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { consentVersion: string; acknowledgementHash: string }) =>
+      api('/me/voice/consent', { method: 'POST', body: { granted: true, ...v }, schema: voiceStatus }),
+    onSuccess: (d) => qc.setQueryData(['voice', userId], d),
+  });
+}
+export function useRevokeVoiceConsent(userId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api('/me/voice/consent', { method: 'DELETE', schema: voiceStatus }),
+    onSuccess: (d) => qc.setQueryData(['voice', userId], d),
+  });
+}
+export function useEnrollVoice(userId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sampleBase64: string) =>
+      api('/me/voice/enroll', { method: 'POST', body: { sampleBase64, format: 'wav' }, schema: voiceEnrollResult }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['voice', userId] }),
   });
 }
