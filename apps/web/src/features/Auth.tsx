@@ -45,7 +45,7 @@ function AuthLayout({ title, subtitle, children, footer }: { title: string; subt
         </div>
         <p className="text-caption text-ink-subtle">WarpTalk</p>
       </aside>
-      <main id="main" className="flex min-w-0 flex-col items-center justify-center gap-6 px-4 py-10">
+      <main id="main" tabIndex={-1} className="outline-none flex min-w-0 flex-col items-center justify-center gap-6 px-4 py-10">
         <Brand className="h-6 w-[98px] lg:hidden" />
         <Card className="w-full max-w-sm">
           <CardBody className="flex flex-col gap-5 p-6">

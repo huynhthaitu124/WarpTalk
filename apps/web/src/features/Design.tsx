@@ -230,7 +230,7 @@ export function DesignPage() {
           <span className="text-body text-ink-subtle">Design system</span>
           <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>{theme === 'dark' ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}</Button>
         </header>
-        <main id="main" className="mx-auto max-w-5xl px-6 py-10 max-sm:px-4">
+        <main id="main" tabIndex={-1} className="outline-none mx-auto max-w-5xl px-6 py-10 max-sm:px-4">
           <h1 className="mb-2 text-display-md font-semibold tracking-[-1px]">Design system</h1>
           <p className="mb-10 max-w-xl text-body-lg text-ink-subtle">Tokens and primitives used across WarpTalk. Dark by default, light as an equal.</p>
           <Demos />

@@ -345,7 +345,7 @@ export function Shell() {
           {/* The raised panel: the sidebar is the recessed layer under it. */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel md:mr-1.5 md:mt-1.5 md:rounded-xl md:border md:border-hairline md:shadow-panel">
             <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
-            <main id="main" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none overflow-y-auto overflow-x-hidden">
               <Outlet />
             </main>
           </div>
@@ -358,9 +358,27 @@ export function Shell() {
   );
 }
 
+/**
+ * Moves focus to `#main` and puts `#main` in the URL. A plain `<a href="#main">` navigates natively behind the
+ * back of Next's app router, whose history sync can then rewrite the URL back to its own (hash-less) canonical
+ * one; going through the router's `navigate` (patched `history.pushState`) keeps both in agreement.
+ */
 export function SkipLink() {
+  const navigate = useNavigate();
+  const loc = useLocation();
   return (
-    <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[90] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-on-primary">
+    <a
+      href="#main"
+      onClick={(e) => {
+        const main = document.getElementById('main');
+        if (!main) return;
+        e.preventDefault();
+        navigate({ pathname: loc.pathname, search: loc.search, hash: '#main' });
+        main.focus();
+        main.scrollIntoView();
+      }}
+      className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[90] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-on-primary"
+    >
       Skip to content
     </a>
   );
