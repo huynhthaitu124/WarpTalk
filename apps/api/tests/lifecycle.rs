@@ -336,7 +336,7 @@ async fn end_kick_listener_and_ai_keys() {
         &e.app,
         "POST",
         "/translation-rooms",
-        Some(json!({"workspaceId": ws, "title": "LC", "sourceLanguage": "vi", "targetLanguages": ["en"]})),
+        Some(json!({"workspaceId": ws, "title": "LC", "requiresApproval": false, "sourceLanguage": "vi", "targetLanguages": ["en"]})),
         Some(&host.token),
     )
     .await;

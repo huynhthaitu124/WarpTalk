@@ -4464,7 +4464,9 @@ dependencies = [
  "warptalk-settings",
  "warptalk-stt",
  "warptalk-telemetry",
+ "warptalk-transcript",
  "warptalk-tts",
+ "warptalk-web",
 ]
 
 [[package]]
@@ -4676,6 +4678,7 @@ dependencies = [
  "warptalk-assistant",
  "warptalk-bus",
  "warptalk-config",
+ "warptalk-contracts",
  "warptalk-db",
  "warptalk-kernel",
  "warptalk-knowledge",
@@ -4686,6 +4689,7 @@ dependencies = [
  "warptalk-settings",
  "warptalk-telemetry",
  "warptalk-transcript",
+ "warptalk-tts",
  "warptalk-web",
  "warptalk-workspace",
 ]

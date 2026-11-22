@@ -29,10 +29,12 @@ warptalk-ai-plane = { workspace = true }
 warptalk-qdrant = { workspace = true }
 warptalk-settings = { workspace = true }
 warptalk-workspace = { workspace = true }
+warptalk-room = { workspace = true }
+warptalk-contracts = { workspace = true }
 redis = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
-warptalk-room = { workspace = true }
+warptalk-tts = { workspace = true }

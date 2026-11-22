@@ -2,6 +2,7 @@
 //! embeddings, summaries, suggestions, notifications later).
 
 pub mod adapters;
+pub mod route_status;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,7 +50,7 @@ const SUGGESTION_MAX_PIPELINES: usize = 8;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// Keys for modules that never serve HTTP in this process.
-fn dummy_jwt() -> JwtKeys {
+pub(crate) fn dummy_jwt() -> JwtKeys {
     JwtKeys::from_config(&JwtConfig {
         secret: format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()),
         issuer: "warptalk-worker".into(),
