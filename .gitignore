@@ -13,3 +13,4 @@ dump.rdb
 
 .logs/
 !.env.example
+.data/
