@@ -63,7 +63,7 @@ export function MeetingPage() {
       } catch (e) {
         if (!(e instanceof ApiError) || ![403, 404].includes(e.status)) throw e;
       }
-      const grant = await meetingJoin.mutateAsync(name || undefined);
+      const grant = await meetingJoin.mutateAsync({ displayName: name || undefined });
       setListen(values.listen);
       setPhase({ kind: 'joined', grant, media, name: name || self?.displayName || 'You', joinedListen: values.listen });
     } catch (e) {

@@ -78,6 +78,10 @@ export const workspaceSettings = z.object({
   allowGuestAccess: z.boolean(),
   defaultAiModel: z.string().nullable().optional(),
   audioRetentionDays: z.number(),
+  // Absent on backends that predate the AI privacy switches.
+  aiRetrievalAllowed: z.boolean().optional(),
+  externalLlmAllowed: z.boolean().optional(),
+  aiSuggestEnabled: z.boolean().optional(),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettings>;
 

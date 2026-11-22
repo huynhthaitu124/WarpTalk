@@ -2,11 +2,13 @@
 // This file only adapts a real LiveKit room to the MeetingSession the UI consumes (meeting/InMeeting.tsx).
 import { useEffect, useMemo, useReducer } from 'react';
 import { LiveKitRoom, RoomAudioRenderer, useConnectionQualityIndicator, useConnectionState, useRoomContext } from '@livekit/components-react';
-import { DisconnectReason, RoomEvent, Track, type Participant, type RemoteTrackPublication, type TrackPublication } from 'livekit-client';
+import { DisconnectReason, RoomEvent, Track, type Participant, type TrackPublication } from 'livekit-client';
 import { useToast } from '@/ui';
 import type { JoinGrant, Room } from '@/lib/schemas';
 import { parseCaption } from '@/lib/captions';
+import { useParticipants } from '@/lib/queries';
 import type { ConnectionLabel, QualityLabel } from './MeetingParts';
+import { applyAudioSubscriptions, isSecondaryIdentity } from './meeting/audio';
 import { InMeeting } from './meeting/InMeeting';
 import type { DataMessage, DataTopic, MeetingSession, SessionParticipant, VideoSource } from './meeting/types';
 
@@ -65,24 +67,15 @@ function Stage({ listen, onListen, onLeave, onEnded, roomInfo, captionLang, self
     return () => { for (const e of TICK_EVENTS) room.off(e, bump); };
   }, [room]);
 
-  // Subscribe to the original mix, or to exactly one dubbed track `dub-{lang}`.
+  // Subscribe to the original mix, or to `dub-{lang}` plus the original mic of speakers who already speak {lang}.
+  const roster = useParticipants(roomInfo.id);
+  const speakLang = useMemo(() => new Map((roster.data ?? []).filter((p) => p.userId).map((p) => [p.userId as string, p.speakLanguage])), [roster.data]);
   useEffect(() => {
-    const apply = () => {
-      for (const p of room.remoteParticipants.values()) {
-        for (const pub of p.trackPublications.values() as IterableIterator<RemoteTrackPublication>) {
-          if (pub.kind === Track.Kind.Audio) {
-            const dub = pub.trackName.startsWith('dub-');
-            pub.setSubscribed(listen === 'original' ? !dub : pub.trackName === `dub-${listen}`);
-          } else {
-            pub.setSubscribed(true);
-          }
-        }
-      }
-    };
+    const apply = () => applyAudioSubscriptions(room.remoteParticipants.values(), listen, speakLang);
     apply();
     room.on(RoomEvent.TrackPublished, apply).on(RoomEvent.ParticipantConnected, apply);
     return () => { room.off(RoomEvent.TrackPublished, apply).off(RoomEvent.ParticipantConnected, apply); };
-  }, [room, listen]);
+  }, [room, listen, speakLang]);
 
   const actions = useMemo(() => {
     const lp = room.localParticipant;
@@ -105,7 +98,7 @@ function Stage({ listen, onListen, onLeave, onEnded, roomInfo, captionLang, self
     ...actions,
     connection: connectionLabel(connection),
     quality: quality as QualityLabel,
-    participants: [room.localParticipant, ...room.remoteParticipants.values()].map(toParticipant),
+    participants: [room.localParticipant, ...[...room.remoteParticipants.values()].filter((p) => !isSecondaryIdentity(p.identity))].map(toParticipant),
     // `tick` re-derives participants on every room event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [actions, room, connection, quality, tick]);

@@ -451,6 +451,16 @@ test.describe('External meeting: permissions, overlay, captions', () => {
     await expect(app.getByRole('button', { name: 'Retry captions' })).toBeVisible();
   });
 
+  test('EXT-25 (B-09) the captions listener joins with clientTag "listener" so it never evicts the main client', async ({ app }) => {
+    const bodies: unknown[] = [];
+    await app.route('**/api/v1/meetings/*/join', async (r) => { bodies.push(r.request().postDataJSON()); await r.continue(); });
+    await claimedCapturer(app);
+    await app.getByRole('button', { name: 'Start capture' }).click();
+    await expect(app.getByTestId('captions-log')).toContainText('Captions are unavailable');
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const b of bodies) expect(b).toMatchObject({ clientTag: 'listener' });
+  });
+
   test('EXT-24 native host that announces itself late (warptalk-native-ready) switches out of browser mode', async ({ app }) => {
     await app.goto('/external');
     await expect(app.getByTestId('external-browser-fallback')).toBeVisible();

@@ -3,10 +3,11 @@ import { CheckCircle, Key, Lock, WarningCircle } from '@phosphor-icons/react';
 import { Alert, Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, Skeleton, Switch, useToast } from '@/ui';
 import { ApiError } from '@/lib/api';
 import {
-  useAiConfig, useDeleteCredential, usePutAiConfig, usePutCredential, useTestCredential, type AiPurposeInput,
+  useAiConfig, useDeleteCredential, usePutAiConfig, usePutCredential, useTestCredential, useUpdateWorkspaceSettings, useWorkspaceSettings, type AiPurposeInput,
 } from '@/lib/queries';
 import { AI_PROVIDERS, AI_PURPOSES, type AiConfig, type AiProvider, type AiPurpose, type Workspace } from '@/lib/schemas';
 import { formatWhen } from './common';
+import { canAdmin } from '@/lib/workspace';
 import { errCode, errMsg } from './errors';
 
 export const PROVIDER_LABEL: Record<AiProvider, string> = { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Google Gemini', openai_compatible: 'OpenAI-compatible endpoint' };
@@ -180,6 +181,37 @@ function PurposesCard({ ws, config, disabled }: { ws: Workspace; config: AiConfi
 }
 
 /** Bring-your-own AI: provider keys (write-only, last 4 shown) and per-task models. Owner/admin only. */
+const PRIVACY: { key: 'aiRetrievalAllowed' | 'externalLlmAllowed' | 'aiSuggestEnabled'; label: string; description: string }[] = [
+  { key: 'aiRetrievalAllowed', label: 'Allow AI retrieval', description: 'Let AI features search this workspace\'s transcripts and documents.' },
+  { key: 'externalLlmAllowed', label: 'Allow external LLM providers', description: 'Let content be sent to external language-model providers.' },
+  { key: 'aiSuggestEnabled', label: 'Enable AI suggestions', description: 'Show live AI suggestions and follow-ups during meetings.' },
+];
+
+function PrivacyCard({ ws }: { ws: Workspace }) {
+  const q = useWorkspaceSettings(ws.id);
+  const save = useUpdateWorkspaceSettings(ws.id);
+  const toast = useToast();
+  const editable = canAdmin(ws);
+  if (q.isLoading) return <Skeleton className="h-40" />;
+  if (q.isError || !q.data) return <Alert tone="danger" title="Could not load AI data controls">{errMsg(q.error)}</Alert>;
+  const data = q.data;
+  async function toggle(key: (typeof PRIVACY)[number]['key'], v: boolean) {
+    try { await save.mutateAsync({ ...data, [key]: v }); toast({ tone: 'success', title: 'AI settings saved' }); } catch { /* inline */ }
+  }
+  return (
+    <Card data-testid="ai-privacy">
+      <CardHeader title="Data and suggestions" description="Controls what AI features may read and send for this workspace." />
+      <div className="flex flex-col gap-4 px-5 py-4">
+        {!editable && <Alert tone="info" title="Read-only">Only workspace owners and admins can change these settings.</Alert>}
+        {PRIVACY.map((p) => (
+          <Switch key={p.key} label={p.label} description={p.description} checked={data[p.key] ?? false} disabled={!editable || save.isPending} onCheckedChange={(v) => void toggle(p.key, v)} />
+        ))}
+        {save.isError && <Alert tone="danger">{errMsg(save.error)}</Alert>}
+      </div>
+    </Card>
+  );
+}
+
 export function AiSettings({ ws }: { ws: Workspace }) {
   const q = useAiConfig(ws.id, true);
   if (q.isLoading) return <Skeleton className="h-64" />;
@@ -194,6 +226,7 @@ export function AiSettings({ ws }: { ws: Workspace }) {
   return (
     <div className="flex flex-col gap-6">
       {!config.byoEnabled && <Alert tone="warning" title="Bring-your-own AI is switched off">This deployment has no key-encryption secret, so provider keys cannot be stored. Ask the platform operator to enable it.</Alert>}
+      <PrivacyCard ws={ws} />
       <Card>
         <CardHeader title="Provider keys" description="Keys are encrypted at rest and cannot be read back, only replaced or removed." />
         <ul className="divide-y divide-hairline" aria-label="Provider keys">

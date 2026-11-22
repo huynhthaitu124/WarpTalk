@@ -2,13 +2,13 @@
 // subscribed or played here; the macOS app plays the dub natively and only captions are read.
 import { useRef } from 'react';
 import { LiveKitRoom, useDataChannel } from '@livekit/components-react';
-import { parseCaption, type CaptionLine } from '@/lib/captions';
+import { parseCaption, senderLabel, type CaptionLine } from '@/lib/captions';
 import type { JoinGrant } from '@/lib/schemas';
 
 function Listener({ onCaption }: { onCaption(l: CaptionLine): void }) {
   const seq = useRef(0);
   useDataChannel('captions', (msg) => {
-    const line = parseCaption(msg.payload, msg.from?.name || msg.from?.identity || 'Speaker', ++seq.current);
+    const line = parseCaption(msg.payload, senderLabel(msg.from) || 'Speaker', ++seq.current);
     if (line) onCaption(line);
   });
   return null;

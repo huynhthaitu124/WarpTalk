@@ -294,10 +294,16 @@ export function useLeaveRoom(id: string) {
 }
 
 // ---- meetings
+/** Secondary connections of the same user: subscribe-only token, identity `{userId}:{clientTag}`. */
+export type ClientTag = 'listener' | 'bridge-listener';
 export function useMeetingJoin(roomId: string) {
   return useMutation({
-    mutationFn: (displayName?: string) =>
-      api(`/meetings/${roomId}/join`, { method: 'POST', body: displayName ? { displayName } : {}, schema: joinGrant }),
+    mutationFn: (v: { displayName?: string; clientTag?: ClientTag } = {}) =>
+      api(`/meetings/${roomId}/join`, {
+        method: 'POST',
+        body: { ...(v.displayName ? { displayName: v.displayName } : {}), ...(v.clientTag ? { clientTag: v.clientTag } : {}) },
+        schema: joinGrant,
+      }),
   });
 }
 
@@ -353,13 +359,15 @@ export function useEndMeeting(roomId: string) {
       // 404 "meeting has not started" / 503 mean there is nothing to tear down, so end the room itself.
       try {
         await api(`/meetings/${roomId}/end`, { method: 'POST' });
+        // The meeting endpoint ends the room itself.
+        return await api(`/translation-rooms/${roomId}`, { schema: room });
       } catch (e) {
         if (!(e instanceof ApiError) || ![404, 503].includes(e.status)) throw e;
       }
+      // Legacy backends: no meeting session yet, end the room directly.
       try {
         return await api(`/translation-rooms/${roomId}/end`, { method: 'POST', schema: room });
       } catch (e) {
-        // The meeting-end event may already have ended the room.
         if (e instanceof ApiError && e.status === 409) return api(`/translation-rooms/${roomId}`, { schema: room });
         throw e;
       }

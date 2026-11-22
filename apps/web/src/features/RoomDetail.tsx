@@ -224,6 +224,12 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
 }
 
 /** Route status arrives as a string or a tagged object: show a word, never JSON. */
+/** CAPTION_ONLY / STANDARD_VOICE: the route runs without the full (cloned-voice) dub. */
+function degradedRoute(status: unknown): boolean {
+  const raw = typeof status === 'string' ? status : status && typeof status === 'object' ? Object.keys(status)[0] : undefined;
+  return !!raw && /^(caption_?only|standard_?voice)$/i.test(raw);
+}
+
 function routeStatusLabel(status: unknown): string {
   const raw = typeof status === 'string' ? status : status && typeof status === 'object' ? Object.keys(status)[0] : undefined;
   if (!raw) return 'Unknown';
@@ -263,7 +269,7 @@ function RoutesCard({ roomId, canGenerate, participants }: { roomId: string; can
                     <TD>{names.get(r.targetParticipantId) ?? 'Participant'}</TD>
                     <TD className="whitespace-nowrap">{languageLabel(r.sourceLanguage)} → {languageLabel(r.targetLanguage)}</TD>
                     <TD>{r.voiceCloneEnabled ? 'On' : 'Off'}</TD>
-                    <TD><Badge>{routeStatusLabel(r.status)}</Badge></TD>
+                    <TD><Badge tone={degradedRoute(r.status) ? 'warning' : undefined} data-testid={degradedRoute(r.status) ? 'route-degraded' : undefined}>{degradedRoute(r.status) ? `Degraded: ${routeStatusLabel(r.status).toLowerCase()}` : routeStatusLabel(r.status)}</Badge></TD>
                   </TR>
                 ))}
               </TBody>

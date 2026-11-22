@@ -245,7 +245,7 @@ export function ExternalPage() {
     setCaptionsState('connecting');
     setCaptionsMsg('');
     try {
-      setGrant(await meetingJoin.mutateAsync(profile.data?.fullName));
+      setGrant(await meetingJoin.mutateAsync({ displayName: profile.data?.fullName, clientTag: 'listener' }));
     } catch (e) {
       if (e instanceof ApiError && (e.code === 'LIVEKIT_NOT_CONFIGURED' || e.status === 503)) {
         setCaptionsState('unavailable');

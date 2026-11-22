@@ -9,8 +9,9 @@ import type { CaptionLine } from '@/lib/captions';
 import { CaptionList } from '../MeetingParts';
 import type { ChatMessage } from './protocol';
 import { speakerColor } from './speakers';
+import { SuggestionsTab, type SuggestionsView } from './Suggestions';
 
-export type PanelTab = 'transcript' | 'people' | 'chat';
+export type PanelTab = 'transcript' | 'people' | 'chat' | 'suggestions';
 
 export interface PersonRow {
   p: Participant;
@@ -160,7 +161,7 @@ function ChatTab({ chat }: { chat: ChatView }) {
 }
 
 export function SidePanel({
-  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, className,
+  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, suggestions, className,
 }: {
   tab: PanelTab;
   onTab(t: PanelTab): void;
@@ -175,6 +176,8 @@ export function SidePanel({
   moderating: boolean;
   chat: ChatView;
   unread: number;
+  /** Undefined when the backend has no suggestions endpoint: the tab is not shown. */
+  suggestions?: SuggestionsView;
   className?: string;
 }) {
   const lobby = rows.filter((r) => r.p.status === 'WAITING').length;
@@ -185,6 +188,7 @@ export function SidePanel({
         <TabsTrigger value="transcript">Transcript</TabsTrigger>
         <TabsTrigger value="people" className="flex items-center gap-1.5">People<span className="text-caption text-ink-tertiary">{inRoom}<span className="sr-only"> in the meeting</span></span>{lobby > 0 && <Badge tone="warning" data-testid="lobby-badge">{lobby}<span className="sr-only"> waiting</span></Badge>}</TabsTrigger>
         <TabsTrigger value="chat" className="flex items-center gap-1.5">Chat{unread > 0 && <Badge tone="primary" data-testid="chat-unread">{unread}<span className="sr-only"> unread</span></Badge>}</TabsTrigger>
+        {suggestions && <TabsTrigger value="suggestions" className="flex items-center gap-1.5">Suggestions{suggestions.items.length > 0 && <Badge tone="primary" data-testid="suggestions-badge">{suggestions.items.length}<span className="sr-only"> new</span></Badge>}</TabsTrigger>}
       </TabsList>
       <TabsContent value="transcript" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
         <CaptionList lines={lines} translationLang={translationLang} placeholder={transcriptPlaceholder} className="min-h-0 flex-1" />
@@ -195,6 +199,11 @@ export function SidePanel({
       <TabsContent value="chat" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
         <ChatTab chat={chat} />
       </TabsContent>
+      {suggestions && (
+        <TabsContent value="suggestions" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
+          <SuggestionsTab view={suggestions} />
+        </TabsContent>
+      )}
     </Tabs>
   );
 }

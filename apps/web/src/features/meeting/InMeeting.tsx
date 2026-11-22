@@ -3,7 +3,8 @@ import { ArrowsClockwise, X } from '@phosphor-icons/react';
 import { Badge, Button, useToast } from '@/ui';
 import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
-import { mergeCaption, parseCaption, pickTranslation, type CaptionLine } from '@/lib/captions';
+import { baseIdentity, mergeCaption, parseCaption, pickTranslation, resolveSpeakers, senderLabel, type CaptionLine } from '@/lib/captions';
+import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
 import { useParticipantAction, useParticipants, useRoomAction, useUpdateMyLanguages } from '@/lib/queries';
 import type { Room } from '@/lib/schemas';
 import { StatusStrip } from '../MeetingParts';
@@ -50,7 +51,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const [panelOpen, setPanelOpen] = useState(wideScreen);
   const [tab, setTab] = useState<PanelTab>('transcript');
   const [captionsOn, setCaptionsOn] = useState(true);
-  const [lines, setLines] = useState<CaptionLine[]>([]);
+  const [rawLines, setLines] = useState<CaptionLine[]>([]);
   const [unread, setUnread] = useState(0);
   const [hands, setHands] = useState<Record<string, boolean>>({});
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
@@ -80,7 +81,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   // Captions: the pipeline publishes JSON on topic "captions".
   const { subscribe } = session;
   useEffect(() => subscribe('captions', (m) => {
-    const line = parseCaption(m.payload, m.from?.name || m.from?.identity || 'Speaker', ++seq.current);
+    const line = parseCaption(m.payload, senderLabel(m.from) || 'Speaker', ++seq.current);
     if (line) setLines((cur) => mergeCaption(cur, line));
   }), [subscribe]);
 
@@ -142,13 +143,18 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   }
 
   const roster = useMemo(() => (parts.data ?? []).filter((p) => SHOWN.includes(p.status)), [parts.data]);
+  const lines = useMemo(() => resolveSpeakers(rawLines, parts.data ?? []), [rawLines, parts.data]);
+  const stream = useSuggestionStream(room.id, captionLang);
+  const triage = useSuggestionTriage(stream.items);
+  const followUps = useFollowUps(room.id, stream.status !== 'unavailable');
+  const suggestions = stream.status === 'unavailable' ? undefined : { items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze };
   const byUser = useMemo(() => new Map(roster.filter((p) => p.userId).map((p) => [p.userId as string, p])), [roster]);
   const tiles = useMemo<TileInfo[]>(() => session.participants.map((p) => {
-    const r = byUser.get(p.identity);
+    const r = byUser.get(baseIdentity(p.identity));
     return { p, host: p.identity === room.effectiveHostId, hand: !!hands[p.identity], langs: r && r.speakLanguage !== r.listenLanguage ? `${r.speakLanguage} → ${r.listenLanguage}` : undefined };
   }), [session.participants, byUser, hands, room.effectiveHostId]);
   const rows = useMemo<PersonRow[]>(() => roster.map((p) => {
-    const live = p.userId ? session.participants.find((s) => s.identity === p.userId) : undefined;
+    const live = p.userId ? session.participants.find((s) => baseIdentity(s.identity) === p.userId) : undefined;
     return { p, isSelf: !!p.userId && p.userId === selfUserId, host: !!p.userId && p.userId === room.effectiveHostId, inCall: live ? true : undefined, micOn: live?.micOn, hand: live ? !!hands[live.identity] : false };
   }), [roster, session.participants, selfUserId, room.effectiveHostId, hands]);
   const lobby = rows.filter((r) => r.p.status === 'WAITING');
@@ -223,7 +229,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
           >
             <SidePanel
               className="min-h-0 flex-1"
-              tab={tab}
+              tab={tab === 'suggestions' && !suggestions ? 'transcript' : tab}
               onTab={setTab}
               lines={lines}
               translationLang={captionLang}
@@ -246,6 +252,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
                 loadError: chat.loadError,
               }}
               unread={unread}
+              suggestions={suggestions}
             />
             <Button variant="ghost" size="icon" className="absolute right-2 top-1 lg:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="size-4" aria-hidden /></Button>
           </section>
