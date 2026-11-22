@@ -575,6 +575,8 @@ pub async fn run_bench(cfg: BenchConfig) -> BenchReport {
                     route_id: Uuid::now_v7(),
                     source_participant_id: pid,
                     target_participant_id: ParticipantId::new(),
+                    source_user_id: None,
+                    target_user_id: None,
                     source_language: "en".into(),
                     target_language: (*lang).into(),
                     voice_clone_enabled: false,

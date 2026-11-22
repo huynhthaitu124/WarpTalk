@@ -97,6 +97,8 @@ mod tests {
             route_id: Uuid::now_v7(),
             source_participant_id: src,
             target_participant_id: Pid::new(),
+            source_user_id: None,
+            target_user_id: None,
             source_language: lang_from.into(),
             target_language: lang_to.into(),
             voice_clone_enabled: false,

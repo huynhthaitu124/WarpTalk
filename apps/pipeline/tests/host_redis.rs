@@ -68,6 +68,8 @@ fn snapshot(speakers: &[ParticipantId], active: bool, status: &str) -> AudioRout
                 route_id: Uuid::now_v7(),
                 source_participant_id: *s,
                 target_participant_id: ParticipantId::new(),
+                source_user_id: None,
+                target_user_id: None,
                 source_language: "en".into(),
                 target_language: "vi".into(),
                 voice_clone_enabled: false,

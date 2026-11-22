@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use warptalk_kernel::{ParticipantId, RoomId, WorkspaceId};
+use warptalk_kernel::{ParticipantId, RoomId, UserId, WorkspaceId};
 
 /// Text of the end-of-meeting control segment published on `stt:results` (spec: 11 §6.3).
 pub const MEETING_END_MARKER: &str = "__MEETING_END__";
@@ -186,6 +186,12 @@ pub struct AudioRoute {
     pub route_id: Uuid,
     pub source_participant_id: ParticipantId,
     pub target_participant_id: ParticipantId,
+    /// User behind the source participant. The media layer (LiveKit identity) and the voice
+    /// consent key are per user, the route is per participant; absent in old snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_user_id: Option<UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_user_id: Option<UserId>,
     pub source_language: String,
     pub target_language: String,
     pub voice_clone_enabled: bool,
@@ -410,6 +416,8 @@ mod tests {
                 route_id: Uuid::now_v7(),
                 source_participant_id: ParticipantId::new(),
                 target_participant_id: ParticipantId::new(),
+                source_user_id: Some(UserId::new()),
+                target_user_id: None,
                 source_language: "vi".into(),
                 target_language: "en".into(),
                 voice_clone_enabled: false,
@@ -418,6 +426,13 @@ mod tests {
         };
         let j = rt(s);
         assert_eq!(j["routes"][0]["status"], "SAVING_OUTPUTS");
+        assert!(j["routes"][0]["source_user_id"].is_string());
+        assert!(j["routes"][0].get("target_user_id").is_none());
+        // Old snapshots without the user ids still parse.
+        let mut old = j.clone();
+        old["routes"][0].as_object_mut().unwrap().remove("source_user_id");
+        let back: AudioRoutesSnapshot = serde_json::from_value(old).unwrap();
+        assert_eq!(back.routes[0].source_user_id, None);
         assert_eq!(
             serde_json::to_value(RouteStatus::CaptionOnly).unwrap(),
             "CAPTION_ONLY"

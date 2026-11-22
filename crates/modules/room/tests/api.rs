@@ -346,6 +346,16 @@ async fn full_room_flow() {
             .iter()
             .all(|r| r["status"] == "PENDING")
     );
+    // every route also names the users behind its participants (LiveKit identity / consent key)
+    let user_of = |pid: &str| if pid == host_pid { host } else { alice };
+    for r in snap["routes"].as_array().unwrap() {
+        let (sp, tp) = (
+            r["source_participant_id"].as_str().unwrap(),
+            r["target_participant_id"].as_str().unwrap(),
+        );
+        assert_eq!(r["source_user_id"], user_of(sp).to_string(), "{r}");
+        assert_eq!(r["target_user_id"], user_of(tp).to_string(), "{r}");
+    }
     // idempotent start keeps one session
     let (st, _) = c.post(&format!("{rooms}/{room}/start"), host).await;
     assert_eq!(st, StatusCode::OK);
@@ -1278,6 +1288,19 @@ async fn bridge_viewer_listener_gets_routes_in_live_room() {
     );
     assert!(
         routes.iter().all(|r| r["source_language"] != "none"),
+        "{snap}"
+    );
+    // the stand-in seat is keyed by its fixed user id (= the bridge LiveKit identity)
+    assert!(
+        routes
+            .iter()
+            .all(|r| r["source_user_id"].as_str().is_some()),
+        "{snap}"
+    );
+    assert!(
+        routes
+            .iter()
+            .any(|r| r["source_user_id"] == warptalk_room::domain::STAND_IN_USER_ID.to_string()),
         "{snap}"
     );
 }

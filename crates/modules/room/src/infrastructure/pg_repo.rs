@@ -204,7 +204,20 @@ struct RouteRow {
     source_language: String,
     target_language: String,
     voice_clone_enabled: bool,
+}
+
+/// A route joined with the users behind its participants (the snapshot carries both ids).
+#[derive(sqlx::FromRow)]
+struct SnapshotRouteRow {
+    id: Uuid,
+    source_participant_id: Uuid,
+    target_participant_id: Uuid,
+    source_language: String,
+    target_language: String,
+    voice_clone_enabled: bool,
     status: String,
+    source_user_id: Option<Uuid>,
+    target_user_id: Option<Uuid>,
 }
 
 fn route_status(s: &str) -> RouteStatus {
@@ -307,12 +320,17 @@ async fn build_snapshot(
     room: &RoomRecord,
     now: DateTime<Utc>,
 ) -> AppResult<AudioRoutesSnapshot> {
-    let rows = sqlx::query_as::<_, RouteRow>(
-        "SELECT id, source_participant_id, target_participant_id, source_language, \
-                target_language, voice_clone_enabled, status \
-         FROM translation_room.translation_room_audio_routes \
-         WHERE translation_room_id = $1 AND is_current \
-         ORDER BY source_participant_id, target_participant_id",
+    let rows = sqlx::query_as::<_, SnapshotRouteRow>(
+        "SELECT r.id, r.source_participant_id, r.target_participant_id, r.source_language, \
+                r.target_language, r.voice_clone_enabled, r.status, \
+                sp.user_id AS source_user_id, tp.user_id AS target_user_id \
+         FROM translation_room.translation_room_audio_routes r \
+         LEFT JOIN translation_room.translation_room_participants sp \
+                ON sp.id = r.source_participant_id \
+         LEFT JOIN translation_room.translation_room_participants tp \
+                ON tp.id = r.target_participant_id \
+         WHERE r.translation_room_id = $1 AND r.is_current \
+         ORDER BY r.source_participant_id, r.target_participant_id",
     )
     .bind(room.id.as_uuid())
     .fetch_all(conn)
@@ -329,6 +347,8 @@ async fn build_snapshot(
                 route_id: r.id,
                 source_participant_id: r.source_participant_id.into(),
                 target_participant_id: r.target_participant_id.into(),
+                source_user_id: r.source_user_id.map(Into::into),
+                target_user_id: r.target_user_id.map(Into::into),
                 source_language: r.source_language,
                 target_language: r.target_language,
                 voice_clone_enabled: r.voice_clone_enabled,
@@ -402,7 +422,7 @@ impl PgRoomRepo {
             .collect();
         let existing: Vec<ExistingRoute> = sqlx::query_as::<_, RouteRow>(
             "SELECT id, source_participant_id, target_participant_id, source_language, \
-                    target_language, voice_clone_enabled, status \
+                    target_language, voice_clone_enabled \
              FROM translation_room.translation_room_audio_routes \
              WHERE translation_room_id = $1 AND is_current",
         )
