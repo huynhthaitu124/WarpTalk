@@ -131,7 +131,7 @@ final class NativeCaptureController {
                 let player = VoiceOutputPlayer(outputDeviceUID: uid)
                 voice = player
                 let listener = DubListener(language: p.listenLanguage ?? "en") { [player] buf in player.enqueue(buf) }
-                let grant = try await api.meetingJoin(roomId: p.roomId)
+                let grant = try await api.meetingJoin(roomId: p.roomId, clientTag: "bridge-listener")
                 try await listener.connect(url: grant.serverUrl, token: grant.token)
                 dub = listener
             }

@@ -304,7 +304,7 @@ test.describe('In-meeting UI', () => {
     await expect(panel).toHaveCount(0);
     await bar(app).getByRole('button', { name: 'Open side panel' }).click();
     await expect(panel).toBeVisible();
-    await expect(panel.getByRole('tab')).toHaveText([/Transcript/, /People/, /Chat/]);
+    await expect(panel.getByRole('tab')).toHaveText([/Transcript/, /People/, /Chat/, ...(await panel.getByRole('tab', { name: /Suggestions/ }).count() ? [/Suggestions/] : [])]); // Suggestions only when the backend serves the stream
   });
 
   test('MTG-22 a11y: no serious violations in the live meeting (dark and light)', async ({ app, tokens, user, workspace }) => {

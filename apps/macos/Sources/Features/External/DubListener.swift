@@ -2,7 +2,8 @@ import AVFoundation
 import Foundation
 import LiveKit
 
-/// Voice mode only (D7): a listener LiveKit connection (join token from `/meetings/{id}/join`) that subscribes ONLY to
+/// Voice mode only (D7): a listener LiveKit connection (join token from `/meetings/{id}/join` with `clientTag: "bridge-listener"`,
+/// identity `{userId}:bridge-listener`, subscribe-only) that subscribes ONLY to
 /// `dub-{listenLanguage}` and hands its PCM to `pcmSink` (-> VoiceOutputPlayer -> BlackHole). Captions are NOT handled
 /// here: the web app owns them and pushes overlay lines via `pushOverlayCaption`.
 /// WKWebView cannot route audio to a chosen output device (no setSinkId), which is why this lives natively.

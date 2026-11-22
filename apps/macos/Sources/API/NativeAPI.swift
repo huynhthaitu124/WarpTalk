@@ -65,9 +65,12 @@ final class NativeAPI: @unchecked Sendable {
         try decode(try await send("POST", "/meetings/\(roomId)/bridge-token"))
     }
 
-    /// Host/listener grant (used only for voice mode, to receive the dub track).
-    func meetingJoin(roomId: String) async throws -> MeetingGrant {
-        try decode(try await send("POST", "/meetings/\(roomId)/join", body: Data("{}".utf8)))
+    /// Subscribe-only grant (used only for voice mode, to receive the dub track). `clientTag` makes the server mint
+    /// identity `{userId}:{clientTag}`, so this connection never evicts the web client of the same user (contract B-09).
+    /// VERIFY: backend rejects unknown tags with 400 INVALID_CLIENT_TAG; "bridge-listener" is the agreed value.
+    func meetingJoin(roomId: String, clientTag: String = "bridge-listener") async throws -> MeetingGrant {
+        let body = try JSONSerialization.data(withJSONObject: ["clientTag": clientTag])
+        return try decode(try await send("POST", "/meetings/\(roomId)/join", body: body))
     }
 
     /// `POST /translation-rooms/{id}/bridge/capturer/heartbeat` (spec shape; server side being added).

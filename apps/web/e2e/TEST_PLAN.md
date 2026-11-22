@@ -319,6 +319,28 @@ Fixtures: `makeWav` in `fixtures/files.ts` generates silent and speech-like mono
 | WS-09 | Home "Live now" lists only `IN_PROGRESS`; WAITING/OPEN/PAUSED are under "Waiting to start" | workspace |
 | - | `meeting`, `meeting-room`, `external` specs use `inviteAndAccept`; `addWorkspaceMember` deleted; `lucide-react` removed from the project | all |
 
+## Contract fixes (CONTRACT_AUDIT B-02, B-03, B-04, B-09, suggestions, AI data controls)
+
+Spec: `e2e/tests/contracts.spec.ts` (+ `EXT-25 (B-09)` in `external.spec.ts`). Harnesses: `e2e/harness/audio.ts` (real subscription rules against fake LiveKit participants), `captions.tsx`, `meeting.tsx`; the SSE stream and follow-ups are mocked with `page.route`.
+
+| ID | P | Case | Expected | Status |
+|---|---|---|---|---|
+| CAP-01 | P0 | `speakerName` present | Label is the name, never `pipeline-agent-*` or a UUID | auto |
+| CAP-02 | P0 | 3 sentences, cumulative `translations` | One line, full original and full translation | auto |
+| CAP-03 | P1 | Legacy `chunk_idx` shape, out-of-order | Appended in sentence order | auto |
+| CAP-04 | P0 | Old snake_case shape, no indexes | Overwrite behaviour unchanged | auto |
+| CAP-05 | P0 | No name; `speakerId` = participant id / `userId:tag`, sender = pipeline agent | Roster display name in transcript and overlay | auto (real backend roster) |
+| CAP-06 | P1 | Current pipeline shape (cumulative `text`, `sentenceText`, `speakerUserId`) | Replaced per segment, no duplication | auto |
+| AUD-01..05 | P0 | vi/vi/en room: vi listener hears vi originals + `dub-vi`; en listener `dub-en` + en original; third language dubs only; `original`; tag stripping, secondary identities and unknown speakers muted | Subscription set as listed | auto (harness) |
+| SUG-01 | P1 | Mocked SSE: 2 suggestions, follow-ups, copy | Tab, count badge, dedupe on reconnect, clipboard | auto |
+| SUG-02 | P1 | Dismiss / snooze | Hidden, stays hidden after reconnect re-delivery | auto |
+| SUG-03 | P0 | Stream answers 404 | No Suggestions tab at all | auto |
+| SUG-04 | P1 | SSE parser (split chunks, comments, CRLF, multi-line data) | Correct messages | auto |
+| EXT-25 | P0 | `/external` captions join | Body has `clientTag: "listener"` | auto |
+| SET-AI-01 | P1 | Owner toggles aiRetrievalAllowed / externalLlmAllowed / aiSuggestEnabled | Full-settings PUT per change | auto (settings mocked) |
+| SET-AI-02 | P0 | Member | AI settings "Not available"; API PUT 403 | auto |
+| ROUTE-01 | P2 | audio-route status CAPTION_ONLY / STANDARD_VOICE | Degraded badge in Room detail | todo |
+
 ## Counts
 
 | Area | Cases | P0 | P1 | P2 | Automated |

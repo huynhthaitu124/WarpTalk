@@ -5,6 +5,8 @@ import SwiftUI
 struct OverlayLine: Identifiable, Equatable {
     let id: String
     var speaker: String
+    /// Pipeline agent identities and empty names are not speakers: show the text alone (contract B-03).
+    var speakerPrefix: String { speaker.isEmpty || speaker.hasPrefix("pipeline-agent") ? "" : "\(speaker): " }
     var text: String
     var translation: String?
     var isFinal: Bool
@@ -100,9 +102,9 @@ struct OverlayView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     if let t = line.translation, !t.isEmpty {
                         Text(t).font(.system(size: 22, weight: .semibold)).foregroundStyle(.white)
-                        Text("\(line.speaker): \(line.text)").font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
+                        Text("\(line.speakerPrefix)\(line.text)").font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
                     } else {
-                        Text("\(line.speaker): \(line.text)").font(.system(size: 20, weight: .medium)).foregroundStyle(.white)
+                        Text("\(line.speakerPrefix)\(line.text)").font(.system(size: 20, weight: .medium)).foregroundStyle(.white)
                     }
                 }
                 .opacity(line.isFinal ? 1 : 0.7)

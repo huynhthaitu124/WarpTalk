@@ -68,7 +68,7 @@ export interface CaptureStatus {
 }
 
 export interface OverlayCaption {
-  speaker?: string;
+  speaker?: string;                  // display name (web resolves speakerName / roster); never the pipeline agent id
   text: string;                      // original
   translation?: string;              // in the viewer's language; shown large when present
   segmentId?: string;                // same id updates the line in place (interim -> final)

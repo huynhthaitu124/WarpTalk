@@ -14,6 +14,8 @@ export interface CaptionLine {
   final: boolean;
   /** Participant id (or identity) of the speaker as sent by the pipeline, when present. */
   speakerId?: string;
+  /** User id of the speaker (LiveKit identity) when the pipeline sends it. */
+  speakerUserId?: string;
   /** True when `speaker` is a real display name (not just the fallback label). */
   named?: boolean;
   /** Sentence this message carries (multi-sentence segments); undefined for single-shot messages. */
@@ -66,6 +68,7 @@ export function parseCaption(payload: Uint8Array, fallbackSpeaker: string, seq: 
     speaker: speakerName ?? speakerId ?? fallbackSpeaker,
     named: !!speakerName,
     speakerId: rawSpeakerId,
+    speakerUserId: typeof j.speakerUserId === 'string' ? j.speakerUserId : undefined,
     sentenceIndex,
     isLastSentence: typeof lastRaw === 'boolean' ? lastRaw : undefined,
     // Current pipeline shape (camelCase + sentenceIndex) sends the cumulative map.
@@ -136,6 +139,7 @@ export function mergeCaption(cur: CaptionLine[], line: CaptionLine, max = 200): 
     speaker: line.named || !old.named ? line.speaker || old.speaker : old.speaker,
     named: old.named || line.named,
     speakerId: line.speakerId ?? old.speakerId,
+    speakerUserId: line.speakerUserId ?? old.speakerUserId,
     sentenceIndex: idx ?? old.sentenceIndex,
     isLastSentence: line.isLastSentence ?? old.isLastSentence,
     translations,
@@ -164,9 +168,9 @@ export function senderLabel(from?: { identity: string; name?: string }): string 
 export function resolveSpeakers(lines: CaptionLine[], roster: SpeakerLookup[]): CaptionLine[] {
   if (roster.length === 0) return lines;
   return lines.map((l) => {
-    if (l.named || !l.speakerId) return l;
-    const key = baseIdentity(l.speakerId);
-    const hit = roster.find((r) => r.id === key || r.userId === key);
+    if (l.named || !(l.speakerId || l.speakerUserId)) return l;
+    const keys = [l.speakerId, l.speakerUserId].filter((k): k is string => !!k).map(baseIdentity);
+    const hit = roster.find((r) => keys.some((k) => r.id === k || r.userId === k));
     return hit ? { ...l, speaker: hit.displayName, named: true } : l;
   });
 }

@@ -47,6 +47,17 @@ test.describe('Captions contract', () => {
     await expect(page.getByTestId('caption-translation')).toHaveText('Hello everyone. Today we meet. Thanks.');
   });
 
+  test('CAP-06 current pipeline shape: cumulative text and translations replace per segment; speakerUserId resolves via roster key', async ({ page }) => {
+    const base = { type: 'translation', segmentId: 's1', speakerName: 'Ana', speakerUserId: 'u1', lang: 'vi', isFinal: true, is_early: false };
+    await mountCaptions(page, [
+      { ...base, text: 'Một.', sentenceText: 'Một.', translations: { en: 'One.' }, sentenceTranslations: { en: 'One.' }, sentenceIndex: 0, isLastSentence: false },
+      { ...base, text: 'Một. Hai.', sentenceText: 'Hai.', translations: { en: 'One. Two.' }, sentenceTranslations: { en: 'Two.' }, sentenceIndex: 1, isLastSentence: true },
+    ]);
+    await expect(page.getByTestId('caption-line')).toHaveCount(1);
+    await expect(page.getByTestId('caption-original')).toHaveText('Một. Hai.');
+    await expect(page.getByTestId('caption-translation')).toHaveText('One. Two.');
+  });
+
   test('CAP-03 legacy per-sentence shape (chunk_idx, sentence-only translations) is appended too; late sentence 0 keeps order', async ({ page }) => {
     const base = { type: 'translation', segment_id: 's1', speaker_id: 'Ana', lang: 'vi', is_early: false };
     await mountCaptions(page, [
@@ -75,7 +86,9 @@ test.describe('Captions contract', () => {
     await mountMeeting(app, 'live', { roomId: room.id, selfUserId: user.userId, selfName: 'Host Hana', participants: [{ identity: user.userId, name: 'Host Hana', isLocal: true }] });
     await expect(app.getByTestId('meeting-room')).toBeVisible();
     const send = (body: unknown) => app.evaluate(([b, f]) => (window as unknown as { __meeting: { data(t: string, b: unknown, f: unknown): void } }).__meeting.data('captions', b, f), [body, PIPELINE]);
+    await app.getByRole('tab', { name: /^People/ }).click();
     await expect(app.getByTestId('person').first()).toBeVisible(); // roster loaded
+    await app.getByRole('tab', { name: /^Transcript/ }).click();
     await send({ segmentId: 's1', speakerId: me.id, lang: 'vi', text: 'Xin chào', isFinal: true, translations: {} });
     // by LiveKit identity (userId) and with a `:tag` suffix
     await send({ segmentId: 's2', speakerId: `${user.userId}:listener`, lang: 'vi', text: 'Chào', isFinal: true, translations: {} });
@@ -154,7 +167,7 @@ const sse = (events: unknown[]) => events.map((e) => `event: suggestion\ndata: $
 async function meetWithRoute(app: Page, tokens: { accessToken: string }, user: { userId: string }, workspaceId: string, stream: (r: Route) => Promise<void>, followups?: (r: Route) => Promise<void>) {
   const room = await createRoom(tokens.accessToken, workspaceId, { title: 'Suggestions', displayName: 'Host Hana' });
   await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
-  await app.route(`**/api/v1/meetings/${room.id}/suggestions/stream`, stream);
+  await app.route(`**/api/v1/meetings/${room.id}/suggestions/stream*`, stream);
   await app.route(`**/api/v1/meetings/${room.id}/followups`, followups ?? ((r) => r.fulfill({ status: 404, json: { code: 'NOT_FOUND', message: 'no' } })));
   await mountMeeting(app, 'live', { roomId: room.id, selfUserId: user.userId, selfName: 'Host Hana', participants: [{ identity: user.userId, name: 'Host Hana', isLocal: true }] });
   await expect(app.getByTestId('meeting-room')).toBeVisible();
