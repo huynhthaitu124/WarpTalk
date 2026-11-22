@@ -37,11 +37,22 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [ ] W10 assistant (WarpBot) chat + tools + confirmation gate; billing metering; notification; invitations/series/artifacts
 - [ ] Voice clone (spec 13)
 - [x] W11a External meeting analysis xong; [x] W11b bridge room API + bridge_token fix; [x] far-side dedupe;
-- [~] W11 External meeting (Meet/Teams/Zoom) phân tích → `docs/architecture/external-meeting.md`, rồi sửa lỗi + phát triển
-- [ ] W12 Test: functional e2e, failure injection, performance/latency (pipeline bench với fake provider, load test N room, đo mouth-to-ear)
-- [~] W14 `apps/web` (React/Vite/Tailwind 4) theo design system Linear + WarpTalk legacy, Playwright E2E trên backend thật (test plan + visual regression + a11y)
+- [x] W11 External meeting (Meet/Teams/Zoom) phân tích → `docs/architecture/external-meeting.md`, rồi sửa lỗi + phát triển
+- [x] W12 Test: functional e2e, failure injection, performance/latency (pipeline bench với fake provider, load test N room, đo mouth-to-ear)
+- [x] W14 `apps/web` (React/Vite/Tailwind 4) theo design system Linear + WarpTalk legacy, Playwright E2E trên backend thật (test plan + visual regression + a11y)
 - [x] W13a App macOS SwiftUI (chưa compile; xem apps/macos/README.md, VERIFY list) → sau W14 chuyển sang WebView shell + native bridge
 - [ ] W13 App macOS chạy được meeting (deadline: thứ 2 2026-11-23): consent gate runtime, progressive ladder, revocation/deletion
+
+
+## Cập nhật 2026-11-22
+
+- Backend: 591+ test pass toàn workspace; thêm invitations, GET /me, dev mail capture, BYO LLM (ai-plane), bridge viewer/lease/release, chat meeting + dịch chat, đổi ngôn ngữ giữa meeting, glossary (workspace + global) feed vào pipeline, lỗi request JSON thống nhất.
+- Pipeline: chuỗi STT→MT→TTS→dub; bench release 2026-11-22: speech_end→first dub p50 1021 ms / p95 1645 ms (1 câu), baseline 2275/3114 (docs/perf/run-2026-11-22.md).
+- Web: audit 56 lỗi → đã sửa gần hết DS/IA/LY/FN/A11Y + meeting UX; Playwright 208/208; ảnh review docs/review/.
+- Demo: docs/RUNBOOK.md, deploy/docker/docker-compose.yml, scripts/dev-up.sh, scripts/demo-seed.sh; livekit optional dep (`--features livekit-rtc`).
+- [~] Web: chat API, đổi ngôn ngữ, Glossary UI, members role/remove, dọn psql/lucide (đang làm)
+- [ ] macOS app: build thật trên Mac + sửa VERIFY; pipeline `livekit-rtc` build thật (cần clang ≥ 21)
+- [ ] Còn thiếu backend: documents upload, voice profile/consent, billing, notification, WarpBot chat, forgot-password, calendar
 
 ## Bị chặn bởi môi trường (cần user quyết)
 
