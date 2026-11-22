@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowsClockwise, CaretDown, Copy, DotsThree, Pause, Play, Prohibit, Stop, Translate, UserCheck, UserMinus, VideoCamera } from '@phosphor-icons/react';
 import {
   Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
-  EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
+  EmptyState, Field, GroupHeader, HostCapsule, Input, LanguageCapsule, OccupancyCapsule, DateCapsule, PageBody, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
 } from '@/ui';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
@@ -13,7 +13,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
 import type { Participant, Room } from '@/lib/schemas';
-import { TERMINAL_STATUSES, useCopy } from './common';
+import { TERMINAL_STATUSES, formatShortDate, formatWhen, langCodes, roomMoment, useCopy, useHostName } from './common';
 import { errMsg } from './errors';
 
 const TERMINAL = TERMINAL_STATUSES;
@@ -51,8 +51,8 @@ function OpenMeetingLink({ roomId, primary }: { roomId: string; primary: boolean
     <Link
       to={`/meetings/${roomId}`}
       className={primary
-        ? 'inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3.5 font-medium text-on-primary no-underline hover:bg-primary-hover hover:no-underline focus-ring'
-        : 'inline-flex h-8 items-center gap-2 rounded-md border border-control bg-surface-1 px-3.5 font-medium text-ink no-underline hover:bg-surface-2 hover:no-underline focus-ring'}
+        ? 'inline-flex h-7 items-center gap-2 rounded-pill bg-ink-btn pl-2.5 pr-3 font-medium text-on-ink-btn shadow-btn no-underline hover:no-underline hover:opacity-90 focus-ring'
+        : 'inline-flex h-7 items-center gap-2 rounded-pill border border-hairline/60 bg-surface-2 pl-2.5 pr-3 font-medium text-ink shadow-btn no-underline hover:bg-surface-3 hover:no-underline focus-ring'}
     >
       <VideoCamera size={16} weight="duotone" aria-hidden />Open meeting
     </Link>
@@ -147,17 +147,16 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
     toast({ tone: 'success', title: `${waiting.length} admitted` });
   }
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-w-0 flex-col">
       {canModerate && waiting.length > 0 && (
-        <Card data-testid="lobby" className="min-w-0">
-          <CardHeader
-            title={`Lobby (${waiting.length})`}
-            description="These people are waiting for you to let them in."
-            actions={waiting.length > 1 ? <Button size="sm" variant="primary" disabled={pa.isPending} onClick={() => void admitAll()}>Admit all</Button> : undefined}
-          />
-          <ul className="divide-y divide-hairline" aria-label="Lobby">
+        <section data-testid="lobby" className="min-w-0 border-b border-hairline">
+          <GroupHeader className="pr-2">
+            <h2 className="font-medium text-ink">{`Lobby (${waiting.length})`}</h2><span className="truncate max-sm:hidden">· These people are waiting for you to let them in.</span>
+            {waiting.length > 1 && <Button size="sm" variant="primary" className="ml-auto" disabled={pa.isPending} onClick={() => void admitAll()}>Admit all</Button>}
+          </GroupHeader>
+          <ul aria-label="Lobby">
             {waiting.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+              <li key={p.id} className="flex flex-wrap items-center gap-3 border-b border-row px-4 py-2 last:border-0">
                 <Avatar name={p.displayName} />
                 <span className="min-w-0 flex-1 basis-32 truncate text-body font-medium" title={p.displayName}>{p.displayName}</span>
                 <span className="flex gap-2">
@@ -167,12 +166,12 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
               </li>
             ))}
           </ul>
-        </Card>
+        </section>
       )}
-      <Card className="min-w-0">
-        <CardHeader title={`Participants (${others.length})`} />
+      <section className="min-w-0">
+        <GroupHeader><h2 className="font-medium text-ink">{`Participants (${others.length})`}</h2></GroupHeader>
         {others.length === 0 ? (
-          <CardBody><p className="text-body text-ink-subtle">Nobody has joined yet.</p></CardBody>
+          <PageBody><p className="text-body text-ink-muted">Nobody has joined yet.</p></PageBody>
         ) : (
           <>
             <div className="max-sm:hidden">
@@ -181,7 +180,7 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
                 <TBody>
                   {others.map((p) => (
                     <TR key={p.id}>
-                      <TD><span className="flex items-center gap-2"><Avatar name={p.displayName} size="sm" /><span className="max-w-48 truncate" title={p.displayName}>{p.displayName}</span>{p.userId === selfId && <Badge>You</Badge>}</span></TD>
+                      <TD><span className="flex items-center gap-2"><Avatar name={p.displayName} className="size-6" /><span className="max-w-48 truncate" title={p.displayName}>{p.displayName}</span>{p.userId === selfId && <Badge size="sm" shape="tag" tone="primary" className="font-normal">You</Badge>}</span></TD>
                       <TD><StatusPill status={p.role} /></TD>
                       <TD>{languageLabel(p.speakLanguage)}</TD>
                       <TD>{languageLabel(p.listenLanguage)}</TD>
@@ -198,9 +197,9 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
                 </TBody>
               </Table>
             </div>
-            <ul className="divide-y divide-hairline sm:hidden" aria-label="Participants (list)">
+            <ul className="sm:hidden" aria-label="Participants (list)">
               {others.map((p) => (
-                <li key={p.id} className="flex flex-col gap-2 px-4 py-3">
+                <li key={p.id} className="flex flex-col gap-2 border-b border-row px-4 py-3">
                   <div className="flex items-center gap-2">
                     <Avatar name={p.displayName} size="sm" />
                     <span className="min-w-0 flex-1 truncate text-body font-medium" title={p.displayName}>{p.displayName}</span>
@@ -218,7 +217,7 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
             </ul>
           </>
         )}
-      </Card>
+      </section>
     </div>
   );
 }
@@ -244,21 +243,20 @@ function RoutesCard({ roomId, canGenerate, participants }: { roomId: string; can
   const names = useMemo(() => new Map(participants.map((p) => [p.id, p.displayName])), [participants]);
   const items = routes.data?.routes ?? [];
   return (
-    <Card className="min-w-0">
-      <CardHeader
-        title="Advanced: audio routes"
-        description="Who hears whom, in which language. Operator view."
-        actions={<Button size="sm" aria-expanded={open} aria-controls="routes-body" onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Show'}</Button>}
-      />
+    <section className="min-w-0 border-t border-hairline">
+      <GroupHeader className="pr-2">
+        <h2 className="font-medium text-ink">Advanced: audio routes</h2><span className="truncate max-sm:hidden">· Who hears whom, in which language. Operator view.</span>
+        <Button size="sm" className="ml-auto" aria-expanded={open} aria-controls="routes-body" onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Show'}</Button>
+      </GroupHeader>
       {open && (
         <div id="routes-body">
-          {canGenerate && <div className="flex justify-end px-5 pt-4"><Button size="sm" loading={gen.isPending} onClick={() => gen.mutate()}><ArrowsClockwise size={16} aria-hidden />Generate routes</Button></div>}
+          {canGenerate && <div className="flex justify-end px-4 pt-3"><Button size="sm" loading={gen.isPending} onClick={() => gen.mutate()}><ArrowsClockwise size={16} aria-hidden />Generate routes</Button></div>}
           {routes.isLoading ? (
-            <CardBody><Skeleton className="h-10" /></CardBody>
+            <PageBody><Skeleton className="h-10" /></PageBody>
           ) : routes.isError ? (
-            <CardBody><Alert tone="warning">Audio routes are not available yet: {errMsg(routes.error)}</Alert></CardBody>
+            <PageBody><Alert tone="warning">Audio routes are not available yet: {errMsg(routes.error)}</Alert></PageBody>
           ) : items.length === 0 ? (
-            <CardBody><p className="text-body text-ink-subtle">No routes yet. Routes appear once the meeting is live and participants have joined.</p></CardBody>
+            <PageBody><p className="text-body text-ink-muted">No routes yet. Routes appear once the meeting is live and participants have joined.</p></PageBody>
           ) : (
             <Table bare aria-label="Audio routes">
               <THead><TR><TH>Speaker</TH><TH>Listener</TH><TH>Language</TH><TH>Voice clone</TH><TH>Status</TH></TR></THead>
@@ -277,7 +275,7 @@ function RoutesCard({ roomId, canGenerate, participants }: { roomId: string; can
           )}
         </div>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -290,16 +288,17 @@ export function RoomDetailPage() {
   const leave = useLeaveRoom(roomId);
   const profile = useProfile();
   const copy = useCopy();
+  const hostName = useHostName(roomQ.data);
 
-  if (roomQ.isLoading) return <div className="flex flex-col gap-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></div>;
+  if (roomQ.isLoading) return <PageBody className="flex flex-col gap-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></PageBody>;
   if (roomQ.isError) {
     const notFound = roomQ.error instanceof ApiError && roomQ.error.status === 404;
     return notFound ? (
-      <div className="flex flex-col gap-4">
-        <PageHeader title="Meeting not found" description="This meeting does not exist, or you have not joined it yet." />
-        <EmptyState title="Have a room code?" description="People outside the workspace can only enter a meeting with its 12-character code." action={<Link to="/join" className="text-body">Join by code</Link>} />
-      </div>
-    ) : <Alert tone="danger" title="Could not load meeting">{errMsg(roomQ.error)}</Alert>;
+      <>
+        <PageHeader size="detail" title="Meeting not found" description="This meeting does not exist, or you have not joined it yet." />
+        <PageBody><EmptyState title="Have a room code?" description="People outside the workspace can only enter a meeting with its 12-character code." action={<Link to="/join" className="text-body">Join by code</Link>} /></PageBody>
+      </>
+    ) : <PageBody><Alert tone="danger" title="Could not load meeting">{errMsg(roomQ.error)}</Alert></PageBody>;
   }
   const room = roomQ.data;
   if (!room) return null;
@@ -312,52 +311,70 @@ export function RoomDetailPage() {
   const inLobby = self?.status === 'WAITING';
   const canOpen = !terminal && !inLobby && !!(self || canModerate);
 
+  const connected = list.filter((p) => p.status === 'CONNECTED').length;
+  const waitingN = list.filter((p) => p.status === 'WAITING').length;
+  const attended = list.filter((p) => ['DISCONNECTED', 'LEFT'].includes(p.status)).length;
+  const moment = roomMoment(room);
+
   return (
-    <>
-      <PageHeader
-        title={room.title}
-        description={
-          <span className="flex flex-wrap items-center gap-2">
+    <div className="flex min-h-full flex-col lg:flex-row">
+      <div className="min-w-0 flex-1">
+        <header className="flex flex-col gap-4 px-6 pb-6 pt-8 max-sm:px-4 max-sm:pt-5">
+          <h1 className="break-words text-headline font-semibold text-ink max-sm:text-title" title={room.title}>{room.title}</h1>
+          <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={room.status} />
-            <span>{languageLabel(room.sourceLanguage)} → {room.targetLanguages.map(languageLabel).join(', ')}</span>
+            {hostName && <HostCapsule name={hostName} size="lg" />}
+            <LanguageCapsule size="lg" source={room.sourceLanguage} targets={room.targetLanguages} labels={langCodes(room)} />
             {room.requiresApproval && <Badge>Lobby on</Badge>}
-          </span>
-        }
-        actions={
-          // A person still waiting to be admitted sees neither the code nor any controls.
-          !inLobby && (
-            <>
+            {!inLobby && (
               <button
                 type="button"
                 aria-label={`Copy room code ${room.roomCode}`}
                 onClick={() => void copy(room.roomCode, 'Room code')}
-                className="inline-flex h-8 items-center gap-2 rounded-md border border-control bg-surface-1 px-3 text-body font-medium text-ink hover:bg-surface-2 focus-ring"
+                className="inline-flex h-7 items-center gap-1.5 rounded-pill border border-hairline/60 bg-surface-1 px-2.5 text-[11px] font-semibold text-ink shadow-capsule hover:bg-surface-2 focus-ring"
               >
-                <Copy size={16} aria-hidden className="text-ink-subtle" /><code data-testid="room-code">{room.roomCode}</code>
+                <Copy size={13} aria-hidden className="text-ink-subtle" /><code data-testid="room-code">{room.roomCode}</code>
               </button>
-              {canModerate && !terminal ? <HostControls room={room} canOpen={canOpen} /> : canOpen && <OpenMeetingLink roomId={room.id} primary />}
-            </>
-          )
-        }
-      />
-      {!self && !terminal && partsQ.isSuccess && <div className="mb-6"><JoinRoomForm roomId={room.id} defaultName={profile.data?.fullName} /></div>}
-      {inLobby && <Alert tone="warning" title="Waiting for the host" className="mb-6">The host needs to admit you before you can enter the meeting. This page updates automatically.</Alert>}
-      {self?.status === 'KICKED' && <Alert tone="danger" title="You were removed from this meeting" className="mb-6" />}
-      {self?.status === 'CONNECTED' && !isHost && !terminal && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-hairline bg-surface-1 px-4 py-3">
-          <span className="text-body">You are in this meeting as <strong>{self.displayName}</strong>.</span>
-          <Button size="sm" onClick={() => leave.mutate()} loading={leave.isPending}>Leave meeting</Button>
+            )}
+            <OccupancyCapsule size="lg" count={connected} label={`${connected} in room`} />
+            {moment && <span title={formatWhen(moment)}><DateCapsule size="lg" text={formatShortDate(moment)} /></span>}
+          </div>
+          {/* A person still waiting to be admitted sees neither the code nor any controls. */}
+          {!inLobby && (canModerate && !terminal ? <HostControls room={room} canOpen={canOpen} /> : canOpen && <div><OpenMeetingLink roomId={room.id} primary /></div>)}
+        </header>
+        <div className="flex flex-col gap-4 border-t border-hairline px-6 py-4 empty:hidden max-sm:px-4">
+          {!self && !terminal && partsQ.isSuccess && <JoinRoomForm roomId={room.id} defaultName={profile.data?.fullName} />}
+          {inLobby && <Alert tone="warning" title="Waiting for the host">The host needs to admit you before you can enter the meeting. This page updates automatically.</Alert>}
+          {self?.status === 'KICKED' && <Alert tone="danger" title="You were removed from this meeting" />}
+          {self?.status === 'CONNECTED' && !isHost && !terminal && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-hairline bg-surface-1 px-4 py-3 shadow-card">
+              <span className="text-body">You are in this meeting as <strong>{self.displayName}</strong>.</span>
+              <Button size="sm" onClick={() => leave.mutate()} loading={leave.isPending}>Leave meeting</Button>
+            </div>
+          )}
+          {terminal && <Alert tone="info">This meeting is {room.status.toLowerCase()}.</Alert>}
         </div>
+        {inLobby ? null : partsQ.isError ? (
+          <PageBody className="border-t border-hairline"><EmptyState title="Participants unavailable" description={errMsg(partsQ.error)} /></PageBody>
+        ) : (
+          <div className="flex min-w-0 flex-col border-t border-hairline">
+            <ParticipantsCard roomId={room.id} list={list} canModerate={canModerate && !terminal} selfId={userId} />
+            {canModerate && <RoutesCard roomId={room.id} canGenerate={canModerate && !terminal} participants={list} />}
+          </div>
+        )}
+      </div>
+      {!inLobby && !partsQ.isError && (
+        <aside aria-label="People summary" className="shrink-0 p-4 max-lg:border-t max-lg:border-hairline lg:w-[316px] lg:pl-0 lg:pt-8">
+          <Card className="rounded-[10px] p-3 shadow-capsule lg:sticky lg:top-4">
+            <h2 className="text-body font-medium text-ink">People</h2>
+            <dl className="mt-2 flex flex-col text-body-sm text-ink-muted">
+              {([['Participants', list.length], ['Waiting to be admitted', waitingN], ['In room', connected], ['Attended', attended]] as const).map(([k, v]) => (
+                <div key={k} className="flex h-8 items-center justify-between border-b border-row last:border-0"><dt>{k}</dt><dd className="tabular-nums text-ink">{v}</dd></div>
+              ))}
+            </dl>
+          </Card>
+        </aside>
       )}
-      {terminal && <Alert tone="info" className="mb-6">This meeting is {room.status.toLowerCase()}.</Alert>}
-      {inLobby ? null : partsQ.isError ? (
-        <EmptyState title="Participants unavailable" description={errMsg(partsQ.error)} />
-      ) : (
-        <div className="flex min-w-0 flex-col gap-6">
-          <ParticipantsCard roomId={room.id} list={list} canModerate={canModerate && !terminal} selfId={userId} />
-          {canModerate && <RoutesCard roomId={room.id} canGenerate={canModerate && !terminal} participants={list} />}
-        </div>
-      )}
-    </>
+    </div>
   );
 }

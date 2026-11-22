@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { useWorkspace, WorkspaceProvider } from '@/lib/workspace';
-import { Skeleton } from '@/ui';
+import { Padded, Skeleton } from '@/ui';
 import { Shell, SkipLink } from '@/features/Shell';
 import { LoginPage, RegisterPage, VerifyEmailPage } from '@/features/Auth';
 import { RoomDetailPage } from '@/features/RoomDetail';
@@ -66,11 +66,11 @@ export function App() {
             {/* Id-addressed pages, valid for people who are not in the room's workspace. */}
             <Route path="/rooms" element={<ToWorkspace to="/meetings" />} />
             <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
-            <Route path="/join" element={<JoinByCodePage />} />
+            <Route path="/join" element={<Padded><JoinByCodePage /></Padded>} />
             <Route path="/meetings" element={<ToWorkspace to="/meetings" />} />
             <Route path="/meetings/:roomId" element={<MeetingPage />} />
-            <Route path="/external" element={<ExternalPage />} />
-            <Route path="/workspaces" element={<WorkspacesPage />} />
+            <Route path="/external" element={<Padded><ExternalPage /></Padded>} />
+            <Route path="/workspaces" element={<Padded><WorkspacesPage /></Padded>} />
             <Route path="/settings" element={<ToWorkspace to="/settings" />} />
           </Route>
         </Route>

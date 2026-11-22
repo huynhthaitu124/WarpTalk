@@ -28,3 +28,24 @@ export function Field({
     </FieldCtx.Provider>
   );
 }
+
+/** Settings-card row: bold label + muted hint on the left, the control on the right (label stays bound to it). */
+export function FieldRow({
+  label, hint, error, children, className,
+}: { label: string; hint?: ReactNode; error?: ReactNode; children: ReactNode; className?: string }) {
+  const id = useId();
+  const descId = hint || error ? `${id}-desc` : undefined;
+  return (
+    <FieldCtx.Provider value={{ id, describedBy: descId, invalid: !!error }}>
+      <div className={cn('flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6', className)}>
+        <div className="min-w-0">
+          <label htmlFor={id} className="block text-body font-semibold text-ink">{label}</label>
+          {descId && (
+            <p id={descId} role={error ? 'alert' : undefined} className={cn('mt-0.5 text-body-sm', error ? 'text-danger-text' : 'text-ink-muted')}>{error ?? hint}</p>
+          )}
+        </div>
+        <div className="min-w-0 sm:w-64 sm:shrink-0">{children}</div>
+      </div>
+    </FieldCtx.Provider>
+  );
+}

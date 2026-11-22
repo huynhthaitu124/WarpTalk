@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { DownloadSimple, FileText, MagnifyingGlass, UploadSimple, X } from '@phosphor-icons/react';
 import {
-  Alert, Badge, Button, Card, Dialog, DialogContent, Drawer, EmptyState, Field, Input, PageHeader, Select, Skeleton, Switch, Table, TBody, TD, TH, THead, Tooltip, TR, useToast,
+  Alert, Badge, Button, Dialog, DialogContent, Drawer, EmptyState, Field, Input, PageBody, PageHeader, Select, Skeleton, Switch, Table, TBody, TD, TH, THead, Tooltip, TR, useToast,
 } from '@/ui';
 import { cn } from '@/lib/cn';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
@@ -296,8 +296,8 @@ export function DocumentsPage() {
   }, [search]);
 
   const q = useDocuments(current?.id, { page: pageNo, search: query, category });
-  if (loading) return <Skeleton className="h-40" />;
-  if (!current) return (<><PageHeader title="Documents" /><EmptyState icon={<FileText size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to see its documents." /></>);
+  if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
+  if (!current) return (<><PageHeader title="Documents" /><PageBody><EmptyState icon={<FileText size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to see its documents." /></PageBody></>);
   const admin = canAdmin(current);
   const items = q.data?.items ?? [];
   const total = q.data?.total ?? 0;
@@ -312,31 +312,33 @@ export function DocumentsPage() {
         description={`Files shared in ${current.name}. Documents with AI retrieval on can be searched in Knowledge.`}
         actions={admin ? <Button variant="primary" onClick={() => setUploading(true)}><UploadSimple size={16} aria-hidden />Upload document</Button> : undefined}
       />
-      <Alert tone="info" className="mb-5" title="PDF and DOCX text extraction is not available yet">
-        Only TXT, MD and CSV files are indexed for the AI assistant today. PDF and DOCX files are stored and can be downloaded, but they finish as “Skipped” (no indexable content) until extraction ships.
-      </Alert>
-      {!admin && <Alert tone="info" className="mb-5">You can read and download documents. Only workspace owners and admins can upload or change them, and admin-only documents are hidden from you.</Alert>}
-      <div role="search" aria-label="Filter documents" className="mb-4 flex flex-wrap items-center gap-2">
+      <PageBody className="flex flex-col gap-3 border-b border-row py-3 empty:hidden">
+        <Alert tone="info" title="PDF and DOCX text extraction is not available yet">
+          Only TXT, MD and CSV files are indexed for the AI assistant today. PDF and DOCX files are stored and can be downloaded, but they finish as “Skipped” (no indexable content) until extraction ships.
+        </Alert>
+        {!admin && <Alert tone="info">You can read and download documents. Only workspace owners and admins can upload or change them, and admin-only documents are hidden from you.</Alert>}
+      </PageBody>
+      <div role="search" aria-label="Filter documents" className="flex flex-wrap items-center gap-2 border-b border-row px-4 py-2">
         <div className="relative min-w-0 flex-1 basis-64">
-          <MagnifyingGlass size={16} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
-          <Input aria-label="Search documents" placeholder="Search by title or file name" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <MagnifyingGlass size={14} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
+          <Input aria-label="Search documents" placeholder="Search by title or file name" className="h-8 rounded-pill pl-8 text-body-sm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select aria-label="Category filter" className="w-48 max-sm:w-full" value={category} onValueChange={(v) => { setCategory(v); setPageNo(1); }} options={[{ value: 'all', label: 'All categories' }, ...categoryOptions]} />
+        <Select aria-label="Category filter" className="h-8 w-48 rounded-pill max-sm:w-full" value={category} onValueChange={(v) => { setCategory(v); setPageNo(1); }} options={[{ value: 'all', label: 'All categories' }, ...categoryOptions]} />
       </div>
-      {q.isLoading ? <div className="flex flex-col gap-2"><Skeleton className="h-11" /><Skeleton className="h-11" /><Skeleton className="h-11" /></div>
+      {q.isLoading ? <div className="flex flex-col" aria-hidden><Skeleton className="h-11 rounded-none" /><Skeleton className="h-11 rounded-none" /><Skeleton className="h-11 rounded-none" /></div>
         : q.isError ? (
           errCode(q.error) === 'STORAGE_NOT_CONFIGURED'
-            ? <Alert tone="warning" title="Document storage is not configured">This server has no object store, so documents cannot be uploaded or listed. Ask an administrator to configure storage.</Alert>
-            : <Alert tone="danger" title="Could not load documents">{errMsg(q.error)}</Alert>
+            ? <PageBody><Alert tone="warning" title="Document storage is not configured">This server has no object store, so documents cannot be uploaded or listed. Ask an administrator to configure storage.</Alert></PageBody>
+            : <PageBody><Alert tone="danger" title="Could not load documents">{errMsg(q.error)}</Alert></PageBody>
         ) : items.length === 0 ? (
-          <EmptyState
+          <PageBody><EmptyState
             icon={<FileText size={20} weight="duotone" />}
             title={filtered ? 'No matching documents' : 'No documents yet'}
             description={filtered ? 'Try another search or category.' : admin ? 'Upload handbooks, glossaries or meeting notes so the AI assistant can cite them.' : 'Workspace admins can upload documents here.'}
             action={filtered ? <Button onClick={() => { setSearch(''); setQuery(''); setCategory('all'); }}>Clear filters</Button> : admin ? <Button variant="primary" onClick={() => setUploading(true)}><UploadSimple size={16} aria-hidden />Upload document</Button> : undefined}
-          />
+          /></PageBody>
         ) : (
-          <Card>
+          <div>
             <div className="max-sm:hidden">
               <Table bare aria-label="Documents">
                 <THead><tr><TH>Title</TH><TH>Category</TH><TH>Access</TH><TH>Size</TH><TH>Status</TH><TH>Uploaded</TH></tr></THead>
@@ -357,16 +359,16 @@ export function DocumentsPage() {
                 </TBody>
               </Table>
             </div>
-            <ul className="divide-y divide-hairline sm:hidden" aria-label="Documents (list)">
+            <ul className="sm:hidden" aria-label="Documents (list)">
               {items.map((d) => (
-                <li key={d.id} className="flex flex-col gap-2 px-4 py-3" data-testid="document-row" data-title={d.title}>
+                <li key={d.id} className="flex flex-col gap-2 border-b border-row px-4 py-3" data-testid="document-row" data-title={d.title}>
                   <button type="button" onClick={() => setSelected(d)} title={d.title} aria-label={`Open ${d.title}`} className="block max-w-full truncate rounded-xs text-left text-body font-medium text-ink hover:text-link focus-ring">{d.title}</button>
                   <p className="truncate text-caption text-ink-subtle">{d.fileName} · {formatSize(d.sizeBytes)} · {CATEGORY_LABEL[d.category] ?? d.category}</p>
                   <div className="flex flex-wrap items-center gap-2"><IngestionPill doc={d} /><Badge>{ACCESS_LABEL[d.accessLevel] ?? d.accessLevel}</Badge></div>
                 </li>
               ))}
             </ul>
-            <div className="flex items-center justify-between gap-3 border-t border-hairline px-4 py-3">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
               <p className="text-body-sm text-ink-subtle" role="status">{total} document{total === 1 ? '' : 's'}</p>
               {pages > 1 && (
                 <nav aria-label="Pagination" className="flex items-center gap-2">
@@ -376,7 +378,7 @@ export function DocumentsPage() {
                 </nav>
               )}
             </div>
-          </Card>
+          </div>
         )}
       {admin && <UploadDialog ws={current} open={uploading} onOpenChange={setUploading} />}
       <DocDrawer ws={current} doc={live} onClose={() => setSelected(null)} onChanged={setSelected} />

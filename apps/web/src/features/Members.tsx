@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowClockwise, Crown, DotsThree, EnvelopeSimple, ProhibitInset, ShieldCheck, UserMinus, UserPlus, Users } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
-  EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
+  Alert, Avatar, Badge, Button, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
+  EmptyState, Field, GroupHeader, Input, PageBody, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
 } from '@/ui';
 import { useAuth } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
@@ -129,9 +129,9 @@ function MembersCard({ ws }: { ws: Workspace }) {
   const items: Member[] = q.data?.items ?? [];
   const manage = ws.myRole === 'OWNER' || ws.myRole === 'ADMIN';
   return (
-    <Card>
-      <CardHeader title={`Members${q.data ? ` (${q.data.total})` : ''}`} description="People who can use this workspace." />
-      {q.isLoading ? <CardBody><Skeleton className="h-24" /></CardBody> : q.isError ? <CardBody><Alert tone="danger">{errMsg(q.error)}</Alert></CardBody> : (
+    <section aria-label="Members">
+      <GroupHeader><h2 className="font-medium text-ink">Members{q.data ? ` (${q.data.total})` : ''}</h2><span className="truncate max-sm:hidden">· People who can use this workspace.</span></GroupHeader>
+      {q.isLoading ? <PageBody><Skeleton className="h-24" /></PageBody> : q.isError ? <PageBody><Alert tone="danger">{errMsg(q.error)}</Alert></PageBody> : (
         <>
           <div className="max-sm:hidden">
             <Table bare aria-label="Workspace members">
@@ -139,7 +139,7 @@ function MembersCard({ ws }: { ws: Workspace }) {
               <TBody>
                 {items.map((m) => (
                   <TR key={m.userId} data-testid="member-row" data-user-id={m.userId}>
-                    <TD><span className="flex items-center gap-2"><Avatar name={m.fullName || m.email || 'Member'} size="sm" /><span className="max-w-56 truncate" title={m.fullName ?? undefined}>{m.fullName || '—'}{m.userId === userId ? ' (you)' : ''}</span></span></TD>
+                    <TD className="h-14"><span className="flex items-center gap-2"><Avatar name={m.fullName || m.email || 'Member'} className="size-7" /><span className="max-w-56 truncate" title={m.fullName ?? undefined}>{m.fullName || '—'}{m.userId === userId ? ' (you)' : ''}</span></span></TD>
                     <TD className="max-w-64 truncate text-ink-muted" title={m.email ?? undefined}>{m.email ?? '—'}</TD>
                     <TD><StatusPill status={m.role} /></TD>
                     <TD className="whitespace-nowrap text-ink-subtle">{new Date(m.joinedAt).toLocaleDateString()}</TD>
@@ -149,9 +149,9 @@ function MembersCard({ ws }: { ws: Workspace }) {
               </TBody>
             </Table>
           </div>
-          <ul className="divide-y divide-hairline sm:hidden" aria-label="Workspace members (list)">
+          <ul className="sm:hidden" aria-label="Workspace members (list)">
             {items.map((m) => (
-              <li key={m.userId} className="flex items-center gap-3 px-4 py-3">
+              <li key={m.userId} className="flex items-center gap-3 border-b border-row px-4 py-3">
                 <Avatar name={m.fullName || m.email || 'Member'} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-body font-medium" title={m.fullName ?? undefined}>{m.fullName || '—'}{m.userId === userId ? ' (you)' : ''}</p>
@@ -165,7 +165,7 @@ function MembersCard({ ws }: { ws: Workspace }) {
         </>
       )}
       <ConfirmMember ws={ws} action={action} onClose={() => setAction(null)} />
-    </Card>
+    </section>
   );
 }
 
@@ -183,7 +183,7 @@ function InvitationRow({ inv, wsId }: { inv: Invitation; wsId: string }) {
     } catch (e) { toast({ tone: 'danger', title: kind === 'resend' ? 'Could not resend' : 'Could not revoke', description: errMsg(e) }); }
   };
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-3" data-testid="invitation" data-email={inv.email}>
+    <li className="flex flex-col gap-2 border-b border-row px-4 py-3 sm:flex-row sm:items-center sm:gap-3" data-testid="invitation" data-email={inv.email}>
       <div className="min-w-0 flex-1">
         <p className="truncate text-body font-medium" title={inv.email}>{inv.email}</p>
         <p className="text-caption text-ink-subtle">
@@ -191,8 +191,8 @@ function InvitationRow({ inv, wsId }: { inv: Invitation; wsId: string }) {
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-        <Badge tone={INV_TONE[inv.status] ?? 'neutral'} data-status={inv.status}>{inv.status[0]!.toUpperCase() + inv.status.slice(1)}</Badge>
-        <Badge>{inv.role[0] + inv.role.slice(1).toLowerCase()}</Badge>
+        <Badge size="sm" shape="tag" tone={INV_TONE[inv.status] ?? 'neutral'} data-status={inv.status}>{inv.status[0]!.toUpperCase() + inv.status.slice(1)}</Badge>
+        <Badge size="sm" shape="box" className="font-semibold">{inv.role[0] + inv.role.slice(1).toLowerCase()}</Badge>
         {inv.deliveryStatus === 'Failed' && <Badge tone="danger">Email failed</Badge>}
         {open && (
           <>
@@ -209,14 +209,17 @@ function InvitationsCard({ ws, onInvite }: { ws: Workspace; onInvite(): void }) 
   const q = useInvitations(ws.id, true);
   const items = (q.data ?? []).filter((i) => i.status !== 'replaced');
   return (
-    <Card className="mt-6">
-      <CardHeader title={`Invitations${q.data ? ` (${items.length})` : ''}`} description="People who were invited but have not joined yet." actions={<Button size="sm" onClick={onInvite}><UserPlus size={14} aria-hidden />Invite</Button>} />
-      {q.isLoading ? <CardBody><Skeleton className="h-16" /></CardBody> : q.isError ? <CardBody><Alert tone="danger">{errMsg(q.error)}</Alert></CardBody> : items.length === 0 ? (
-        <CardBody><p className="flex items-center gap-2 text-body text-ink-subtle"><EnvelopeSimple size={16} aria-hidden />No pending invitations.</p></CardBody>
+    <section aria-label="Pending invitations list" className="mt-6">
+      <GroupHeader className="pr-2">
+        <h2 className="font-medium text-ink">Invitations{q.data ? ` (${items.length})` : ''}</h2><span className="truncate max-sm:hidden">· People who were invited but have not joined yet.</span>
+        <Button size="sm" className="ml-auto" onClick={onInvite}><UserPlus size={14} aria-hidden />Invite</Button>
+      </GroupHeader>
+      {q.isLoading ? <PageBody><Skeleton className="h-16" /></PageBody> : q.isError ? <PageBody><Alert tone="danger">{errMsg(q.error)}</Alert></PageBody> : items.length === 0 ? (
+        <p className="flex items-center gap-2 border-b border-row px-4 py-3 text-body text-ink-muted"><EnvelopeSimple size={16} aria-hidden />No pending invitations.</p>
       ) : (
-        <ul className="divide-y divide-hairline" aria-label="Invitations">{items.map((i) => <InvitationRow key={i.id} inv={i} wsId={ws.id} />)}</ul>
+        <ul aria-label="Invitations">{items.map((i) => <InvitationRow key={i.id} inv={i} wsId={ws.id} />)}</ul>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -225,8 +228,8 @@ export function MembersPage() {
   const [params, setParams] = useSearchParams();
   const inviting = params.get('invite') === '1';
   const setInviting = (v: boolean) => { const p = new URLSearchParams(params); if (v) p.set('invite', '1'); else p.delete('invite'); setParams(p, { replace: true }); };
-  if (loading) return <Skeleton className="h-40" />;
-  if (!current) return (<><PageHeader title="Members" /><PendingInvitations className="mb-6" /><EmptyState icon={<Users size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to see its members." /></>);
+  if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
+  if (!current) return (<><PageHeader title="Members" /><PageBody><PendingInvitations className="mb-6" /><EmptyState icon={<Users size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to see its members." /></PageBody></>);
   const admin = canAdmin(current);
   return (
     <>
@@ -235,9 +238,9 @@ export function MembersPage() {
         description={`People in ${current.name}.`}
         actions={admin ? <Button variant="primary" onClick={() => setInviting(true)}><UserPlus size={16} aria-hidden />Invite people</Button> : undefined}
       />
-      <PendingInvitations className="mb-6" />
+      <PendingInvitations className="px-4 pt-4" />
       <MembersCard ws={current} />
-      {admin ? <InvitationsCard ws={current} onInvite={() => setInviting(true)} /> : <Alert tone="info" className="mt-6">Only workspace owners and admins can invite people. Ask an admin to send an invitation.</Alert>}
+      {admin ? <InvitationsCard ws={current} onInvite={() => setInviting(true)} /> : <PageBody><Alert tone="info">Only workspace owners and admins can invite people. Ask an admin to send an invitation.</Alert></PageBody>}
       {admin && <InviteDialog ws={current} open={inviting} onOpenChange={setInviting} />}
     </>
   );

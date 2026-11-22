@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Check, Copy, EnvelopeSimple } from '@phosphor-icons/react';
-import { Alert, Badge, Button, StatusPill, useToast } from '@/ui';
+import { Alert, Badge, Button, Capsule, DateCapsule, HostCapsule, LanguageCapsule, StatusDot, StatusPill, useToast } from '@/ui';
+import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
 import { useAuth } from '@/lib/auth';
-import { useAcceptInvitation, usePendingInvitations } from '@/lib/queries';
+import { useAcceptInvitation, useMembers, usePendingInvitations } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
 import type { Room } from '@/lib/schemas';
 import { errMsg } from './errors';
@@ -45,42 +46,71 @@ export function useCopy() {
   };
 }
 
-/** The room code as a monospace chip with a copy action; the code itself stays selectable text. */
-export function CodeChip({ code, className }: { code: string; className?: string }) {
+/** The room code as a white mono capsule with a copy action; the code itself stays selectable text. */
+export function CodeChip({ code, className, size }: { code: string; className?: string; size?: 'sm' | 'lg' }) {
   const copy = useCopy();
   const [done, setDone] = useState(false);
   return (
-    <span className={`inline-flex h-6 items-center gap-1 rounded-md bg-surface-2 pl-2 text-caption text-ink-muted ${className ?? ''}`}>
+    <Capsule size={size} className={cn('gap-0.5 pr-0.5 font-mono', className)}>
       <code data-testid="room-code-chip">{code}</code>
       <button
         type="button"
         aria-label={`Copy room code ${code}`}
-        className="grid size-6 place-items-center rounded-md text-ink-subtle hover:bg-surface-3 hover:text-ink focus-ring"
+        className="grid size-5 place-items-center rounded-pill text-ink-subtle hover:bg-surface-2 hover:text-ink focus-ring"
         onClick={() => void copy(code, 'Room code').then((ok) => { if (ok) { setDone(true); setTimeout(() => setDone(false), 1500); } })}
       >
         {done ? <Check size={12} weight="bold" aria-hidden /> : <Copy size={12} aria-hidden />}
       </button>
-    </span>
+    </Capsule>
   );
 }
 
-/** A room as a list row; stacks below 640px; the title truncates and carries a tooltip. */
-export function RoomRow({ room, showOpen = false }: { room: Room; showOpen?: boolean }) {
+const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+export function formatShortDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : shortDate.format(d);
+}
+export const langCodes = (r: Pick<Room, 'sourceLanguage' | 'targetLanguages'>) => `${languageLabel(r.sourceLanguage)} → ${r.targetLanguages.map(languageLabel).join(', ')}`;
+
+/** Row-leading 12px status ring (legacy: blue live, amber waiting, emerald scheduled, gray ended, red cancelled). */
+export function RoomDot({ status }: { status: string }) {
+  const c = status === 'IN_PROGRESS' ? 'text-blue-500 shadow-[0_0_8px_currentColor]'
+    : ['WAITING', 'OPEN'].includes(status) ? 'text-amber-500 shadow-[0_0_8px_currentColor]'
+    : status === 'SCHEDULED' ? 'text-emerald-500'
+    : ['CANCELLED', 'FAILED'].includes(status) ? 'text-red-500'
+    : 'text-gray-500';
+  return <StatusDot className={cn('mr-1', c)} />;
+}
+
+/** Host name by id from the workspace member list (the room payload only carries the id). */
+export function useHostName(room: Room | undefined): string | undefined {
+  const { current } = useWorkspace();
+  const members = useMembers(room && current?.id === room.workspaceId ? current.id : undefined);
+  const m = room ? members.data?.items.find((x) => x.userId === (room.effectiveHostId ?? room.hostId)) : undefined;
+  return m?.fullName || m?.email || undefined;
+}
+
+/**
+ * A room as a full-bleed grid-line row (44px, hairline underneath): status ring, title, status chip,
+ * host / language / date / code capsules. Stacks below 640px; `compact` drops the capsules that do
+ * not fit a half-width list (Home).
+ */
+export function RoomRow({ room, showOpen = false, compact = false }: { room: Room; showOpen?: boolean; compact?: boolean }) {
   const live = LIVE_STATUSES.includes(room.status);
-  const moment = formatWhen(roomMoment(room));
+  const moment = roomMoment(room);
+  const host = useHostName(room);
   return (
-    <div role="listitem" className="flex flex-col gap-2 border-b border-hairline px-4 py-3 last:border-0 hover:bg-surface-2/60 sm:flex-row sm:items-center sm:gap-3">
-      <div className="min-w-0 flex-1">
-        <Link to={`/rooms/${room.id}`} title={room.title} className="block truncate text-body font-medium text-ink hover:text-link">{room.title}</Link>
-        <p className="mt-0.5 flex flex-wrap gap-x-2 text-caption text-ink-subtle">
-          <span>{languageLabel(room.sourceLanguage)} → {room.targetLanguages.map(languageLabel).join(', ')}</span>
-          {moment && <span data-testid="room-when">{moment}</span>}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-        <CodeChip code={room.roomCode} />
+    <div role="listitem" className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-row px-4 py-1.5 hover:bg-surface-2/50 sm:flex-nowrap">
+      <RoomDot status={room.status} />
+      <Link to={`/rooms/${room.id}`} title={room.title} className="min-w-0 flex-1 basis-40 truncate text-body font-medium text-ink hover:text-link">{room.title}</Link>
+      <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap">
         {room.requiresApproval && <Badge>Lobby</Badge>}
         <StatusPill status={room.status} />
+        {!compact && host && <HostCapsule name={host} />}
+        {!compact && <LanguageCapsule source={room.sourceLanguage} targets={room.targetLanguages} labels={langCodes(room)} />}
+        {moment && <span title={formatWhen(moment)}><DateCapsule text={formatShortDate(moment)} /></span>}
+        <CodeChip code={room.roomCode} />
         {showOpen && live && (
           <Link to={`/meetings/${room.id}`} aria-label={`Open meeting ${room.title}`}><Button size="sm" variant="primary" tabIndex={-1}>Open</Button></Link>
         )}

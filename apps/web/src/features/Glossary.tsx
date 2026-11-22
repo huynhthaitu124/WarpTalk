@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { BookBookmark, DownloadSimple, PencilSimple, Plus, Trash, UploadSimple } from '@phosphor-icons/react';
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, Checkbox, Dialog, DialogContent, EmptyState, Field, Input, PageHeader, Select, Skeleton,
+  Alert, Badge, Button, Checkbox, Dialog, DialogContent, EmptyState, Field, GroupHeader, Input, PageBody, PageHeader, Select, Skeleton,
   Table, TBody, TD, TH, THead, TR, Textarea, useToast,
 } from '@/ui';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
@@ -96,8 +96,8 @@ function GlobalTermsCard() {
   const items = q.data ?? [];
   if (q.isLoading || q.isError || items.length === 0) return null;
   return (
-    <Card className="mt-6">
-      <CardHeader title={`Global terms (${items.length})`} description="Maintained by WarpTalk and applied to every workspace. Read-only." />
+    <section aria-label="Global terms" className="mt-6">
+      <GroupHeader><h2 className="font-medium text-ink">{`Global terms (${items.length})`}</h2><span className="truncate max-sm:hidden">· Maintained by WarpTalk and applied to every workspace. Read-only.</span></GroupHeader>
       <Table bare aria-label="Global glossary terms">
         <THead><tr><TH>Term</TH><TH>Preferred translation</TH><TH className="max-sm:hidden">Languages</TH></tr></THead>
         <TBody>
@@ -110,7 +110,7 @@ function GlobalTermsCard() {
           ))}
         </TBody>
       </Table>
-    </Card>
+    </section>
   );
 }
 
@@ -123,8 +123,8 @@ export function GlossaryListPage() {
   const list = useGlossaries(current?.id);
   const create = useCreateGlossary(current?.id ?? '');
   const [creating, setCreating] = useState(false);
-  if (loading) return <Skeleton className="h-40" />;
-  if (!current) return <EmptyState title="No workspace" description="Create or join a workspace to manage its glossaries." />;
+  if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
+  if (!current) return <PageBody><EmptyState title="No workspace" description="Create or join a workspace to manage its glossaries." /></PageBody>;
   const writer = canAdmin(current);
   const items = list.data ?? [];
   return (
@@ -134,16 +134,16 @@ export function GlossaryListPage() {
         description="Preferred translations for names and terms. Translation and captions use them in this workspace."
         actions={writer ? <Button variant="primary" onClick={() => { create.reset(); setCreating(true); }}><Plus size={16} weight="bold" aria-hidden />New glossary</Button> : undefined}
       />
-      {!writer && <ReadOnlyNote />}
-      {list.isLoading ? <Skeleton className="h-40" /> : list.isError ? <Alert tone="danger" title="Could not load glossaries">{errMsg(list.error)}</Alert> : items.length === 0 ? (
-        <EmptyState
+      {!writer && <PageBody className="pb-0"><ReadOnlyNote /></PageBody>}
+      {list.isLoading ? <PageBody><Skeleton className="h-40" /></PageBody> : list.isError ? <PageBody><Alert tone="danger" title="Could not load glossaries">{errMsg(list.error)}</Alert></PageBody> : items.length === 0 ? (
+        <PageBody><EmptyState
           icon={<BookBookmark size={20} weight="duotone" />}
           title="No glossaries yet"
           description={writer ? 'Create a glossary for a language pair, then add terms one by one or import a CSV.' : 'Owners and admins have not created any glossary for this workspace yet.'}
           action={writer ? <Button variant="primary" onClick={() => { create.reset(); setCreating(true); }}>New glossary</Button> : undefined}
-        />
+        /></PageBody>
       ) : (
-        <Card>
+        <div>
           <div className="max-sm:hidden">
             <Table bare aria-label="Glossaries">
               <THead><tr><TH>Name</TH><TH>Languages</TH><TH>Terms</TH><TH>Updated</TH></tr></THead>
@@ -159,15 +159,15 @@ export function GlossaryListPage() {
               </TBody>
             </Table>
           </div>
-          <ul className="divide-y divide-hairline sm:hidden" aria-label="Glossaries (list)">
+          <ul className="sm:hidden" aria-label="Glossaries (list)">
             {items.map((g) => (
-              <li key={g.id} className="flex flex-col gap-1 px-4 py-3">
+              <li key={g.id} className="flex flex-col gap-1 border-b border-row px-4 py-3">
                 <Link to={wsPath(`/glossary/${g.id}`)} className="truncate text-body font-medium text-ink hover:text-link">{g.name}</Link>
                 <span className="text-caption text-ink-subtle"><Pair g={g} /> · {g.termCount} terms</span>
               </li>
             ))}
           </ul>
-        </Card>
+        </div>
       )}
       <GlobalTermsCard />
       {writer && creating && (
@@ -241,14 +241,13 @@ function TermsCard({ g, writer }: { g: Glossary; writer: boolean }) {
   const [q, setQ] = useState('');
   const shown = q.trim() ? items.filter((t) => `${t.sourceTerm} ${t.targetTerm} ${t.notes ?? ''}`.toLowerCase().includes(q.trim().toLowerCase())) : items;
   return (
-    <Card className="mt-6">
-      <CardHeader
-        title={`Terms (${items.length})`}
-        description={<Pair g={g} />}
-        actions={items.length > 5 ? <Input aria-label="Filter terms" placeholder="Filter terms" className="h-8 w-48" value={q} onChange={(e) => setQ(e.target.value)} /> : undefined}
-      />
+    <section aria-label="Terms" className="mt-4">
+      <GroupHeader className="pr-2">
+        <h2 className="font-medium text-ink">{`Terms (${items.length})`}</h2><span aria-hidden>·</span><Pair g={g} />
+        {items.length > 5 && <Input aria-label="Filter terms" placeholder="Filter terms" className="ml-auto h-6 w-48 rounded-pill text-body-sm" value={q} onChange={(e) => setQ(e.target.value)} />}
+      </GroupHeader>
       {writer && (
-        <div className="border-b border-hairline">
+        <div className="border-b border-row">
           <TermForm
             label="Add term"
             submitLabel="Add term"
@@ -258,8 +257,8 @@ function TermsCard({ g, writer }: { g: Glossary; writer: boolean }) {
           />
         </div>
       )}
-      {terms.isLoading ? <CardBody><Skeleton className="h-24" /></CardBody> : terms.isError ? <CardBody><Alert tone="danger">{errMsg(terms.error)}</Alert></CardBody> : shown.length === 0 ? (
-        <CardBody><p className="text-body text-ink-subtle">{items.length === 0 ? (writer ? 'No terms yet. Add the first one above or import a CSV.' : 'This glossary has no terms yet.') : 'No terms match the filter.'}</p></CardBody>
+      {terms.isLoading ? <PageBody><Skeleton className="h-24" /></PageBody> : terms.isError ? <PageBody><Alert tone="danger">{errMsg(terms.error)}</Alert></PageBody> : shown.length === 0 ? (
+        <PageBody><p className="text-body text-ink-muted">{items.length === 0 ? (writer ? 'No terms yet. Add the first one above or import a CSV.' : 'This glossary has no terms yet.') : 'No terms match the filter.'}</p></PageBody>
       ) : (
         <>
           <div className="max-sm:hidden">
@@ -288,12 +287,12 @@ function TermsCard({ g, writer }: { g: Glossary; writer: boolean }) {
               </TBody>
             </Table>
           </div>
-          <ul className="divide-y divide-hairline sm:hidden" aria-label="Glossary terms (list)">
+          <ul className="sm:hidden" aria-label="Glossary terms (list)">
             {shown.map((t) => editing === t.id ? (
               <li key={t.id}><TermForm initial={t} label={`Edit term ${t.sourceTerm}`} submitLabel="Save" pending={update.isPending} error={update.error} onCancel={() => { setEditing(null); update.reset(); }}
                 onSave={async (v) => { await update.mutateAsync({ id: t.id, ...v }); setEditing(null); toast({ tone: 'success', title: 'Term saved' }); }} /></li>
             ) : (
-              <li key={t.id} className="flex items-start gap-2 px-4 py-3">
+              <li key={t.id} className="flex items-start gap-2 border-b border-row px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-body font-medium">{t.sourceTerm} <span className="text-ink-subtle">→</span> {t.targetTerm}</p>
                   {(t.notes || t.caseSensitive) && <p className="break-words text-caption text-ink-subtle">{t.caseSensitive ? 'Case sensitive. ' : ''}{t.notes}</p>}
@@ -319,7 +318,7 @@ function TermsCard({ g, writer }: { g: Glossary; writer: boolean }) {
         error={del.error}
         onConfirm={() => { if (removing) void del.mutateAsync(removing.id).then(() => { setRemoving(null); toast({ tone: 'success', title: 'Term deleted' }); }).catch(() => undefined); }}
       />
-    </Card>
+    </section>
   );
 }
 
@@ -338,8 +337,8 @@ export function GlossaryDetailPage() {
   const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  if (loading || g.isLoading) return <Skeleton className="h-40" />;
-  if (g.isError || !g.data) return <Alert tone="danger" title="Glossary not found">{errMsg(g.error)} <Link to={wsPath('/glossary')}>Back to glossaries</Link></Alert>;
+  if (loading || g.isLoading) return <PageBody><Skeleton className="h-40" /></PageBody>;
+  if (g.isError || !g.data) return <PageBody><Alert tone="danger" title="Glossary not found">{errMsg(g.error)} <Link to={wsPath('/glossary')}>Back to glossaries</Link></Alert></PageBody>;
   const glossary = g.data;
   const writer = canAdmin(current);
 
@@ -383,14 +382,16 @@ export function GlossaryDetailPage() {
           </>
         )}
       />
+      <PageBody className="flex flex-col gap-3 py-3 empty:hidden">
       {!writer && <ReadOnlyNote />}
       {result && (
-        <Alert tone={result.imported > 0 ? 'success' : 'warning'} className="mb-4" title="Import finished">
+        <Alert tone={result.imported > 0 ? 'success' : 'warning'} title="Import finished">
           <span data-testid="import-result">Imported {result.imported} {result.imported === 1 ? 'term' : 'terms'}, skipped {result.skipped}.</span>{result.skipped > 0 && ' Skipped rows were duplicates or already in the glossary.'}
         </Alert>
       )}
-      {importError && <Alert tone="danger" className="mb-4" title="Import failed">{importError}</Alert>}
+      {importError && <Alert tone="danger" title="Import failed">{importError}</Alert>}
       <p className="text-caption text-ink-subtle">CSV format: one <code>source,target</code> pair per line, optional header row, up to 2000 rows.</p>
+      </PageBody>
       <TermsCard g={glossary} writer={writer} />
       {writer && editing && (
         <GlossaryDialog

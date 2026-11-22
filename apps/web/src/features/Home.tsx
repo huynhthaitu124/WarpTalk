@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Brain, Keyboard, Plus, SquaresFour, UserPlus } from '@phosphor-icons/react';
-import { Alert, Button, Card, CardHeader, EmptyState, PageHeader, Skeleton } from '@/ui';
+import { Alert, Button, EmptyState, GroupHeader, PageBody, PageHeader, SectionLabel, Skeleton } from '@/ui';
 import { useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import { useRoomList } from '@/lib/queries';
@@ -9,36 +9,36 @@ import type { Room } from '@/lib/schemas';
 import { PendingInvitations, RUNNING_STATUSES, RoomRow, TERMINAL_STATUSES, UPCOMING_STATUSES, WAITING_STATUSES, roomMoment } from './common';
 import { errMsg } from './errors';
 
-function Quick({ to, icon, title, hint, primary }: { to: string; icon: ReactNode; title: string; hint: string; primary?: boolean }) {
+function Quick({ to, icon, title, primary }: { to: string; icon: ReactNode; title: string; hint?: string; primary?: boolean }) {
   return (
     <Link
       to={to}
-      className="group flex items-center gap-3 rounded-lg border border-hairline bg-surface-1 p-4 text-ink no-underline edge-top transition-colors hover:border-control hover:bg-surface-2 hover:no-underline focus-ring"
+      className={`group flex min-h-14 items-center gap-3 rounded-lg border p-3 no-underline shadow-card transition-all hover:-translate-y-0.5 hover:no-underline focus-ring ${primary ? 'border-primary bg-primary text-on-primary shadow-btn hover:bg-primary-hover' : 'border-hairline bg-surface-1 text-ink hover:border-hairline-strong hover:bg-surface-2'}`}
     >
-      <span className={`grid size-9 shrink-0 place-items-center rounded-md ${primary ? 'bg-primary text-on-primary' : 'bg-surface-3 text-ink-muted'}`} aria-hidden>{icon}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-body font-medium">{title}</span>
-        <span className="block truncate text-caption text-ink-subtle">{hint}</span>
-      </span>
+      <span className={`grid size-9 shrink-0 place-items-center rounded-[9px] border ${primary ? 'border-white/20 bg-white/15 text-on-primary' : 'border-hairline bg-surface-2 text-primary'}`} aria-hidden>{icon}</span>
+      <span className="min-w-0 truncate text-body font-medium">{title}</span>
     </Link>
   );
 }
 
-function RoomsCard({ title, description, items, emptyTitle, emptyHint, viewAll, showOpen }: {
+function RoomsBand({ title, description, items, emptyTitle, emptyHint, viewAll, showOpen }: {
   title: string; description: string; items: Room[]; emptyTitle: string; emptyHint: string; viewAll: string; showOpen?: boolean;
 }) {
   return (
-    <Card className="min-w-0">
-      <CardHeader title={title} description={description} actions={<Link to={viewAll} className="text-body-sm">View all</Link>} />
+    <section className="min-w-0">
+      <GroupHeader>
+        <h2 className="font-medium text-ink">{title}</h2>
+        <span aria-hidden>·</span>
+        <span className="tabular-nums">{items.length}</span>
+        <span className="truncate max-md:hidden">· {description}</span>
+        <Link to={viewAll} className="ml-auto shrink-0 text-body-sm">View all</Link>
+      </GroupHeader>
       {items.length === 0 ? (
-        <div className="px-5 py-8 text-center">
-          <p className="text-body font-medium text-ink">{emptyTitle}</p>
-          <p className="mt-1 text-body-sm text-ink-subtle">{emptyHint}</p>
-        </div>
+        <p className="border-b border-row px-4 py-3 text-body-sm text-ink-muted"><span className="font-medium text-ink">{emptyTitle}</span> {emptyHint}</p>
       ) : (
-        <div role="list" aria-label={title}>{items.map((r) => <RoomRow key={r.id} room={r} showOpen={showOpen} />)}</div>
+        <div role="list" aria-label={title}>{items.map((r) => <RoomRow key={r.id} room={r} showOpen={showOpen} compact />)}</div>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -57,37 +57,38 @@ export function HomePage() {
   );
   const recent = useMemo(() => all.filter((r) => TERMINAL_STATUSES.includes(r.status)).slice(0, 5), [all]);
 
-  if (loading) return <Skeleton className="h-40" />;
+  if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
   if (!current) {
     return <Navigate to="/workspaces" replace />;
   }
   const first = profile.data?.fullName?.split(/\s+/)[0];
   return (
     <>
-      <PageHeader title={first ? `Welcome back, ${first}` : 'Welcome back'} description={`Here is what is happening in ${current.name}.`} />
-      <PendingInvitations className="mb-6" />
-      <section aria-label="Quick actions" className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Quick primary to={`${wsPath('/meetings')}?new=1`} icon={<Plus size={18} weight="bold" />} title="New meeting" hint="Start a translated room" />
-        <Quick to={`${wsPath('/meetings')}?join=1`} icon={<Keyboard size={18} weight="duotone" />} title="Join by code" hint="Enter a 12-character code" />
-        <Quick to={wsPath('/knowledge')} icon={<Brain size={18} weight="duotone" />} title="Search knowledge" hint="Documents and past meetings" />
-        {canAdmin(current)
-          ? <Quick to={`${wsPath('/members')}?invite=1`} icon={<UserPlus size={18} weight="duotone" />} title="Invite people" hint="Add teammates by email" />
-          : <Quick to={wsPath('/meetings')} icon={<SquaresFour size={18} weight="duotone" />} title="All meetings" hint="Active, history and search" />}
+      <PageHeader size="page" title={first ? `Welcome back, ${first}` : 'Welcome back'} description={`Here is what is happening in ${current.name}.`} />
+      <PendingInvitations className="px-4 pt-4" />
+      <section aria-label="Quick actions" className="px-4 py-4">
+        <SectionLabel as="p">Quick jumps</SectionLabel>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Quick primary to={`${wsPath('/meetings')}?new=1`} icon={<Plus size={18} weight="bold" />} title="New meeting" />
+          <Quick to={`${wsPath('/meetings')}?join=1`} icon={<Keyboard size={18} weight="duotone" />} title="Join by code" />
+          <Quick to={wsPath('/knowledge')} icon={<Brain size={18} weight="duotone" />} title="Search knowledge" />
+          {canAdmin(current)
+            ? <Quick to={`${wsPath('/members')}?invite=1`} icon={<UserPlus size={18} weight="duotone" />} title="Invite people" />
+            : <Quick to={wsPath('/meetings')} icon={<SquaresFour size={18} weight="duotone" />} title="All meetings" />}
+        </div>
       </section>
       {rooms.isError ? (
-        <Alert tone="danger" title="Could not load meetings">{errMsg(rooms.error)}</Alert>
+        <PageBody><Alert tone="danger" title="Could not load meetings">{errMsg(rooms.error)}</Alert></PageBody>
       ) : rooms.isLoading ? (
-        <div className="grid gap-6 lg:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
+        <div className="flex flex-col" aria-hidden><Skeleton className="h-11 rounded-none" /><Skeleton className="h-11 rounded-none" /></div>
       ) : all.length === 0 ? (
-        <EmptyState icon={<SquaresFour size={20} weight="duotone" />} title="No meetings yet" description="Create your first meeting, share the code, and start translating." action={<Button variant="primary" onClick={() => nav(`${wsPath('/meetings')}?new=1`)}>Create meeting</Button>} />
+        <PageBody><EmptyState icon={<SquaresFour size={20} weight="duotone" />} title="No meetings yet" description="Create your first meeting, share the code, and start translating." action={<Button variant="primary" onClick={() => nav(`${wsPath('/meetings')}?new=1`)}>Create meeting</Button>} /></PageBody>
       ) : (
-        <div className="grid min-w-0 gap-6 lg:grid-cols-2">
-          <div className="flex min-w-0 flex-col gap-6">
-            <RoomsCard title="Live now" description="Meetings you can join right now." items={live} emptyTitle="Nothing live" emptyHint="Start a meeting and it shows up here." viewAll={wsPath('/meetings')} showOpen />
-            {waiting.length > 0 && <RoomsCard title="Waiting to start" description="Open rooms where translation is not running yet." items={waiting} emptyTitle="" emptyHint="" viewAll={wsPath('/meetings')} showOpen />}
-            <RoomsCard title="Upcoming" description="Scheduled meetings." items={upcoming} emptyTitle="Nothing scheduled" emptyHint="Scheduled meetings appear here in time order." viewAll={`${wsPath('/meetings')}?status=SCHEDULED`} />
-          </div>
-          <RoomsCard title="Recent history" description="The latest finished meetings." items={recent} emptyTitle="No past meetings yet" emptyHint="Ended and cancelled meetings are kept in History." viewAll={`${wsPath('/meetings')}?tab=history`} />
+        <div className="flex min-w-0 flex-col border-t border-row">
+          <RoomsBand title="Live now" description="Meetings you can join right now." items={live} emptyTitle="Nothing live" emptyHint="Start a meeting and it shows up here." viewAll={wsPath('/meetings')} showOpen />
+          {waiting.length > 0 && <RoomsBand title="Waiting to start" description="Open rooms where translation is not running yet." items={waiting} emptyTitle="" emptyHint="" viewAll={wsPath('/meetings')} showOpen />}
+          <RoomsBand title="Upcoming" description="Scheduled meetings." items={upcoming} emptyTitle="Nothing scheduled" emptyHint="Scheduled meetings appear here in time order." viewAll={`${wsPath('/meetings')}?status=SCHEDULED`} />
+          <RoomsBand title="Recent history" description="The latest finished meetings." items={recent} emptyTitle="No past meetings yet" emptyHint="Ended and cancelled meetings are kept in History." viewAll={`${wsPath('/meetings')}?tab=history`} />
         </div>
       )}
     </>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
-  BookBookmark, Brain, Broadcast, Buildings, Check, CaretRight, CaretUpDown, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
+  ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
   SquaresFour, Sun, Users, X,
 } from '@phosphor-icons/react';
 import {
@@ -14,28 +14,32 @@ import { useTheme } from '@/lib/theme';
 import { IS_DEV } from '@/lib/env';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import { usePendingInvitations, useRoom } from '@/lib/queries';
+import { cn } from '@/lib/cn';
+import { visibleSettingsSections } from './settingsNav';
 
 const SHOW_DESIGN = IS_DEV;
 
+/** Legacy sidebar header: 20px gradient tile + 14px/600 workspace name + caret, search icon at the right. */
 function WorkspaceSwitcher() {
   const { workspaces, current, select } = useWorkspace();
   const navigate = useNavigate();
+  const name = current?.name ?? 'WarpTalk';
   return (
     <Dropdown>
       <DropdownTrigger asChild>
         <button
           type="button"
           data-testid="workspace-switcher"
-          className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-left hover:bg-surface-2 focus-ring"
+          className="-ml-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-surface-3/60 focus-ring"
         >
-          <Avatar name={current?.name ?? 'WarpTalk'} size="sm" />
-          <span className="min-w-0 flex-1 truncate text-body font-medium text-ink" data-testid="current-workspace">
+          <span aria-hidden className="grid size-5 shrink-0 place-items-center rounded-md bg-gradient-to-br from-pink-500 to-rose-500 text-[9px] font-bold text-white">{name.replace(/[^A-Za-z0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || 'W'}</span>
+          <span className="min-w-0 truncate text-[14px] font-semibold tracking-[-0.3px] text-ink" data-testid="current-workspace">
             {current?.name ?? 'No workspace'}
           </span>
-          <CaretUpDown className="size-4 text-ink-subtle" aria-hidden />
+          <CaretDown className="size-3.5 shrink-0 text-ink-subtle" aria-hidden />
         </button>
       </DropdownTrigger>
-      <DropdownContent className="w-60">
+      <DropdownContent className="w-60" align="start">
         <DropdownLabel>Workspaces</DropdownLabel>
         {workspaces.map((w) => (
           <DropdownItem key={w.id} icon={w.id === current?.id ? <Check weight="bold" className="size-4" /> : <span className="size-4" />} onSelect={() => select(w.id)}>
@@ -54,19 +58,31 @@ function WorkspaceSwitcher() {
   );
 }
 
+function SidebarSearch() {
+  const { setOpen } = useCommandMenu();
+  return (
+    <button type="button" aria-label="Open command menu" onClick={() => setOpen(true)} className="grid size-7 shrink-0 place-items-center rounded-md text-ink-muted hover:bg-surface-3/60 hover:text-ink focus-ring">
+      <MagnifyingGlass className="size-4" aria-hidden />
+    </button>
+  );
+}
+
 function AccountMenu() {
   const { email, logout } = useAuth();
   const profile = useProfile();
   const { theme, toggle } = useTheme();
+  const { current } = useWorkspace();
   const name = profile.data?.fullName ?? email ?? 'Account';
+  const role = current ? current.myRole[0] + current.myRole.slice(1).toLowerCase() : null;
   return (
     <Dropdown>
       <DropdownTrigger asChild>
-        <button type="button" data-testid="account-menu" className="flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left hover:bg-surface-2 focus-ring">
-          <Avatar name={name} size="sm" />
+        <button type="button" data-testid="account-menu" className="flex w-full items-center gap-2.5 rounded-2xl border border-hairline/50 bg-surface-1 p-2 text-left shadow-card hover:bg-surface-2 focus-ring">
+          <Avatar name={name} className="size-7" />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-body-sm font-medium text-ink" data-testid="account-name">{name}</span>
-            <span className="block truncate text-caption text-ink-subtle">{email}</span>
+            <span className="block truncate text-[12.5px] font-medium leading-tight text-ink" data-testid="account-name">{name}</span>
+            <span className="block truncate text-[11px] leading-tight text-ink-muted">{email}</span>
+            {role && <span className="block truncate text-[11px] font-medium leading-tight text-chip-primary-text">{role}</span>}
           </span>
         </button>
       </DropdownTrigger>
@@ -85,49 +101,86 @@ function AccountMenu() {
 
 const ico = (I: typeof House) => <I weight="duotone" size={16} />;
 
+/** Settings replaces the workspace nav (same canvas layer): "Back to app", uppercase group labels. */
+function SettingsSidebar() {
+  const { current, wsPath } = useWorkspace();
+  const profile = useProfile();
+  const loc = useLocation();
+  const admin = canAdmin(current);
+  const visible = visibleSettingsSections(admin, !!profile.data?.systemAdmin);
+  const section = loc.pathname.split('/').filter(Boolean)[2];
+  return (
+    <>
+      <div className="flex h-12 shrink-0 items-center px-3">
+        <Link to={current ? wsPath('/home') : '/workspaces'} className="-ml-1.5 flex items-center gap-2 rounded-md px-1.5 py-1 text-body font-medium text-ink-muted no-underline hover:bg-surface-3/60 hover:text-ink hover:no-underline focus-ring">
+          <ArrowLeft className="size-4" aria-hidden />Back to app
+        </Link>
+      </div>
+      <nav aria-label="Settings sections" className="flex flex-col px-3 pb-3 pt-1">
+        {visible.map((s, i) => (
+          <div key={s.id} className="flex flex-col gap-px">
+            {(i === 0 || visible[i - 1]!.group !== s.group) && <p className={cn('flex h-6 items-center px-2 text-body-sm font-medium uppercase tracking-[0.6px] text-ink-subtle', i > 0 && 'mt-4', 'mb-1')}>{s.group}</p>}
+            <SidebarLink to={wsPath(`/settings/${s.id}`)} icon={<s.icon weight="duotone" size={16} />} active={s.id === section}>{s.label}</SidebarLink>
+          </div>
+        ))}
+      </nav>
+    </>
+  );
+}
+
 function Sidebar() {
   const { workspaces, loading, wsPath } = useWorkspace();
   const { userId } = useAuth();
+  const loc = useLocation();
   const pending = usePendingInvitations(userId);
   const guest = !loading && workspaces.length === 0;
   const pendingCount = pending.data?.length ?? 0;
+  const inSettings = !guest && /^\/[^/]+\/settings(\/|$)/.test(loc.pathname);
   return (
-    <div className="flex h-full flex-col gap-4 p-3">
-      <div className="flex items-center px-1 pt-1"><Brand /></div>
-      {guest ? (
-        // A person who only joined rooms by code has no workspace: no switcher, no workspace nav.
-        <SidebarNav label="Primary">
-          <SidebarLink to="/workspaces" icon={ico(Buildings)} badge={pendingCount || null}>Workspaces</SidebarLink>
-          <SidebarLink to="/join" icon={ico(Keyboard)}>Join by code</SidebarLink>
-        </SidebarNav>
-      ) : (
+    <div className="flex h-full flex-col">
+      {inSettings ? <SettingsSidebar /> : (
         <>
-          <WorkspaceSwitcher />
-          <SidebarNav label="Primary">
-            <SidebarLink to={wsPath('/home')} icon={ico(House)}>Home</SidebarLink>
-            <SidebarLink
-              to={wsPath('/meetings')}
-              icon={ico(SquaresFour)}
-              actions={[
-                { label: 'Join by code', icon: <Keyboard size={14} weight="bold" />, to: `${wsPath('/meetings')}?join=1` },
-                { label: 'New meeting', icon: <Plus size={14} weight="bold" />, to: `${wsPath('/meetings')}?new=1` },
-              ]}
-            >
-              Meetings
-            </SidebarLink>
-            <SidebarLink to="/external" icon={ico(Broadcast)}>External meeting</SidebarLink>
-          </SidebarNav>
-          <SidebarNav label="Workspace" heading="Workspace">
-            <SidebarLink to={wsPath('/members')} icon={ico(Users)} badge={pendingCount || null}>Members</SidebarLink>
-            <SidebarLink to={wsPath('/knowledge')} icon={ico(Brain)}>Knowledge</SidebarLink>
-            <SidebarLink to={wsPath('/documents')} icon={ico(FileText)}>Documents</SidebarLink>
-            <SidebarLink to={wsPath('/glossary')} icon={ico(BookBookmark)}>Glossary</SidebarLink>
-            <SidebarLink to={wsPath('/settings')} icon={ico(GearSix)}>Settings</SidebarLink>
-          </SidebarNav>
+          <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
+            {guest ? <Brand /> : <WorkspaceSwitcher />}
+            <SidebarSearch />
+          </div>
+          <div className="flex flex-col gap-3 overflow-y-auto px-3 pb-3 pt-1">
+            {guest ? (
+              // A person who only joined rooms by code has no workspace: no switcher, no workspace nav.
+              <SidebarNav label="Primary">
+                <SidebarLink to="/workspaces" icon={ico(Buildings)} badge={pendingCount || null}>Workspaces</SidebarLink>
+                <SidebarLink to="/join" icon={ico(Keyboard)}>Join by code</SidebarLink>
+              </SidebarNav>
+            ) : (
+              <>
+                <SidebarNav label="Primary">
+                  <SidebarLink to={wsPath('/home')} icon={ico(House)}>Home</SidebarLink>
+                  <SidebarLink
+                    to={wsPath('/meetings')}
+                    icon={ico(SquaresFour)}
+                    actions={[
+                      { label: 'Join by code', icon: <Keyboard size={14} weight="bold" />, to: `${wsPath('/meetings')}?join=1` },
+                      { label: 'New meeting', icon: <Plus size={14} weight="bold" />, to: `${wsPath('/meetings')}?new=1` },
+                    ]}
+                  >
+                    Meetings
+                  </SidebarLink>
+                  <SidebarLink to="/external" icon={ico(Broadcast)}>External meeting</SidebarLink>
+                </SidebarNav>
+                <SidebarNav label="Workspace" heading="Workspace">
+                  <SidebarLink to={wsPath('/members')} icon={ico(Users)} badge={pendingCount || null}>Members</SidebarLink>
+                  <SidebarLink to={wsPath('/knowledge')} icon={ico(Brain)}>Knowledge</SidebarLink>
+                  <SidebarLink to={wsPath('/documents')} icon={ico(FileText)}>Documents</SidebarLink>
+                  <SidebarLink to={wsPath('/glossary')} icon={ico(BookBookmark)}>Glossary</SidebarLink>
+                  <SidebarLink to={wsPath('/settings')} icon={ico(GearSix)}>Settings</SidebarLink>
+                </SidebarNav>
+              </>
+            )}
+          </div>
         </>
       )}
-      <div className="mt-auto flex flex-col gap-1">
-        {SHOW_DESIGN && (
+      <div className="mt-auto flex flex-col gap-2 p-3">
+        {SHOW_DESIGN && !inSettings && (
           <SidebarNav label="Resources">
             <SidebarLink to="/design" icon={ico(Palette)}>Design system</SidebarLink>
           </SidebarNav>
@@ -139,7 +192,7 @@ function Sidebar() {
 }
 
 function Crumb({ children, to }: { children: ReactNode; to?: string }) {
-  return to ? <Link to={to} className="truncate text-ink-subtle hover:text-ink">{children}</Link> : <span className="truncate text-ink" aria-current="page">{children}</span>;
+  return to ? <Link to={to} className="truncate text-ink-muted hover:text-ink">{children}</Link> : <span className="truncate text-ink" aria-current="page">{children}</span>;
 }
 
 const SETTINGS_LABEL: Record<string, string> = { general: 'General', ai: 'AI providers', advanced: 'Advanced', account: 'Account', 'global-glossary': 'Global glossary' };
@@ -184,24 +237,31 @@ function TopBar({ onMenu }: { onMenu: (opener: HTMLElement) => void }) {
   const { setOpen } = useCommandMenu();
   const { theme, toggle } = useTheme();
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-canvas px-4">
-      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation" onClick={(e) => onMenu(e.currentTarget)}><List className="size-4" aria-hidden /></Button>
-      <Breadcrumb />
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="flex h-8 w-64 items-center gap-2 whitespace-nowrap rounded-md border border-control bg-surface-1 px-2.5 text-body-sm text-ink-subtle hover:border-ink-subtle focus-ring max-md:w-auto"
-        >
-          <MagnifyingGlass className="size-4" aria-hidden />
-          <span className="flex-1 text-left max-md:hidden">Search or run a command…</span>
-          <span className="sr-only md:hidden">Search</span>
-          <Kbd className="max-sm:hidden">⌘K</Kbd>
-        </button>
+    <header className="flex h-11 shrink-0 items-center gap-3 border-b border-hairline px-4 md:grid md:grid-cols-[1fr_minmax(0,420px)_1fr]">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation" onClick={(e) => onMenu(e.currentTarget)}><List className="size-4" aria-hidden /></Button>
+        <Breadcrumb />
+      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex h-7 w-full items-center gap-2 whitespace-nowrap rounded-md border border-hairline bg-surface-1 px-2.5 text-body-sm text-ink-muted hover:border-hairline-strong focus-ring max-md:w-auto"
+      >
+        <MagnifyingGlass className="size-3.5" aria-hidden />
+        <span className="flex-1 text-left max-md:hidden">Search or run a command…</span>
+        <span className="sr-only md:hidden">Search</span>
+        <Kbd className="max-sm:hidden">⌘K</Kbd>
+      </button>
+      <div className="flex shrink-0 items-center justify-end gap-2">
         <Tooltip content={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
-          <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>
-            {theme === 'dark' ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
-          </Button>
+          <button
+            type="button"
+            aria-label="Toggle theme"
+            onClick={toggle}
+            className="grid size-6 place-items-center rounded-pill border border-hairline bg-surface-1 text-ink-muted shadow-btn hover:text-ink focus-ring"
+          >
+            {theme === 'dark' ? <Sun className="size-3.5" aria-hidden /> : <Moon className="size-3.5" aria-hidden />}
+          </button>
         </Tooltip>
       </div>
     </header>
@@ -224,7 +284,7 @@ function MobileDrawer({ open, onOpenChange, openerRef }: { open: boolean; onOpen
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
         <RD.Overlay className="fixed inset-0 z-40 animate-fade-in bg-overlay md:hidden" />
-        <RD.Content aria-describedby={undefined} onOpenAutoFocus={(e) => { e.preventDefault(); closeRef.current?.focus(); }} onCloseAutoFocus={(e) => { if (openerRef.current?.isConnected) { e.preventDefault(); openerRef.current.focus(); } }} className="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] animate-fade-in border-r border-hairline bg-canvas focus:outline-none md:hidden">
+        <RD.Content aria-describedby={undefined} onOpenAutoFocus={(e) => { e.preventDefault(); closeRef.current?.focus(); }} onCloseAutoFocus={(e) => { if (openerRef.current?.isConnected) { e.preventDefault(); openerRef.current.focus(); } }} className="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] animate-fade-in bg-canvas focus:outline-none md:hidden">
           <RD.Title className="sr-only">Navigation</RD.Title>
           <RD.Close asChild>
             <Button ref={closeRef} variant="ghost" size="icon" className="absolute right-2 top-2" aria-label="Close menu"><X className="size-4" aria-hidden /></Button>
@@ -275,18 +335,22 @@ export function Shell() {
 
   return (
     <CommandMenuProvider items={items}>
-      <div className="flex h-dvh bg-canvas">
-        <aside className="hidden w-60 shrink-0 border-r border-hairline bg-canvas md:block" aria-label="Sidebar">
+      <div className="flex h-dvh overflow-hidden bg-canvas">
+        <aside className="hidden w-56 shrink-0 md:block" aria-label="Sidebar">
           <Sidebar />
         </aside>
         <MobileDrawer open={drawer} onOpenChange={setDrawer} openerRef={openerRef} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
-          <main id="main" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-panel">
-            <div className="mx-auto min-w-0 max-w-6xl px-6 py-8 max-sm:px-4 max-sm:py-6">
+          {/* The raised panel: the sidebar is the recessed layer under it. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel md:mr-1.5 md:mt-1.5 md:rounded-xl md:border md:border-hairline md:shadow-panel">
+            <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
+            <main id="main" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
               <Outlet />
-            </div>
-          </main>
+            </main>
+          </div>
+          <div className="hidden h-9 shrink-0 items-center justify-end gap-1.5 pr-5 text-caption text-ink-subtle md:flex" aria-hidden>
+            <Kbd>⌘K</Kbd>commands
+          </div>
         </div>
       </div>
     </CommandMenuProvider>

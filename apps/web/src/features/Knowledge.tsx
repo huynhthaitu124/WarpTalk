@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Brain, FileText, MagnifyingGlass, Microphone } from '@phosphor-icons/react';
-import { Alert, Badge, Button, Card, EmptyState, Input, PageHeader, Select, Skeleton } from '@/ui';
+import { Alert, Badge, Button, EmptyState, GroupHeader, Input, PageBody, PageHeader, Select, Skeleton } from '@/ui';
 import { useWorkspace } from '@/lib/workspace';
 import { useKnowledgeSearch } from '@/lib/queries';
 import type { Citation, KnowledgeHit } from '@/lib/schemas';
@@ -35,7 +35,7 @@ function Hit({ hit }: { hit: KnowledgeHit }) {
   const c = hit.citation;
   const doc = c.kind === 'document' || c.kind === 'knowledge';
   return (
-    <li className="flex flex-col gap-2 px-5 py-4" data-testid="knowledge-hit">
+    <li className="flex flex-col gap-2 px-4 py-3" data-testid="knowledge-hit">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="text-ink-subtle" aria-hidden>{doc ? <FileText size={16} weight="duotone" /> : <Microphone size={16} weight="duotone" />}</span>
         <span className="min-w-0 max-w-full truncate text-body font-medium text-ink" title={c.title}>{c.title}</span>
@@ -63,33 +63,33 @@ export function KnowledgePage() {
   };
   function submit(e: FormEvent) { e.preventDefault(); patch({ q: draft.trim() || null }); }
 
-  if (loading) return <Skeleton className="h-40" />;
-  if (!current) return (<><PageHeader title="Knowledge" /><EmptyState icon={<Brain size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to search its knowledge." /></>);
+  if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
+  if (!current) return (<><PageHeader title="Knowledge" /><PageBody><EmptyState icon={<Brain size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to search its knowledge." /></PageBody></>);
   const hits = res.data?.chunks ?? [];
   return (
     <>
       <PageHeader title="Knowledge" description={`Search documents and past meetings in ${current.name}. Answers cite their source.`} />
-      <form onSubmit={submit} role="search" aria-label="Knowledge search" className="mb-5 flex flex-wrap items-center gap-2">
+      <form onSubmit={submit} role="search" aria-label="Knowledge search" className="flex flex-wrap items-center gap-2 border-b border-row px-4 py-2">
         <div className="relative min-w-0 flex-1 basis-64">
-          <MagnifyingGlass size={16} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
-          <Input aria-label="Search knowledge" placeholder="Ask about a decision, a term, a document…" className="pl-8" value={draft} onChange={(e) => setDraft(e.target.value)} />
+          <MagnifyingGlass size={14} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
+          <Input aria-label="Search knowledge" placeholder="Ask about a decision, a term, a document…" className="h-8 rounded-pill pl-8 text-body-sm" value={draft} onChange={(e) => setDraft(e.target.value)} />
         </div>
-        <Select aria-label="Source type" className="w-48 max-sm:w-full" value={source} onValueChange={(v) => patch({ source: v === 'all' ? null : v })} options={SOURCES} />
+        <Select aria-label="Source type" className="h-8 w-48 rounded-pill max-sm:w-full" value={source} onValueChange={(v) => patch({ source: v === 'all' ? null : v })} options={SOURCES} />
         <Button type="submit" variant="primary" disabled={!draft.trim()}>Search</Button>
       </form>
       {!q.trim() ? (
-        <EmptyState icon={<Brain size={20} weight="duotone" />} title="Search your workspace knowledge" description="Find passages from uploaded documents and meeting transcripts. Each result shows where it came from." />
+        <PageBody><EmptyState icon={<Brain size={20} weight="duotone" />} title="Search your workspace knowledge" description="Find passages from uploaded documents and meeting transcripts. Each result shows where it came from." /></PageBody>
       ) : res.isLoading ? (
-        <div className="flex flex-col gap-2"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
+        <div className="flex flex-col" aria-hidden><Skeleton className="h-20 rounded-none" /><Skeleton className="h-20 rounded-none" /></div>
       ) : res.isError ? (
-        <Alert tone="danger" title="Search failed">{errMsg(res.error)}</Alert>
+        <PageBody><Alert tone="danger" title="Search failed">{errMsg(res.error)}</Alert></PageBody>
       ) : hits.length === 0 ? (
-        <EmptyState icon={<MagnifyingGlass size={20} weight="duotone" />} title={`No results for “${q.trim()}”`} description="Nothing indexed matches yet. Documents and meeting summaries become searchable after they are processed." action={<Button onClick={() => { setDraft(''); patch({ q: null, source: null }); }}>Clear search</Button>} />
+        <PageBody><EmptyState icon={<MagnifyingGlass size={20} weight="duotone" />} title={`No results for “${q.trim()}”`} description="Nothing indexed matches yet. Documents and meeting summaries become searchable after they are processed." action={<Button onClick={() => { setDraft(''); patch({ q: null, source: null }); }}>Clear search</Button>} /></PageBody>
       ) : (
-        <Card>
-          <p className="border-b border-hairline px-5 py-3 text-body-sm text-ink-subtle" role="status">{hits.length} result{hits.length === 1 ? '' : 's'} for “{q.trim()}”</p>
-          <ul className="divide-y divide-hairline" aria-label="Search results">{hits.map((h) => <Hit key={h.chunkId} hit={h} />)}</ul>
-        </Card>
+        <>
+          <GroupHeader><p role="status">{hits.length} result{hits.length === 1 ? '' : 's'} for “{q.trim()}”</p></GroupHeader>
+          <ul className="divide-y divide-[color:var(--row-line)] border-b border-row" aria-label="Search results">{hits.map((h) => <Hit key={h.chunkId} hit={h} />)}</ul>
+        </>
       )}
     </>
   );

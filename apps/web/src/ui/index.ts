@@ -16,3 +16,5 @@ export * from './Table';
 export * from './Misc';
 export * from './Brand';
 export * from './Drawer';
+export * from './Page';
+export * from './Capsule';

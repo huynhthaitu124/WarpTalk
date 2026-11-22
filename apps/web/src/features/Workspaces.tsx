@@ -69,7 +69,7 @@ export function WorkspacesPage() {
       ) : workspaces.length === 0 ? (
         <EmptyState icon={<Buildings size={20} weight="duotone" />} title="No workspaces yet" description="Create your first workspace to start hosting translated rooms." action={<Button variant="primary" onClick={() => setOpen(true)}>Create workspace</Button>} />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-hairline bg-surface-1" role="list" aria-label="Workspaces">
+        <div className="-mx-4 border-t border-row" role="list" aria-label="Workspaces">
           {workspaces.map((w) => (
             <ListRow key={w.id} role="listitem" className="max-sm:flex-nowrap">
               <Avatar name={w.name} />

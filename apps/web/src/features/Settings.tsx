@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
-import { BookBookmark, Brain, GearSix, SlidersHorizontal, User } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
+  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, FieldRow, Input, PageHeader, SectionLabel, SettingsGroup, SettingsRow, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
 } from '@/ui';
 import { cn } from '@/lib/cn';
 import { AiSettings } from './AiSettings';
@@ -18,6 +17,7 @@ import { useTheme } from '@/lib/theme';
 import type { Workspace, WorkspaceSettings } from '@/lib/schemas';
 import { ApiError } from '@/lib/api';
 import { errMsg } from './errors';
+import { visibleSettingsSections } from './settingsNav';
 import { IS_DEV } from '@/lib/env';
 
 function ReadOnlyNote({ role }: { role: string }) {
@@ -40,26 +40,34 @@ function WorkspaceTab({ ws }: { ws: Workspace }) {
     try { await save.mutateAsync(draft); toast({ tone: 'success', title: 'Workspace settings saved' }); } catch { /* inline */ }
   }
   return (
-    <Card>
-      <CardHeader title={ws.name} description={ws.description || undefined} actions={<StatusPill status={ws.myRole} />} />
-      <CardBody>
+    <form onSubmit={submit} noValidate className="flex flex-col gap-6">
+      <section aria-label="Workspace">
+        <SectionLabel>Workspace info</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label={ws.name} description={ws.description || 'The workspace you are configuring.'}><div className="sm:text-right"><StatusPill status={ws.myRole} /></div></SettingsRow>
+        </SettingsGroup>
+      </section>
+      <section aria-label="Defaults">
+        <SectionLabel>General workspace defaults</SectionLabel>
         {!editable && <ReadOnlyNote role={ws.myRole} />}
-        <form onSubmit={submit} noValidate className="flex max-w-md flex-col gap-4">
-          <Field label="Max participants" hint="Between 1 and 1000.">
+        <SettingsGroup>
+          <FieldRow label="Max participants" hint="Between 1 and 1000.">
             <Input type="number" min={1} max={1000} value={draft.maxParticipantsLimit} disabled={!editable} onChange={(e) => set('maxParticipantsLimit', Number(e.target.value))} />
-          </Field>
-          <Field label="Audio retention (days)">
+          </FieldRow>
+          <FieldRow label="Audio retention (days)">
             <Input type="number" min={0} value={draft.audioRetentionDays} disabled={!editable} onChange={(e) => set('audioRetentionDays', Number(e.target.value))} />
-          </Field>
-          <Field label="Default AI model (optional)">
+          </FieldRow>
+          <FieldRow label="Default AI model (optional)">
             <Input value={draft.defaultAiModel ?? ''} disabled={!editable} onChange={(e) => set('defaultAiModel', e.target.value || null)} />
-          </Field>
-          <Switch label="Allow guest access" description="Let people outside the workspace join its rooms." checked={draft.allowGuestAccess} disabled={!editable} onCheckedChange={(v) => set('allowGuestAccess', v)} />
-          {save.isError && <Alert tone="danger">{errMsg(save.error)}</Alert>}
-          <div><Button type="submit" variant="primary" loading={save.isPending} disabled={!editable}>Save changes</Button></div>
-        </form>
-      </CardBody>
-    </Card>
+          </FieldRow>
+          <div className="px-5 py-4">
+            <Switch label="Allow guest access" description="Let people outside the workspace join its rooms." checked={draft.allowGuestAccess} disabled={!editable} onCheckedChange={(v) => set('allowGuestAccess', v)} />
+          </div>
+        </SettingsGroup>
+      </section>
+      {save.isError && <Alert tone="danger">{errMsg(save.error)}</Alert>}
+      <div><Button type="submit" variant="primary" loading={save.isPending} disabled={!editable}>Save changes</Button></div>
+    </form>
   );
 }
 
@@ -234,34 +242,27 @@ function AccountTab() {
   const { email, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   return (
-    <div className="flex max-w-xl flex-col gap-4">
-      <Card>
-        <CardHeader title="Profile" />
-        <CardBody className="flex items-center gap-3">
-          <Avatar name={profile.data?.fullName ?? email ?? 'User'} size="lg" />
-          <div><p className="text-body font-medium">{profile.data?.fullName ?? '—'}</p><p className="text-body-sm text-ink-subtle">{email}</p></div>
-        </CardBody>
-      </Card>
-      <Card>
-        <CardHeader title="Appearance" />
-        <CardBody>
-          <Field label="Theme"><Select value={theme} onValueChange={(v) => setTheme(v as 'dark' | 'light')} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]} /></Field>
-        </CardBody>
-      </Card>
+    <div className="flex flex-col gap-6">
+      <section aria-label="Profile">
+        <SectionLabel>Profile</SectionLabel>
+        <SettingsGroup>
+          <div className="flex items-center gap-3 px-5 py-4">
+            <Avatar name={profile.data?.fullName ?? email ?? 'User'} size="lg" />
+            <div><p className="text-body font-semibold">{profile.data?.fullName ?? '—'}</p><p className="text-body-sm text-ink-muted">{email}</p></div>
+          </div>
+        </SettingsGroup>
+      </section>
+      <section aria-label="Appearance">
+        <SectionLabel>Appearance</SectionLabel>
+        <SettingsGroup>
+          <FieldRow label="Theme"><Select value={theme} onValueChange={(v) => setTheme(v as 'dark' | 'light')} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]} /></FieldRow>
+        </SettingsGroup>
+      </section>
       <VoiceSection />
       <div><Button onClick={() => void logout()}>Sign out</Button></div>
     </div>
   );
 }
-
-const SECTIONS = [
-  { id: 'account', label: 'Account', icon: User, group: 'Personal', admin: false },
-  { id: 'general', label: 'General', icon: GearSix, group: 'Workspace', admin: false },
-  { id: 'ai', label: 'AI providers', icon: Brain, group: 'Workspace', admin: true },
-  { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal, group: 'Workspace', admin: true, system: false },
-  /** Platform-wide: only for system administrators, listed right under Advanced. */
-  { id: 'global-glossary', label: 'Global glossary', icon: BookBookmark, group: 'Workspace', admin: false, system: true },
-] as const;
 
 function SystemCard({ to }: { to: string }) {
   return (
@@ -286,39 +287,37 @@ export function SettingsPage() {
   }
   const admin = canAdmin(current);
   const sysAdmin = !!profile.data?.systemAdmin;
-  const visible = SECTIONS.filter((s) => (!s.admin || admin) && (!('system' in s) || !s.system || sysAdmin));
+  const visible = visibleSettingsSections(admin, sysAdmin);
   const active = visible.find((s) => s.id === section);
   return (
-    <>
-      <PageHeader title="Settings" description={current ? `Manage ${current.name} and your account.` : 'Manage your account.'} />
-      <div className="flex min-w-0 flex-col gap-6 md:flex-row md:gap-8">
-        <nav aria-label="Settings sections" className="md:w-48 md:shrink-0">
-          <ul className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none] md:flex-col md:overflow-visible md:pb-0">
-            {visible.map((s, i) => (
-              <li key={s.id} className="shrink-0">
-                {(i === 0 || visible[i - 1]!.group !== s.group) && <p className="px-2 pb-1 pt-2 text-eyebrow font-medium uppercase tracking-[0.4px] text-ink-subtle max-md:hidden">{s.group}</p>}
-                <Link
-                  to={wsPath(`/settings/${s.id}`)}
-                  aria-current={s.id === section ? 'page' : undefined}
-                  className={cn('flex h-8 items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-body-sm font-medium no-underline hover:no-underline focus-ring', s.id === section ? 'bg-surface-3 text-ink' : 'text-ink-subtle hover:bg-surface-3/60 hover:text-ink')}
-                >
-                  <s.icon size={16} weight="duotone" aria-hidden />{s.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="min-w-0 flex-1">
-          {loading ? <Skeleton className="h-40" /> : !active ? (
-            <EmptyState title="Not available" description="This section needs the workspace owner or admin role." action={<Link to={wsPath('/settings/general')}>Back to settings</Link>} />
-          ) : active.id === 'account' ? <AccountTab />
-            : !current ? <EmptyState title="No workspace" description="Create a workspace to configure it." />
-            : active.id === 'general' ? <WorkspaceTab ws={current} />
-            : active.id === 'ai' ? <AiSettings ws={current} />
-            : active.id === 'global-glossary' ? <GlobalGlossaryAdmin />
-            : <><RuntimeTab ws={current} />{sysAdmin && <SystemCard to={wsPath('/settings/global-glossary')} />}</>}
-        </div>
+    <div className="mx-auto w-full max-w-[640px] px-4 pb-12 pt-8">
+      <PageHeader size="settings" title="Settings" description={current ? `Manage ${current.name} and your account.` : 'Manage your account.'} flush />
+      {/* Desktop: the sections live in the sidebar (it swaps to the settings nav). Mobile: a pill strip. */}
+      <nav aria-label="Settings sections" className="mb-5 md:hidden">
+        <ul className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+          {visible.map((s) => (
+            <li key={s.id} className="shrink-0">
+              <Link
+                to={wsPath(`/settings/${s.id}`)}
+                aria-current={s.id === section ? 'page' : undefined}
+                className={cn('flex h-8 items-center gap-2 whitespace-nowrap rounded-pill border px-3.5 text-body font-medium no-underline hover:no-underline focus-ring', s.id === section ? 'border-transparent bg-surface-2 text-ink' : 'border-hairline/60 text-ink-muted hover:text-ink')}
+              >
+                <s.icon size={16} weight="duotone" aria-hidden />{s.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div className="min-w-0">
+        {loading ? <Skeleton className="h-40" /> : !active ? (
+          <EmptyState title="Not available" description="This section needs the workspace owner or admin role." action={<Link to={wsPath('/settings/general')}>Back to settings</Link>} />
+        ) : active.id === 'account' ? <AccountTab />
+          : !current ? <EmptyState title="No workspace" description="Create a workspace to configure it." />
+          : active.id === 'general' ? <WorkspaceTab ws={current} />
+          : active.id === 'ai' ? <AiSettings ws={current} />
+          : active.id === 'global-glossary' ? <GlobalGlossaryAdmin />
+          : <><RuntimeTab ws={current} />{sysAdmin && <SystemCard to={wsPath('/settings/global-glossary')} />}</>}
       </div>
-    </>
+    </div>
   );
 }
