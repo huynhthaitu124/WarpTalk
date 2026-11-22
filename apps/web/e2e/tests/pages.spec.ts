@@ -155,7 +155,8 @@ test.describe('Design system and brand', () => {
     expect(await app.locator('svg.lucide').count()).toBe(0);
     // Features without a backend are not advertised
     await expect(side.getByRole('link', { name: 'Glossary' })).toHaveCount(1); // backed by the glossary API
-    for (const n of ['Calendar', 'Documents', 'Voice profiles']) await expect(side.getByRole('link', { name: n })).toHaveCount(0);
+    await expect(side.getByRole('link', { name: 'Documents' })).toHaveCount(1); // backed by the documents API
+    for (const n of ['Calendar', 'Voice profiles']) await expect(side.getByRole('link', { name: n })).toHaveCount(0);
   });
 
   test('DS-07 tables inside cards do not draw a second frame', async ({ app, tokens, workspace }) => {

@@ -270,6 +270,48 @@ MEM-01..03 (invite, resend, revoke) are in `pages.spec.ts`.
 | MEM-07 | P0 | Owner transfers ownership to an admin | New owner OWNER, previous owner ADMIN and without controls | auto |
 | MEM-08 | P1 | Remove answers 409 | Message shown inline in the dialog; row stays | auto |
 
+## 15. Documents (DOC) - `e2e/tests/documents.spec.ts` (chromium project)
+
+Real backend with a throwaway local object store (`STORAGE_LOCAL_DIR` is a `mktemp -d` set by `scripts/e2e-backend.sh`). Upload, list, patch, archive and download are real; ingestion happens asynchronously on the server, so assertions accept `pending|completed|skipped` and only the AI-off case (`skipped`, `ai_retrieval_not_allowed`) is deterministic. DOC-12/13 and the visual cases mock only the list `GET`.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| DOC-01 | P0 | Owner: Upload dialog, picker, title + category Legal | Row with file name, category and an ingestion pill; API holds title, `LEGAL`, `MEMBERS_ONLY`, AI allowed | auto |
+| DOC-02 | P1 | Drag and drop a CSV, access Admins only, AI switch off | Selected file shown; row appears; API `ADMIN_ONLY`, AI off, status `skipped` / `ai_retrieval_not_allowed` | auto |
+| DOC-03 | P0 | Pick `.exe`, an empty file and a 20 MB + 1 file | Client alerts (type list, "The file is empty.", "exceeds the 20 MB limit."); no POST is sent; submit without a file asks for one | auto |
+| DOC-04 | P0 | API: `.exe`, 21 MB txt, fake `.pdf`; UI: fake `.pdf` | 415 `UNSUPPORTED_FILE_TYPE`, 413 `FILE_TOO_LARGE`, 415 `FILE_CONTENT_MISMATCH`; nothing stored; UI shows the server message and keeps the dialog open | auto |
+| DOC-05 | P0 | Member context | List readable, no Upload button, read-only note, drawer has Download but no form/Archive; API upload, patch, archive answer 403 | auto |
+| DOC-06 | P0 | Owner uploads ADMIN_ONLY + PUBLIC docs; member and owner views | Member never sees the admin-only title (list, search); direct GET and download answer 404; owner sees both | auto |
+| DOC-07 | P0 | Drawer: title, category, access, AI toggle, Save | Toast, drawer heading updated, ingestion note says AI retrieval is off; API patched; row shows new category and `skipped` | auto |
+| DOC-08 | P0 | Archive: Cancel, then confirm | Dialog explains consequence; Cancel keeps it (API 200); confirm removes the row (API 404) | auto |
+| DOC-09 | P0 | Download from the drawer | Browser download with the original file name; bytes equal the upload | auto |
+| DOC-10 | P1 | Search by title, category filter, no match, Clear filters | List narrows and restores | auto |
+| DOC-11 | P1 | Open the page; upload a PDF | PDF/DOCX extraction notice always visible ("no indexable content"); PDF accepted | auto |
+| DOC-12 | P1 | Mocked list with all four statuses | Pills Completed/Skipped/Pending/Failed; focus shows a reason tooltip; drawer explains PDF extraction is unavailable | auto |
+| DOC-13 | P1 | Mocked list: pending twice, then completed | List polls, pill flips to Completed without reload, polling stops | auto |
+| DOC-14 | P0 | axe on list, drawer and upload dialog, dark + light, 1280 + 390 | No serious/critical violations, no horizontal scroll | auto (4 tests) |
+| DOC-15/16 | P1 | Screenshots of the list and of the drawer, dark + light, 1280 + 390 | `documents-{theme}-{vp}.png`, `documents-drawer-{theme}-{vp}.png` | auto (8 tests) |
+| DOC-17 | P2 | More than 20 documents: pagination | Previous/Next | todo (needs 21 uploads; covered by manual check) |
+
+## 16. Voice cloning (VOICE) - `e2e/tests/voice.spec.ts`, `voice-media.spec.ts`
+
+Fixtures: `makeWav` in `fixtures/files.ts` generates silent and speech-like mono PCM16 WAVs. The test backend has no voice provider unless one is configured in the environment, so a good sample is allowed to end in either a quality score or `503 VOICE_CLONING_UNAVAILABLE`.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| VOICE-01 | P0 | Settings > Account: consent card, checkbox, "I consent" | Button disabled until checked; POST body has `consentVersion` `2026-11` and `acknowledgementHash` = SHA-256 of the displayed text; status shows date and version; persists on reload | auto |
+| VOICE-02 | P0 | Revoke consent: Cancel, then confirm | Dialog explains deletion; Cancel keeps consent; confirm returns to the consent card; API `granted: false` | auto |
+| VOICE-03 | P0 | Upload a silent 12 s WAV, submit | Specific message "too quiet ..." (`VOICE_SAMPLE_TOO_QUIET`); no profile stored | auto |
+| VOICE-04 | P0 | Upload a speech-like 12 s WAV, submit | Either "Quality score N / 100" and the status card updates, or `VOICE_CLONING_UNAVAILABLE` explained as "no voice provider is configured" | auto |
+| VOICE-05 | P1 | 2 s WAV; an MP3 renamed; a 7 MB file | `VOICE_SAMPLE_TOO_SHORT` text; client "not a WAV recording"; client "under 6 MB" | auto |
+| VOICE-06 | P0 | API enroll without consent | 4xx `VOICE_CONSENT_REQUIRED` | auto |
+| VOICE-07 | P1 | Two users | Consent is per user | auto |
+| VOICE-08 | P0 | axe on consent card, enrollment card and error state, dark + light, 1280 + 390 | No serious/critical violations, no horizontal scroll | auto (4 tests) |
+| VOICE-09 | P1 | Screenshots of the voice section (consent, enrollment), dark + light, 1280 + 390 | `voice-{consent,enroll}-{theme}-{vp}.png` | auto (4 tests) |
+| VOICE-10 | P0 | `meeting-media` project (fake mic): Record sample | Live meter moves, timer counts, Stop locked until 10 s, auto-stop at 20 s; sample is mono PCM16 WAV about 10 s (24 kHz) in the enroll request; result or friendly error shown | auto |
+| VOICE-11 | P1 | Record, then Cancel | Microphone released, nothing kept, Record available again | auto |
+| VOICE-12 | P2 | Provider configured: success path end to end, `cloneEnabled` true | Needs a provider key in the test environment | todo |
+
 ## Fixes in this round
 
 | ID | Case | Spec |
@@ -291,7 +333,9 @@ MEM-01..03 (invite, resend, revoke) are in `pages.spec.ts`.
 | Visual regression | 8 | 2 | 6 | 0 | 8 |
 | macOS WebView | 3 | 0 | 2 | 1 | 3 |
 | External meeting | 27 | 10 | 15 | 2 | 25 |
-| **Total** | **121** | **46** | **63** | **12** | **113** |
+| Documents | 17 | 9 | 7 | 1 | 16 |
+| Voice cloning | 12 | 7 | 4 | 1 | 11 |
+| **Total (areas listed here; chat, language, glossary and members have their own sections)** | **150** | **62** | **74** | **14** | **140** |
 
 All P0 and P1 cases are automated; the nine `todo` cases are P2. Spec files: `e2e/tests/{auth,workspace,rooms,settings,meeting,meeting-room,meeting-media,external,a11y,keyboard,visual,webview}.spec.ts` (64 Playwright tests in the chromium project because a11y/visual cases run in dark and light; the macos-webview project re-runs `a11y`, `visual` and `webview`).
 
