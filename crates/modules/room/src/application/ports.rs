@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use warptalk_contracts::events::{AudioRoutesSnapshot, RoomCommand};
+use warptalk_contracts::events::{AudioRoutesSnapshot, RoomCommand, RouteStatus};
 use warptalk_kernel::{
     AppError, AppResult, Page, PageRequest, ParticipantId, RoomId, UserId, WorkspaceId,
     WorkspaceRole,
@@ -336,6 +336,14 @@ pub trait RoomRepo: Send + Sync {
         caller: Caller,
         now: DateTime<Utc>,
     ) -> AppResult<Mutation>;
+    /// Set the runtime status of a current route (`CAPTION_ONLY`, `STANDARD_VOICE`, ...). `false`
+    /// when the route is not current in that room or already `COMPLETED`.
+    async fn set_route_status(
+        &self,
+        room: RoomId,
+        route: uuid::Uuid,
+        status: RouteStatus,
+    ) -> AppResult<bool>;
     async fn leave(&self, room: RoomId, user: UserId, now: DateTime<Utc>) -> AppResult<Mutation>;
     /// Change the caller's own speak/listen language; reconciles routes when the room is live.
     async fn update_languages(&self, input: UpdateLanguagesInput) -> AppResult<Mutation>;

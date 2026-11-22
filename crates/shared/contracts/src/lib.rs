@@ -3,4 +3,6 @@
 pub mod channels;
 pub mod events;
 pub mod keys;
+pub mod media;
 pub mod streams;
+pub mod text;

@@ -10,7 +10,7 @@ use warptalk_kernel::{
 };
 
 use crate::application::ports::{MemberRecord, NewWorkspace, WorkspaceRecord, WorkspaceRepo};
-use crate::domain::{self, WorkspaceSettings, role_from_id, role_id};
+use crate::domain::{self, AiPolicy, WorkspaceSettings, role_from_id, role_id};
 
 pub struct PgWorkspaceRepo {
     pool: PgPool,
@@ -272,7 +272,20 @@ impl WorkspaceRepo for PgWorkspaceRepo {
                 .fetch_one(&mut *conn)
                 .await
                 .map_err(map_sqlx_error)?;
-        Ok(serde_json::from_value(v).unwrap_or_default())
+        let policy = AiPolicy::from_settings(&v);
+        let settings: WorkspaceSettings = serde_json::from_value(v).unwrap_or_default();
+        Ok(settings.with_effective_ai_policy(policy))
+    }
+
+    async fn ai_policy(&self, ws: WorkspaceId) -> AppResult<AiPolicy> {
+        let v: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT settings FROM workspace.workspaces WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(ws.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(AiPolicy::from_settings(&v.unwrap_or_default()))
     }
 
     async fn update_settings(

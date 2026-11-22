@@ -25,7 +25,7 @@ use warptalk_pipeline_runtime::{
 
 use crate::downstream::{DownstreamContext, DownstreamStage};
 use crate::results::ResultSink;
-use crate::routes::RoutesView;
+use crate::routes::{RoutesView, is_primary_identity, split_identity};
 use crate::transport::{MediaError, MediaEvent, MediaSession, MediaTransport, ParticipantAudio};
 
 /// How long a stopping room waits for its downstream stage to drain before aborting it.
@@ -51,7 +51,9 @@ pub struct RoomWorkerDeps {
     pub results: Arc<dyn ResultSink>,
     /// Base pipeline config; changes are applied through `RoomPipeline::update_config`.
     pub config: watch::Receiver<PipelineConfig>,
-    /// Per-room flash mode override (`translationRoom:{id}:flash_mode`), applied over `config`.
+    /// Explicit flash mode override applied over `config` (benchmarks, tests). The host leaves
+    /// it `None`: the per-room flash mode is `flash_mode_default` of the room's `pipeline`
+    /// settings (B-11), already part of `config`.
     pub flash_override: Option<bool>,
     /// Identity the agent joins under.
     pub identity: String,
@@ -96,6 +98,7 @@ impl RoomWorker {
                 media: session.clone(),
                 results: deps.results,
                 routes: routes_rx.clone(),
+                session_start_epoch_ms: chrono::Utc::now().timestamp_millis(),
             };
             let stage = deps.downstream;
             tokio::spawn(async move { stage.run(ctx, segments).await })
@@ -255,11 +258,15 @@ impl Runner {
     }
 
     fn on_audio(&mut self, a: ParticipantAudio) {
-        // Media is identified by LiveKit identity (a user id); speakers are participants.
-        let speaker = self
-            .identities
-            .get(&a.participant)
-            .unwrap_or(&a.participant);
+        // Media is identified by LiveKit identity (`{userId}` or `{userId}:{clientTag}`);
+        // speakers are participants. Tagged identities are secondary connections (listeners):
+        // their audio is never transcribed.
+        if !is_primary_identity(&a.participant) {
+            metrics::counter!(AUDIO_IGNORED_METRIC).increment(1);
+            return;
+        }
+        let base = split_identity(&a.participant).0;
+        let speaker = self.identities.get(base).map_or(base, String::as_str);
         match self.active.get_mut(speaker) {
             Some(sp) => {
                 let handle = &sp.handle;

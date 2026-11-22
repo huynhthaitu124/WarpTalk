@@ -77,6 +77,15 @@ pub struct WorkspaceSettings {
     pub allow_guest_access: bool,
     pub default_ai_model: Option<String>,
     pub audio_retention_days: i32,
+    /// AI policy flags (B-13), stored under these exact jsonb keys of `workspace.workspaces.settings`
+    /// because the worker and ai-plane read them there. On PUT, `None` leaves the stored value
+    /// alone; GET always returns the effective value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_retrieval_allowed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_llm_allowed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_suggest_enabled: Option<bool>,
 }
 
 impl Default for WorkspaceSettings {
@@ -86,7 +95,40 @@ impl Default for WorkspaceSettings {
             allow_guest_access: false,
             default_ai_model: None,
             audio_retention_days: 30,
+            ai_retrieval_allowed: None,
+            external_llm_allowed: None,
+            ai_suggest_enabled: None,
         }
+    }
+}
+
+/// Effective workspace AI policy (defaults: retrieval off, external LLM off, suggestions on).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AiPolicy {
+    pub ai_retrieval_allowed: bool,
+    pub external_llm_allowed: bool,
+    pub ai_suggest_enabled: bool,
+}
+
+impl AiPolicy {
+    /// Reads the jsonb `settings` object; only a literal JSON boolean counts.
+    pub fn from_settings(v: &serde_json::Value) -> Self {
+        let flag = |k: &str, default: bool| v.get(k).and_then(|b| b.as_bool()).unwrap_or(default);
+        Self {
+            ai_retrieval_allowed: flag("aiRetrievalAllowed", false),
+            external_llm_allowed: flag("externalLlmAllowed", false),
+            ai_suggest_enabled: flag("aiSuggestEnabled", true),
+        }
+    }
+}
+
+impl WorkspaceSettings {
+    /// Fill the optional AI flags with their effective values (for responses).
+    pub fn with_effective_ai_policy(mut self, p: AiPolicy) -> Self {
+        self.ai_retrieval_allowed = Some(p.ai_retrieval_allowed);
+        self.external_llm_allowed = Some(p.external_llm_allowed);
+        self.ai_suggest_enabled = Some(p.ai_suggest_enabled);
+        self
     }
 }
 

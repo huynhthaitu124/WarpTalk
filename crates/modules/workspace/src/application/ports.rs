@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use warptalk_kernel::{AppResult, Page, PageRequest, UserId, WorkspaceId, WorkspaceRole};
 
-use crate::domain::WorkspaceSettings;
+use crate::domain::{AiPolicy, WorkspaceSettings};
 
 #[derive(Debug, Clone)]
 pub struct UserSummary {
@@ -112,4 +112,12 @@ pub trait WorkspaceRepo: Send + Sync {
     ) -> AppResult<()>;
     async fn member_role(&self, ws: WorkspaceId, user: UserId) -> AppResult<Option<WorkspaceRole>>;
     async fn is_active(&self, ws: WorkspaceId) -> AppResult<bool>;
+    /// Effective AI policy flags; defaults when the workspace is missing or deleted.
+    async fn ai_policy(&self, ws: WorkspaceId) -> AppResult<AiPolicy>;
+}
+
+/// Told after a workspace's settings were written (api wires cache/Redis refreshers).
+#[async_trait]
+pub trait SettingsObserver: Send + Sync {
+    async fn settings_changed(&self, ws: WorkspaceId);
 }

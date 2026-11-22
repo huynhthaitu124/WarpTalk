@@ -162,6 +162,39 @@ impl RoomQueries {
             .map(|_| ())
     }
 
+    /// Ids of the workspace's rooms that are `IN_PROGRESS` (at most 1000).
+    pub async fn in_progress_rooms(&self, ws: WorkspaceId) -> AppResult<Vec<RoomId>> {
+        let mut out = Vec::new();
+        for page in 1..=10 {
+            let req = warptalk_kernel::PageRequest {
+                page,
+                page_size: 100,
+            };
+            let got = self
+                .repo
+                .list(ws, Some(domain::RoomStatus::InProgress), &req)
+                .await?;
+            let n = got.items.len();
+            out.extend(got.items.into_iter().map(|r| r.id));
+            if n < 100 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Record a route's runtime status reported by the pipeline (`ROUTE_DEGRADED`): the
+    /// `/audio-routes` snapshot then shows it. `false` when the route is not a current,
+    /// unfinished route of `room`.
+    pub async fn set_route_status(
+        &self,
+        room: RoomId,
+        route: uuid::Uuid,
+        status: warptalk_contracts::events::RouteStatus,
+    ) -> AppResult<bool> {
+        self.repo.set_route_status(room, route, status).await
+    }
+
     /// Participant status of `user` in `room`; `None` when the user never joined.
     pub async fn participant_summary(
         &self,

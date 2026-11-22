@@ -27,7 +27,7 @@
 //!   point), `e2e_last_dub_audio` (first audio of the turn's last sentence). The speech end of
 //!   a turn is only known at commit, so they are computed when the end-of-turn marker arrives.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, warn};
 use uuid::Uuid;
 use warptalk_contracts::events::TranslationRoomSystemEvent;
+use warptalk_contracts::text::join_sentences;
 use warptalk_kernel::RoomId;
 use warptalk_mt::lang::is_same_language;
 use warptalk_mt::text::normalize_key;
@@ -55,7 +56,7 @@ use warptalk_tts::{
 use crate::prewarm::PrewarmSynthesizer;
 use crate::tuning::LatencyTuning;
 
-use crate::results::{ResultSink, stt_result_from_segment};
+use crate::results::{ResultSink, SttResultMeta, logprob_to_probability, stt_result_from_segment};
 use crate::routes::RoutesView;
 use crate::transport::{MediaSession, PcmChunk};
 
@@ -77,7 +78,7 @@ pub const STAGE_E2E_LAST_DUB: &str = "e2e_last_dub_audio";
 /// Outcome counter label of the stt publish.
 pub const STAGE_STT_PUBLISH: &str = "stt_publish";
 /// Data-channel topic of caption messages.
-pub const CAPTION_TOPIC: &str = "captions";
+pub const CAPTION_TOPIC: &str = warptalk_contracts::media::CAPTIONS_TOPIC;
 
 /// Everything a stage needs for one room.
 pub struct DownstreamContext {
@@ -88,6 +89,20 @@ pub struct DownstreamContext {
     pub results: Arc<dyn ResultSink>,
     /// Current audio routes (speakers, target languages); changes as the room evolves.
     pub routes: watch::Receiver<Arc<RoutesView>>,
+    /// Epoch milliseconds of the start of this room's translation session in this process: the
+    /// origin of the `start_ms`/`end_ms` offsets on `stt:results` (also sent as `anchor_ms`).
+    pub session_start_epoch_ms: i64,
+}
+
+impl DownstreamContext {
+    /// Display name and user id of a speaker from the current routes.
+    fn speaker_info(&self, speaker: &str) -> (Option<String>, Option<String>) {
+        let v = self.routes.borrow();
+        (
+            v.name_of(speaker).map(str::to_owned),
+            v.users.get(speaker).cloned(),
+        )
+    }
 }
 
 /// Consumes the segments of one room until the channel closes (room shutdown), then returns.
@@ -150,17 +165,28 @@ fn epoch_ms() -> i64 {
 /// messages with the same `segment_id`. Returns when both are done (`None`: empty text).
 async fn publish_stt_caption(ctx: &DownstreamContext, seg: &SttSegment) -> Option<Instant> {
     let received = Instant::now();
-    let result = stt_result_from_segment(ctx.room, seg, received, epoch_ms())?;
+    let (speaker_name, speaker_user) = ctx.speaker_info(&seg.speaker);
+    let meta = SttResultMeta {
+        speaker_name: speaker_name.as_deref(),
+        session_start_epoch_ms: ctx.session_start_epoch_ms,
+    };
+    let result = stt_result_from_segment(ctx.room, seg, received, epoch_ms(), &meta)?;
     let caption = serde_json::json!({
         "type": "stt",
         "segment_id": result.segment_id,
         "meeting_id": result.meeting_id,
         "speaker_id": result.speaker_id,
+        "speakerId": result.speaker_id,
+        "speakerName": speaker_name,
+        "speakerUserId": speaker_user,
         "seq": seg.seq,
         "utterance_seq": seg.utterance_seq,
         "text": result.text,
         "lang": result.language,
-        "is_early": seg.is_early,
+        // Flash sentences are final, append-only text: `is_early` stays false for clients
+        // (the old meaning "interim forever" made every flash sentence render as interim).
+        "is_early": false,
+        "is_flash": seg.is_early,
         "translations": {},
         "ts_ms": result.timestamp_ms,
         "emittedAtMs": epoch_ms(),
@@ -741,6 +767,80 @@ impl Ingest {
     }
 }
 
+/// Sentences of one (segment, target language) seen so far, by sentence index.
+#[derive(Default)]
+struct SentencesSoFar {
+    source: BTreeMap<u32, String>,
+    target: BTreeMap<u32, String>,
+}
+
+/// Bound on segments being assembled (an abandoned segment never sends its last sentence).
+const MAX_OPEN_SEGMENTS: usize = 1024;
+
+/// Accumulates per-sentence translations into the cumulative text of their segment, so a client
+/// that keys captions by `segment_id` shows the whole segment, not the last sentence.
+#[derive(Default)]
+struct SegmentAssembler {
+    open: HashMap<(Uuid, String), SentencesSoFar>,
+}
+
+impl SegmentAssembler {
+    /// Records `t` and returns the cumulative (source, target) text of its segment so far.
+    fn add(&mut self, t: &Translation) -> (String, String) {
+        if self.open.len() >= MAX_OPEN_SEGMENTS {
+            self.open.clear();
+        }
+        let key = (t.segment_id, t.target_lang.clone());
+        let e = self.open.entry(key.clone()).or_default();
+        e.source.insert(t.chunk_idx, t.source_text.clone());
+        e.target.insert(t.chunk_idx, t.text.clone());
+        let source = join_sentences(&t.source_lang, e.source.values().map(String::as_str));
+        let target = join_sentences(&t.target_lang, e.target.values().map(String::as_str));
+        if t.is_final_chunk {
+            self.open.remove(&key);
+        }
+        (source, target)
+    }
+}
+
+/// The caption message of one translated sentence (`type: "translation"`). `translations` holds
+/// the cumulative translation of the segment so far, `text` the cumulative source text;
+/// `sentenceIndex`/`isLastSentence` say which sentence this is, `sentenceText` and
+/// `sentenceTranslations` carry that sentence alone.
+fn translation_caption(
+    room: RoomId,
+    t: &Translation,
+    source: &str,
+    target: &str,
+    speaker_name: Option<&str>,
+    speaker_user: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "translation",
+        "segment_id": t.segment_id,
+        "wire_segment_id": t.wire_segment_id(),
+        "chunk_idx": t.chunk_idx,
+        "is_final_chunk": t.is_final_chunk,
+        "sentenceIndex": t.chunk_idx,
+        "isLastSentence": t.is_final_chunk,
+        "meeting_id": room,
+        "speaker_id": t.speaker,
+        "speakerId": t.speaker,
+        "speakerName": speaker_name,
+        "speakerUserId": speaker_user,
+        "seq": t.seq,
+        "utterance_seq": t.utterance_seq,
+        "text": source,
+        "sentenceText": t.source_text,
+        "lang": t.source_lang,
+        "is_early": false,
+        "is_flash": t.is_early,
+        "translations": { t.target_lang.clone(): target },
+        "sentenceTranslations": { t.target_lang.clone(): t.text.clone() },
+        "emittedAtMs": epoch_ms(),
+    })
+}
+
 async fn translation_task(
     ctx: Arc<DownstreamContext>,
     mut rx: mpsc::Receiver<Translation>,
@@ -748,28 +848,25 @@ async fn translation_task(
     dub: bool,
     tracker: Arc<E2eTracker>,
 ) {
+    let mut assembler = SegmentAssembler::default();
     while let Some(t) = rx.recv().await {
         // TTS first: the dub must not wait for a caption or a stream write.
         if dub && !t.passthrough && tts_tx.send(t.clone()).await.is_err() {
             warn!("tts stage gone; translation not dubbed");
         }
-        let caption = serde_json::json!({
-            "type": "translation",
-            "segment_id": t.segment_id,
-            "wire_segment_id": t.wire_segment_id(),
-            "chunk_idx": t.chunk_idx,
-            "is_final_chunk": t.is_final_chunk,
-            "meeting_id": ctx.room,
-            "speaker_id": t.speaker,
-            "seq": t.seq,
-            "utterance_seq": t.utterance_seq,
-            "text": t.source_text,
-            "lang": t.source_lang,
-            "is_early": t.is_early,
-            "translations": { t.target_lang.clone(): t.text.clone() },
-            "emittedAtMs": epoch_ms(),
-        });
-        let contract = t.to_contract();
+        let (source, target) = assembler.add(&t);
+        let (name, user) = ctx.speaker_info(&t.speaker);
+        let caption = translation_caption(
+            ctx.room,
+            &t,
+            &source,
+            &target,
+            name.as_deref(),
+            user.as_deref(),
+        );
+        let mut contract = t.to_contract();
+        // The wire confidence is a probability; the runtime's is an average logprob.
+        contract.source_stt_confidence = t.confidence.and_then(logprob_to_probability);
         let (stored, shown) = tokio::join!(
             ctx.results.publish_translate(&contract),
             ctx.media
@@ -1035,6 +1132,7 @@ mod user_keyed_tests {
                 target_participant_id: Pid::new(),
                 source_user_id: Some(uid),
                 target_user_id: None,
+                source_display_name: None,
                 source_language: "en".into(),
                 target_language: "vi".into(),
                 voice_clone_enabled: true,

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use warptalk_kernel::{AppResult, Clock, Page, PageRequest, UserId, WorkspaceId, WorkspaceRole};
 
 use super::ports::{
-    MemberRecord, NewWorkspace, UserDirectory, UserSummary, WorkspaceRecord, WorkspaceRepo,
+    MemberRecord, NewWorkspace, SettingsObserver, UserDirectory, UserSummary, WorkspaceRecord,
+    WorkspaceRepo,
 };
 use crate::domain::{self, WorkspaceSettings};
 
@@ -13,6 +14,7 @@ pub struct WorkspaceService {
     repo: Arc<dyn WorkspaceRepo>,
     users: Arc<dyn UserDirectory>,
     clock: Arc<dyn Clock>,
+    observer: std::sync::OnceLock<Arc<dyn SettingsObserver>>,
 }
 
 pub struct MemberView {
@@ -26,7 +28,17 @@ impl WorkspaceService {
         users: Arc<dyn UserDirectory>,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        Self { repo, users, clock }
+        Self {
+            repo,
+            users,
+            clock,
+            observer: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Install the settings observer (once; later calls are ignored).
+    pub fn set_observer(&self, observer: Arc<dyn SettingsObserver>) {
+        let _ = self.observer.set(observer);
     }
 
     pub async fn create(
@@ -88,7 +100,10 @@ impl WorkspaceService {
         self.repo
             .update_settings(ws, actor, &settings, self.clock.now())
             .await?;
-        Ok(settings)
+        if let Some(observer) = self.observer.get() {
+            observer.settings_changed(ws).await;
+        }
+        self.repo.get_settings(ws, actor).await
     }
 
     pub async fn list_members(

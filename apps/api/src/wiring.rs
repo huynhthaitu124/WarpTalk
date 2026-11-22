@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::room_effects::{RoomAiPolicyRefresher, RoomEffectsHandles, RoomEffectsPublisher};
 use crate::settings_http::{self, SettingsHttpState};
+use crate::suggestions_http::{self, SuggestionsState};
 use async_trait::async_trait;
 use axum::Router;
 use axum::extract::Request;
@@ -56,7 +58,8 @@ use warptalk_settings::{SettingsStore, namespaces};
 use warptalk_storage::ObjectStore;
 use warptalk_transcript::application::glossary_ports::WorkspaceRoles;
 use warptalk_transcript::application::ports::{
-    AccessTarget, AlwaysSaveRoomPolicy, RoomDetails, RoomHost, StaticAiPolicy, TranscriptReadAccess,
+    AccessTarget, AlwaysSaveRoomPolicy, RoomDetails, RoomHost, TranscriptReadAccess,
+    WorkspaceAiPolicy,
 };
 use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
@@ -233,6 +236,20 @@ impl TranscriptReadAccess for TranscriptRoomAdapter {
                 .await?
                 .is_some()),
         }
+    }
+}
+
+/// Adapter: transcript's `WorkspaceAiPolicy` backed by the workspace AI flags (B-13).
+pub struct TranscriptWorkspaceAiPolicy(pub WorkspaceQueries);
+
+#[async_trait]
+impl WorkspaceAiPolicy for TranscriptWorkspaceAiPolicy {
+    async fn ai_retrieval_allowed(&self, ws: WorkspaceId) -> AppResult<bool> {
+        Ok(self.0.ai_policy(ws).await?.ai_retrieval_allowed)
+    }
+
+    async fn external_llm_allowed(&self, ws: WorkspaceId) -> AppResult<bool> {
+        Ok(self.0.ai_policy(ws).await?.external_llm_allowed)
     }
 }
 
@@ -550,49 +567,6 @@ pub async fn build(
         Some(conn) => Arc::new(RedisConfigNotifier::new(conn.clone())),
         None => Arc::new(NoopNotifier),
     };
-    let transcript_redis = redis.clone();
-    let room_queries_cell: Arc<std::sync::OnceLock<RoomQueries>> = Arc::default();
-    let events: Arc<dyn RoomEventPublisher> = match redis {
-        Some(conn) => Arc::new(RoomWorkspaceKeyPublisher::new(
-            Arc::new(RedisRoomEventPublisher::new(conn.clone())),
-            conn,
-            room_queries_cell.clone(),
-        )),
-        None => Arc::new(NoopRoomEventPublisher),
-    };
-    let room = RoomModule::new(RoomDeps {
-        pool: pool.clone(),
-        jwt: jwt.clone(),
-        clock: clock.clone(),
-        workspace: Arc::new(WorkspacePolicyAdapter(workspace.queries())),
-        consent,
-        events,
-    });
-
-    let _ = room_queries_cell.set(room.queries());
-    let transcript = transcript_redis.map(|conn| {
-        let rooms = Arc::new(TranscriptRoomAdapter {
-            rooms: room.queries(),
-            workspaces: workspace.queries(),
-        });
-        TranscriptModule::new(TranscriptDeps {
-            pool: pool.clone(),
-            redis: conn,
-            jwt: jwt.clone(),
-            clock: Arc::new(SystemClock),
-            rooms: rooms.clone(),
-            // TODO: wire room SaveTranscript and the workspace AI policy once those facades exist.
-            room_policy: Arc::new(AlwaysSaveRoomPolicy),
-            workspace_ai: Arc::new(StaticAiPolicy {
-                retrieval: false,
-                external_llm: false,
-            }),
-            host: rooms.clone(),
-            read_access: rooms,
-        })
-        .with_workspace_roles(Arc::new(TranscriptWorkspaceRoles(workspace.queries())))
-    });
-
     let configured = opts.livekit.is_some();
     let livekit_cfg = opts.livekit.unwrap_or_else(|| LiveKitConfig {
         url: String::new(),
@@ -610,6 +584,63 @@ pub async fn build(
         },
         (None, false) => Arc::new(NoopRoomService),
     };
+    let transcript_redis = redis.clone();
+    let suggestions_redis = redis.clone();
+    let effects = RoomEffectsHandles::default();
+    let policy_conn = redis.clone();
+    let room_queries_cell: Arc<std::sync::OnceLock<RoomQueries>> = Arc::default();
+    let events: Arc<dyn RoomEventPublisher> = match redis {
+        Some(conn) => Arc::new(RoomEffectsPublisher::new(
+            Arc::new(RoomWorkspaceKeyPublisher::new(
+                Arc::new(RedisRoomEventPublisher::new(conn.clone())),
+                conn.clone(),
+                room_queries_cell.clone(),
+            )),
+            conn,
+            room_service.clone(),
+            effects.clone(),
+        )),
+        None => Arc::new(NoopRoomEventPublisher),
+    };
+    let room = RoomModule::new(RoomDeps {
+        pool: pool.clone(),
+        jwt: jwt.clone(),
+        clock: clock.clone(),
+        workspace: Arc::new(WorkspacePolicyAdapter(workspace.queries())),
+        consent,
+        events,
+    });
+
+    let _ = room_queries_cell.set(room.queries());
+    let _ = effects.rooms.set(room.queries());
+    let _ = effects.workspaces.set(workspace.queries());
+    if let Some(conn) = policy_conn {
+        // B-12/B-13: a settings write refreshes `ai_policy` of the workspace's live rooms.
+        workspace.set_settings_observer(Arc::new(RoomAiPolicyRefresher {
+            conn,
+            handles: effects.clone(),
+        }));
+    }
+    let transcript = transcript_redis.map(|conn| {
+        let rooms = Arc::new(TranscriptRoomAdapter {
+            rooms: room.queries(),
+            workspaces: workspace.queries(),
+        });
+        TranscriptModule::new(TranscriptDeps {
+            pool: pool.clone(),
+            redis: conn,
+            jwt: jwt.clone(),
+            clock: Arc::new(SystemClock),
+            rooms: rooms.clone(),
+            // TODO: wire room SaveTranscript and the workspace AI policy once those facades exist.
+            room_policy: Arc::new(AlwaysSaveRoomPolicy),
+            workspace_ai: Arc::new(TranscriptWorkspaceAiPolicy(workspace.queries())),
+            host: rooms.clone(),
+            read_access: rooms,
+        })
+        .with_workspace_roles(Arc::new(TranscriptWorkspaceRoles(workspace.queries())))
+    });
+
     let meeting = MeetingModule::new(MeetingDeps {
         pool: pool.clone(),
         jwt: jwt.clone(),
@@ -667,6 +698,14 @@ pub async fn build(
         results,
     })
     .await;
+    let suggestions_router = suggestions_redis.map(|redis| {
+        suggestions_http::router(SuggestionsState {
+            redis,
+            jwt: jwt.clone(),
+            rooms: room.queries(),
+            workspaces: workspace.queries(),
+        })
+    });
     let settings_router = settings_http::router(SettingsHttpState {
         store: settings,
         pool,
@@ -683,6 +722,10 @@ pub async fn build(
         .merge(settings_router)
         .merge(assistant.router())
         .merge(knowledge.router());
+    let api = match suggestions_router {
+        Some(r) => api.merge(r),
+        None => api,
+    };
     // Transcript routes (glossaries) need Redis for the pipeline snapshots; without Redis they are not mounted.
     let api = match transcript {
         Some(t) => api.merge(t.router()),

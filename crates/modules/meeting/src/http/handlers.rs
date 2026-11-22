@@ -19,8 +19,11 @@ pub async fn join(
     Path(room): Path<RoomId>,
     body: Option<Json<JoinRequest>>,
 ) -> ApiResult<JoinResponse> {
-    let name = body.and_then(|Json(b)| b.display_name);
-    let grant = s.service.join(auth.user_id(), room, name).await?;
+    let (name, tag) = body.map_or((None, None), |Json(b)| (b.display_name, b.client_tag));
+    let grant = s
+        .service
+        .join(auth.user_id(), room, name, tag.as_deref())
+        .await?;
     Ok(Json(grant.into()))
 }
 

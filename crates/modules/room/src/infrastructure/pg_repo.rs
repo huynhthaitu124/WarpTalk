@@ -218,6 +218,7 @@ struct SnapshotRouteRow {
     status: String,
     source_user_id: Option<Uuid>,
     target_user_id: Option<Uuid>,
+    source_display_name: Option<String>,
 }
 
 fn route_status(s: &str) -> RouteStatus {
@@ -323,7 +324,8 @@ async fn build_snapshot(
     let rows = sqlx::query_as::<_, SnapshotRouteRow>(
         "SELECT r.id, r.source_participant_id, r.target_participant_id, r.source_language, \
                 r.target_language, r.voice_clone_enabled, r.status, \
-                sp.user_id AS source_user_id, tp.user_id AS target_user_id \
+                sp.user_id AS source_user_id, tp.user_id AS target_user_id, \
+                sp.display_name AS source_display_name \
          FROM translation_room.translation_room_audio_routes r \
          LEFT JOIN translation_room.translation_room_participants sp \
                 ON sp.id = r.source_participant_id \
@@ -349,6 +351,7 @@ async fn build_snapshot(
                 target_participant_id: r.target_participant_id.into(),
                 source_user_id: r.source_user_id.map(Into::into),
                 target_user_id: r.target_user_id.map(Into::into),
+                source_display_name: r.source_display_name.filter(|n| !n.trim().is_empty()),
                 source_language: r.source_language,
                 target_language: r.target_language,
                 voice_clone_enabled: r.voice_clone_enabled,
@@ -1143,6 +1146,27 @@ impl RoomRepo for PgRoomRepo {
             .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(m)
+    }
+
+    async fn set_route_status(
+        &self,
+        room: RoomId,
+        route: Uuid,
+        status: RouteStatus,
+    ) -> AppResult<bool> {
+        // Runtime status written by the pipeline's degradation events; finished routes stay done.
+        let r = sqlx::query(
+            "UPDATE translation_room.translation_room_audio_routes \
+             SET status = $3 \
+             WHERE id = $2 AND translation_room_id = $1 AND is_current AND status <> 'COMPLETED'",
+        )
+        .bind(room.as_uuid())
+        .bind(route)
+        .bind(route_status_str(status))
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(r.rows_affected() == 1)
     }
 
     async fn leave(&self, room: RoomId, user: UserId, now: DateTime<Utc>) -> AppResult<Mutation> {

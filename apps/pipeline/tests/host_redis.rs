@@ -52,6 +52,7 @@ fn host(env: &Env, id: &str, channel: &str, scan: Option<String>) -> PipelineHos
             downstream: Arc::new(SttOnlyStage),
             results: Arc::new(MemoryResultSink::default()),
             config: rx,
+            room_config: None,
         },
     )
 }
@@ -70,6 +71,7 @@ fn snapshot(speakers: &[ParticipantId], active: bool, status: &str) -> AudioRout
                 target_participant_id: ParticipantId::new(),
                 source_user_id: None,
                 target_user_id: None,
+                source_display_name: None,
                 source_language: "en".into(),
                 target_language: "vi".into(),
                 voice_clone_enabled: false,

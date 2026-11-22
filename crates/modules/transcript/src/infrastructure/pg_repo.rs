@@ -224,6 +224,65 @@ impl TranscriptRepo for PgTranscriptRepo {
 
     async fn record_translation(&self, t: &NewTranslation) -> AppResult<()> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Chunks of one (segment, language) may be handled by concurrent consumers: serialise.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text || $2, 0))")
+            .bind(t.segment_id)
+            .bind(&t.target_language)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        if t.chunk_index.is_none() {
+            // A translation of the whole segment replaces any sentence-level pieces.
+            sqlx::query(
+                "DELETE FROM transcript.translation_chunks \
+                 WHERE segment_id = $1 AND target_language = $2",
+            )
+            .bind(t.segment_id)
+            .bind(&t.target_language)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        sqlx::query(
+            "INSERT INTO transcript.translation_chunks \
+             (segment_id, target_language, chunk_index, workspace_id, translated_text, \
+              translator_model, latency_ms, source_stt_confidence, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::float8::numeric(5,4), $9, $9) \
+             ON CONFLICT (segment_id, target_language, chunk_index) DO UPDATE SET \
+               translated_text = EXCLUDED.translated_text, \
+               translator_model = EXCLUDED.translator_model, \
+               latency_ms = EXCLUDED.latency_ms, \
+               source_stt_confidence = EXCLUDED.source_stt_confidence, \
+               updated_at = EXCLUDED.updated_at",
+        )
+        .bind(t.segment_id)
+        .bind(&t.target_language)
+        .bind(
+            t.chunk_index
+                .map_or(0, |i| i32::try_from(i).unwrap_or(i32::MAX)),
+        )
+        .bind(t.workspace_id.as_uuid())
+        .bind(&t.text)
+        .bind(&t.translator_model)
+        .bind(t.latency_ms)
+        .bind(t.source_stt_confidence)
+        .bind(t.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let pieces: Vec<String> = sqlx::query_scalar(
+            "SELECT translated_text FROM transcript.translation_chunks \
+             WHERE segment_id = $1 AND target_language = $2 ORDER BY chunk_index",
+        )
+        .bind(t.segment_id)
+        .bind(&t.target_language)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let combined = warptalk_contracts::text::join_sentences(
+            &t.joined_with_lang,
+            pieces.iter().map(String::as_str),
+        );
         let content_id: Uuid = sqlx::query_scalar(
             "INSERT INTO transcript.translation_contents \
              (id, workspace_id, text_hash, target_language, translated_text, translator_model, \
@@ -238,7 +297,7 @@ impl TranscriptRepo for PgTranscriptRepo {
         .bind(Uuid::now_v7())
         .bind(t.workspace_id.as_uuid())
         .bind(&t.target_language)
-        .bind(&t.text)
+        .bind(&combined)
         .bind(&t.translator_model)
         .bind(t.source_stt_confidence)
         .bind(t.is_retranslated)

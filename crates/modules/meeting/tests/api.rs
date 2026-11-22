@@ -354,6 +354,8 @@ async fn end_requires_host_and_publishes_once() {
     assert!(c.events.events().is_empty());
 
     assert_eq!(c.post(&end, host).await.0, StatusCode::NO_CONTENT);
+    // B-08: the translation room is ended even though LiveKit is configured.
+    assert_eq!(c.dir.ended_rooms(), vec![(room, host)]);
     let types: Vec<_> = c.events.events().iter().map(|e| e.event_type).collect();
     assert_eq!(types, vec![EVENT_END_ROOM, EVENT_BILLING_STOP]);
     assert!(
@@ -374,6 +376,7 @@ async fn end_requires_host_and_publishes_once() {
     // Repeat End is a no-op; joining the finished session is refused.
     assert_eq!(c.post(&end, host).await.0, StatusCode::NO_CONTENT);
     assert_eq!(c.events.events().len(), 2);
+    assert_eq!(c.dir.ended_rooms().len(), 1);
     assert_eq!(c.post(&join, guest).await.0, StatusCode::CONFLICT);
 }
 
@@ -1154,4 +1157,80 @@ mod translate {
             Err(HandlerError::Fatal(_))
         ));
     }
+}
+
+async fn post_json(c: &Ctx, uri: &str, user: UserId, body: Value) -> (StatusCode, Value) {
+    let token = c
+        .keys
+        .issue_access(user, Uuid::new_v4(), false, Utc::now())
+        .unwrap()
+        .0;
+    c.send(
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn client_tag_gives_a_subscribe_only_secondary_identity() {
+    let Some(c) = ctx().await else { return };
+    let (room, host) = c.room("IN_PROGRESS");
+    let uri = format!("/meetings/{room}/join");
+
+    let (st, main) = c.post(&uri, host).await;
+    assert_eq!(st, StatusCode::OK, "{main}");
+    assert_eq!(main["participantIdentity"], host.to_string());
+
+    for tag in ["listener", "bridge-listener"] {
+        let (st, body) = post_json(&c, &uri, host, json!({ "clientTag": tag })).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let identity = format!("{host}:{tag}");
+        assert_eq!(body["participantIdentity"], identity);
+        let claims = decode(body["token"].as_str().unwrap());
+        assert_eq!(claims.sub, identity);
+        assert!(claims.video.room_join && claims.video.can_subscribe);
+        assert!(!claims.video.can_publish, "listener must not publish");
+        assert!(!claims.video.can_publish_data);
+    }
+    // The main session is untouched and still the only roster row.
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM meeting.rtc_stream_participants p \
+         JOIN meeting.meeting_rooms m ON m.id = p.meeting_room_id \
+         WHERE m.translation_room_id = $1",
+    )
+    .bind(room.as_uuid())
+    .fetch_one(&c.pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // A webhook for the listener identity does not create a roster row either.
+    let ev = event(
+        "participant_joined",
+        room,
+        &format!("{host}:listener"),
+        Utc::now().timestamp(),
+    );
+    assert_eq!(c.webhook(&ev, SECRET).await, StatusCode::OK);
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM meeting.rtc_stream_participants p \
+         JOIN meeting.meeting_rooms m ON m.id = p.meeting_room_id \
+         WHERE m.translation_room_id = $1",
+    )
+    .bind(room.as_uuid())
+    .fetch_one(&c.pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // Unknown tags are refused; an empty body keeps the default identity.
+    let (st, body) = post_json(&c, &uri, host, json!({ "clientTag": "admin" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "INVALID_CLIENT_TAG");
 }

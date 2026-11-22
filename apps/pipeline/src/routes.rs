@@ -6,6 +6,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use warptalk_contracts::events::{AudioRoute, AudioRoutesSnapshot, RouteStatus};
 use warptalk_pipeline_runtime::ParticipantId;
 
+/// Splits a LiveKit identity `{userId}` or `{userId}:{clientTag}` (secondary connections of the
+/// same user, e.g. `:listener`, `:bridge-listener`) into the user id and the optional tag.
+pub fn split_identity(identity: &str) -> (&str, Option<&str>) {
+    match identity.split_once(':') {
+        Some((base, tag)) => (base, Some(tag)),
+        None => (identity, None),
+    }
+}
+
+/// Whether audio from this LiveKit identity may be transcribed: only the primary connection of
+/// a user (no tag). The external bridge stand-in connects under its plain [`BRIDGE_IDENTITY`],
+/// so it passes; tagged secondary connections (listeners) never carry the user's voice.
+pub fn is_primary_identity(identity: &str) -> bool {
+    split_identity(identity).1.is_none()
+}
+
 /// LiveKit identity of the external bridge stand-in seat (same value as the meeting module's
 /// `BRIDGE_IDENTITY` and the room module's `STAND_IN_USER_ID`).
 pub const BRIDGE_IDENTITY: &str = "00000000-0000-0000-0000-00000000b21d";
@@ -35,6 +51,8 @@ pub struct RoutesView {
     pub identities: BTreeMap<String, ParticipantId>,
     /// Participant id -> user id: the key of the per-user voice consent / profile state.
     pub users: BTreeMap<ParticipantId, String>,
+    /// Participant id -> display name (`source_display_name` of the routes).
+    pub names: BTreeMap<ParticipantId, String>,
     /// Live routes (paused/ending/completed ones are filtered out).
     pub routes: Vec<AudioRoute>,
 }
@@ -66,6 +84,7 @@ impl RoutesView {
         let mut routes = Vec::new();
         let mut identities = BTreeMap::new();
         let mut users = BTreeMap::new();
+        let mut names = BTreeMap::new();
         for r in s.routes.iter().filter(|r| is_live(r.status)) {
             let sp = speakers
                 .entry(r.source_participant_id.to_string())
@@ -79,6 +98,11 @@ impl RoutesView {
                 identities.insert(uid.clone(), pid.clone());
                 users.insert(pid, uid);
             }
+            if let Some(n) = r.source_display_name.as_deref().map(str::trim)
+                && !n.is_empty()
+            {
+                names.insert(r.source_participant_id.to_string(), n.to_owned());
+            }
             targets.insert(r.target_language.clone());
             routes.push(r.clone());
         }
@@ -89,16 +113,22 @@ impl RoutesView {
             speakers,
             identities,
             users,
+            names,
             targets,
             routes,
         }
     }
 
-    /// The speaker (participant id) a LiveKit identity belongs to.
+    /// The speaker (participant id) a LiveKit identity belongs to; a client tag (`{id}:{tag}`)
+    /// is ignored.
     pub fn speaker_for_identity<'a>(&'a self, identity: &'a str) -> &'a str {
-        self.identities
-            .get(identity)
-            .map_or(identity, String::as_str)
+        let base = split_identity(identity).0;
+        self.identities.get(base).map_or(base, String::as_str)
+    }
+
+    /// Display name of a speaker, when the routes carry one.
+    pub fn name_of(&self, speaker: &str) -> Option<&str> {
+        self.names.get(speaker).map(String::as_str)
     }
 
     /// The user id of a speaker, for consent lookups (the speaker itself when unknown).
@@ -131,6 +161,7 @@ mod tests {
             target_participant_id: Pid::new(),
             source_user_id: None,
             target_user_id: None,
+            source_display_name: None,
             source_language: lang_from.into(),
             target_language: lang_to.into(),
             voice_clone_enabled: false,
@@ -189,6 +220,27 @@ mod tests {
         assert_eq!(v.user_of(&a.to_string()), ua.to_string());
         assert_eq!(v.user_of(&b.to_string()), BRIDGE_IDENTITY);
         assert_eq!(v.user_of(&c.to_string()), c.to_string());
+    }
+
+    #[test]
+    fn names_and_tagged_identities() {
+        let (a, ua) = (Pid::new(), warptalk_kernel::UserId::new());
+        let mut ra = route(a, "en", "vi", RouteStatus::Broadcasting);
+        ra.source_user_id = Some(ua);
+        ra.source_display_name = Some("  Ann Lee ".into());
+        let v = RoutesView::from_snapshot(&snap(vec![ra], true, "Active"));
+        assert_eq!(v.name_of(&a.to_string()), Some("Ann Lee"));
+        // `{userId}` and `{userId}:{tag}` resolve to the same participant
+        assert_eq!(v.speaker_for_identity(&ua.to_string()), a.to_string());
+        let tagged = format!("{ua}:listener");
+        assert_eq!(v.speaker_for_identity(&tagged), a.to_string());
+        assert!(is_primary_identity(&ua.to_string()));
+        assert!(is_primary_identity(BRIDGE_IDENTITY));
+        assert!(!is_primary_identity(&tagged));
+        assert!(!is_primary_identity(&format!(
+            "{BRIDGE_IDENTITY}:bridge-listener"
+        )));
+        assert_eq!(split_identity("a:b:c"), ("a", Some("b:c")));
     }
 
     #[test]

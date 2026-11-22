@@ -86,8 +86,10 @@ pub struct Segment {
     pub speaker_name: String,
     pub original_text: String,
     pub original_language: String,
-    pub start_time_ms: i32,
-    pub end_time_ms: i32,
+    /// Offsets from the start of the room's translation session; `None` when the producer's
+    /// value did not fit (logged at ingest).
+    pub start_time_ms: Option<i32>,
+    pub end_time_ms: Option<i32>,
     pub confidence: Option<f64>,
     pub sequence_order: i32,
     pub is_corrected: bool,
@@ -131,6 +133,14 @@ pub fn underlying_segment_id(raw: &str) -> Option<Uuid> {
     Uuid::parse_str(head).ok()
 }
 
+/// Sentence (chunk) index of a wire segment id: `{uuid}-c{n}` or `{uuid}-{lang}-c{n}`. `None`
+/// for a bare segment id (a translation of the whole segment).
+pub fn chunk_index(raw: &str) -> Option<u32> {
+    underlying_segment_id(raw)?;
+    let tail = raw.get(36..)?;
+    tail.rsplit_once("-c")?.1.parse().ok()
+}
+
 /// Map the producer's voice type to the stored vocabulary (`cloned` | `default`).
 pub fn normalize_voice_type(raw: Option<&str>) -> &'static str {
     match raw.map(|s| s.to_ascii_lowercase()).as_deref() {
@@ -157,6 +167,17 @@ mod tests {
         assert_eq!(underlying_segment_id(&format!("{id}x")), None);
         assert_eq!(underlying_segment_id("nope"), None);
         assert_eq!(underlying_segment_id("é"), None);
+    }
+
+    #[test]
+    fn chunk_indexes() {
+        let id = Uuid::now_v7();
+        assert_eq!(chunk_index(&id.to_string()), None);
+        assert_eq!(chunk_index(&format!("{id}-c3")), Some(3));
+        assert_eq!(chunk_index(&format!("{id}-vi-c12")), Some(12));
+        assert_eq!(chunk_index(&format!("{id}-pt-BR-c0")), Some(0));
+        assert_eq!(chunk_index(&format!("{id}-vi")), None);
+        assert_eq!(chunk_index("nope"), None);
     }
 
     #[test]

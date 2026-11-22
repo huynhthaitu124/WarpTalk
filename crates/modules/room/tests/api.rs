@@ -355,6 +355,9 @@ async fn full_room_flow() {
         );
         assert_eq!(r["source_user_id"], user_of(sp).to_string(), "{r}");
         assert_eq!(r["target_user_id"], user_of(tp).to_string(), "{r}");
+        // B-03/B-07: the source participant's display name travels with the route
+        let want = if sp == host_pid { "Host" } else { "Alice" };
+        assert_eq!(r["source_display_name"], want, "{r}");
     }
     // idempotent start keeps one session
     let (st, _) = c.post(&format!("{rooms}/{room}/start"), host).await;

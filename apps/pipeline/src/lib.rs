@@ -44,6 +44,7 @@ pub mod host;
 pub mod livekit_transport;
 pub mod prewarm;
 pub mod results;
+pub mod room_config;
 pub mod routes;
 pub mod simulated;
 pub mod transport;
@@ -57,6 +58,7 @@ pub use downstream::{
 };
 pub use host::{HostConfig, HostDeps, PipelineHost, StartOutcome};
 pub use results::{MemoryResultSink, RedisResultSink, ResultSink};
+pub use room_config::{RoomConfigSource, SettingsRoomConfig, SharedRoomConfig};
 pub use routes::{BRIDGE_IDENTITY, RoutesView};
 pub use simulated::{SimParticipant, SimulatedTransport};
 pub use transport::{MediaEvent, MediaSession, MediaTransport, PcmChunk};

@@ -841,3 +841,186 @@ async fn malformed_input_is_invalid_request() {
         assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
     }
 }
+
+#[tokio::test]
+async fn multi_sentence_translation_is_stored_in_full_and_in_order() {
+    let Some(c) = ctx(DEFAULT).await else { return };
+    let seg = Uuid::now_v7();
+    c.deliver(
+        streams::STT_RESULTS,
+        &stt(c.room, seg, "Mot. Hai. Ba.", true),
+        &c.stt,
+    )
+    .await
+    .unwrap();
+    // The wire id of the pipeline's per-sentence results: `{segment}-{lang}-c{n}`. The second
+    // sentence is delivered first (redelivery and reordering must not matter).
+    let id = |n: u32| format!("{seg}-en-c{n}");
+    for (n, text) in [(1, "Two."), (0, "One."), (2, "Three."), (1, "Two.")] {
+        c.deliver(
+            streams::TRANSLATE_RESULTS,
+            &translation(c.room, &id(n), "en", text),
+            &c.tr,
+        )
+        .await
+        .unwrap();
+    }
+    let current: Vec<String> = sqlx::query_scalar(
+        "SELECT c.translated_text FROM transcript.segment_translation_links l \
+         JOIN transcript.translation_contents c ON c.id = l.translation_content_id \
+         WHERE l.segment_id = $1 AND l.is_current",
+    )
+    .bind(seg)
+    .fetch_all(&c.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        current,
+        vec!["One. Two. Three."],
+        "one current link, all sentences"
+    );
+
+    // Dubbing metadata attaches to the combined translation.
+    let tts = TtsResult {
+        segment_id: id(2),
+        target_lang: "en".into(),
+        voice_type: Some("default".into()),
+        provider_voice_id: Some("v".into()),
+        clone_provider: None,
+        anchor_provider: None,
+        duration_ms: Some(500),
+        meeting_id: Some(c.room),
+    };
+    c.deliver(streams::TTS_RESULTS, &tts, &c.tts).await.unwrap();
+
+    let user = UserId::new();
+    c.access.allow(user, c.room);
+    let (st, body) = c
+        .call(
+            Method::GET,
+            &format!("/transcripts/{}?lang=en", c.room),
+            user,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        body["segments"][0]["translation"]["text"],
+        "One. Two. Three."
+    );
+
+    // A whole-segment translation (no chunk suffix, e.g. a retranslation) replaces the pieces.
+    c.deliver(
+        streams::TRANSLATE_RESULTS,
+        &translation(c.room, &seg.to_string(), "en", "One two three."),
+        &c.tr,
+    )
+    .await
+    .unwrap();
+    let (_, body) = c
+        .call(
+            Method::GET,
+            &format!("/transcripts/{}?lang=en", c.room),
+            user,
+            None,
+        )
+        .await;
+    assert_eq!(body["segments"][0]["translation"]["text"], "One two three.");
+
+    // Languages written without spaces are joined without one.
+    let seg2 = Uuid::now_v7();
+    c.deliver(
+        streams::STT_RESULTS,
+        &stt(c.room, seg2, "Mot. Hai.", true),
+        &c.stt,
+    )
+    .await
+    .unwrap();
+    for (n, text) in [(0, "一。"), (1, "二。")] {
+        c.deliver(
+            streams::TRANSLATE_RESULTS,
+            &translation(c.room, &format!("{seg2}-ja-c{n}"), "ja", text),
+            &c.tr,
+        )
+        .await
+        .unwrap();
+    }
+    let (_, body) = c
+        .call(
+            Method::GET,
+            &format!("/transcripts/{}?lang=ja", c.room),
+            user,
+            None,
+        )
+        .await;
+    assert_eq!(body["segments"][1]["translation"]["text"], "一。二。");
+}
+
+#[tokio::test]
+async fn stt_offsets_confidence_and_names() {
+    let Some(c) = ctx(DEFAULT).await else { return };
+    let now_ms = Utc::now().timestamp_millis();
+    let pool = c.pool.clone();
+    let row = |seg: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<i32>, Option<i32>, Option<f64>, String, bool)>(
+                "SELECT start_time_ms, end_time_ms, confidence::float8, speaker_name, is_final \
+             FROM transcript.transcript_segments WHERE id = $1",
+            )
+            .bind(seg)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Anchored (pipeline) offsets are stored as they are; the name replaces the participant id.
+    let a = Uuid::now_v7();
+    let mut r = stt(c.room, a, "hello", true);
+    r.start_ms = 61_000;
+    r.end_ms = 63_500;
+    r.anchor_ms = Some(now_ms - 100_000);
+    r.confidence = Some(0.4966);
+    r.far_speaker_name = Some("Ann Lee".into());
+    r.far_speaker_source = Some("participant".into());
+    r.far_speaker_confidence = Some(1.0);
+    c.deliver(streams::STT_RESULTS, &r, &c.stt).await.unwrap();
+    let (s, e, conf, name, fin) = row(a).await;
+    assert_eq!((s, e), (Some(61_000), Some(63_500)));
+    assert!((conf.unwrap() - 0.4966).abs() < 1e-4);
+    assert_eq!((name.as_str(), fin), ("Ann Lee", true));
+
+    // Legacy epoch milliseconds (no anchor) are taken relative to the transcript start.
+    let b = Uuid::now_v7();
+    let mut r = stt(c.room, b, "epoch", true);
+    r.start_ms = now_ms + 4_000;
+    r.end_ms = now_ms + 6_000;
+    c.deliver(streams::STT_RESULTS, &r, &c.stt).await.unwrap();
+    let (s, e, _, name, _) = row(b).await;
+    let (s, e) = (s.unwrap(), e.unwrap());
+    assert!((3_000..=7_000).contains(&s) && e > s, "{s} {e}");
+    assert_eq!(
+        name, r.speaker_id,
+        "no name known: the participant id is all there is"
+    );
+
+    // Values that cannot be an offset are logged and stored as NULL, never clamped.
+    let d = Uuid::now_v7();
+    let mut r = stt(c.room, d, "overflow", true);
+    r.start_ms = i64::MAX;
+    r.end_ms = -5;
+    r.anchor_ms = Some(now_ms);
+    r.confidence = Some(-0.7); // an average logprob is not a probability: unknown
+    c.deliver(streams::STT_RESULTS, &r, &c.stt).await.unwrap();
+    let (s, e, conf, _, _) = row(d).await;
+    assert_eq!((s, e, conf), (None, None, None));
+    let tid = c.transcript_id().await;
+    let dur: i32 =
+        sqlx::query_scalar("SELECT total_duration_ms FROM transcript.transcripts WHERE id = $1")
+            .bind(tid)
+            .fetch_one(&c.pool)
+            .await
+            .unwrap();
+    assert!(dur >= 63_500 && dur < 100_000, "{dur}");
+}

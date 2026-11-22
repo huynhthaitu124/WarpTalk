@@ -49,6 +49,11 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             name: "glossaries",
             sql: include_str!("../migrations/0002_glossaries.sql"),
         },
+        Migration {
+            version: 3,
+            name: "translation_chunks",
+            sql: include_str!("../migrations/0003_translation_chunks.sql"),
+        },
     ],
 };
 

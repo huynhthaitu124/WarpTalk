@@ -10,7 +10,7 @@ use chrono::Utc;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 use warptalk_contracts::events::{AudioRoute, AudioRoutesSnapshot, RouteStatus};
-use warptalk_kernel::{ParticipantId, RoomId};
+use warptalk_kernel::{ParticipantId, RoomId, UserId};
 use warptalk_mt::{InMemoryGlossary, MtConfig, NoContext};
 use warptalk_pipeline::downstream::{
     CAPTION_TOPIC, DownstreamContext, DownstreamStage, Providers, TranslateDubStage,
@@ -46,11 +46,37 @@ fn view(speakers: &[ParticipantId], langs: &[&str]) -> RoutesView {
                     target_participant_id: ParticipantId::new(),
                     source_user_id: None,
                     target_user_id: None,
+                    source_display_name: None,
                     source_language: "en".into(),
                     target_language: (*l).into(),
                     voice_clone_enabled: false,
                     status: RouteStatus::Broadcasting,
                 })
+            })
+            .collect(),
+    })
+}
+
+/// Routes of `speaker` (user `user`, display name `name`) into `langs`.
+fn named_view(speaker: ParticipantId, user: UserId, name: &str, langs: &[&str]) -> RoutesView {
+    RoutesView::from_snapshot(&AudioRoutesSnapshot {
+        generated_at: Utc::now(),
+        room_status: "Active".into(),
+        translation_active: true,
+        room_languages: vec!["en".into()],
+        routes: langs
+            .iter()
+            .map(|l| AudioRoute {
+                route_id: Uuid::now_v7(),
+                source_participant_id: speaker,
+                target_participant_id: ParticipantId::new(),
+                source_user_id: Some(user),
+                target_user_id: None,
+                source_display_name: Some(name.into()),
+                source_language: "en".into(),
+                target_language: (*l).into(),
+                voice_clone_enabled: false,
+                status: RouteStatus::Broadcasting,
             })
             .collect(),
     })
@@ -264,12 +290,16 @@ struct Rig {
 }
 
 async fn rig(chain: &Chain, speaker: ParticipantId) -> Rig {
+    rig_with_view(chain, view(&[speaker], &["vi"])).await
+}
+
+async fn rig_with_view(chain: &Chain, routes_view: RoutesView) -> Rig {
     let room = RoomId::new();
     let transport = Arc::new(SimulatedTransport::with_participants(vec![]));
     let session: Arc<dyn warptalk_pipeline::MediaSession> =
         Arc::from(transport.join(room, "agent").await.unwrap());
     let results = Arc::new(MemoryResultSink::default());
-    let (routes_tx, routes) = watch::channel(Arc::new(view(&[speaker], &["vi"])));
+    let (routes_tx, routes) = watch::channel(Arc::new(routes_view));
     let (tx, rx) = mpsc::channel(32);
     let stage = chain.stage.clone();
     let ctx = DownstreamContext {
@@ -277,6 +307,7 @@ async fn rig(chain: &Chain, speaker: ParticipantId) -> Rig {
         media: session,
         results: results.clone(),
         routes,
+        session_start_epoch_ms: chrono::Utc::now().timestamp_millis(),
     };
     let run = tokio::spawn(async move { stage.run(ctx, rx).await });
     Rig {
@@ -443,5 +474,149 @@ async fn tts_failure_degrades_the_route_but_captions_continue() {
             .count(),
         1,
         "the translated caption still goes out"
+    );
+}
+
+// ---- wire contracts with the consumers (web, macOS, transcript) -----------------------------------
+
+/// B-01: the dub goes out on `dub-{lang}`, the name the web (`pub.trackName === "dub-${listen}"`)
+/// and macOS (`"dub-\(language)"`) subscribe to.
+#[tokio::test]
+async fn dub_is_published_on_the_track_clients_subscribe_to() {
+    let chain = chain_with(true, false, fast_tts(), fast_mt());
+    let pid = ParticipantId::new();
+    let rig = rig(&chain, pid).await;
+    rig.tx
+        .send(seg(pid, 0, 0, "Hello there.", false))
+        .await
+        .unwrap();
+    rig.tx.send(marker(pid, 0)).await.unwrap();
+    drop(rig.tx);
+    rig.run.await.unwrap();
+    let dubs = rig.transport.capture(rig.room).unwrap().dubs();
+    assert!(!dubs.is_empty());
+    for d in &dubs {
+        assert_eq!(d.target_lang, "vi");
+        assert_eq!(
+            d.track_name, "dub-vi",
+            "literal the web and macOS compare against"
+        );
+    }
+}
+
+fn caption_of_type(
+    cap: &warptalk_pipeline::simulated::SimCapture,
+    ty: &str,
+) -> Vec<serde_json::Value> {
+    cap.json_on(CAPTION_TOPIC)
+        .into_iter()
+        .map(|(_, v)| v)
+        .filter(|v| v["type"] == ty)
+        .collect()
+}
+
+/// B-03, B-06, R-02, R-03 on the stt side: speaker name on captions and results, offsets that
+/// fit the transcript's i32 columns with a real epoch clock, probability confidence, flash
+/// sentences final.
+#[tokio::test]
+async fn stt_captions_and_results_carry_name_offsets_confidence_and_finality() {
+    let chain = chain_with(true, false, fast_tts(), fast_mt());
+    let (pid, user) = (ParticipantId::new(), UserId::new());
+    let rig = rig_with_view(&chain, named_view(pid, user, "Ann Lee", &["vi"])).await;
+    let mut early = seg(pid, 0, 0, "A flash sentence.", true);
+    early.confidence = Some(-0.5);
+    rig.tx.send(early).await.unwrap();
+    rig.tx.send(marker(pid, 0)).await.unwrap();
+    drop(rig.tx);
+    rig.run.await.unwrap();
+
+    let results = rig.results.results();
+    assert_eq!(results.len(), 1);
+    let r = &results[0];
+    assert_eq!(r.far_speaker_name.as_deref(), Some("Ann Lee"));
+    assert_eq!(r.speaker_id, pid.to_string());
+    assert!(
+        r.is_final_chunk,
+        "flash sentences are final, append-only text"
+    );
+    assert!(
+        r.start_ms >= 0 && r.end_ms >= r.start_ms && r.end_ms < 60_000,
+        "{r:?}"
+    );
+    assert!(
+        r.anchor_ms.unwrap() > 1_000_000_000_000,
+        "anchor is the epoch of the session start"
+    );
+    assert!(r.timestamp_ms.unwrap() >= r.anchor_ms.unwrap());
+    assert!((r.confidence.unwrap() - (-0.5f64).exp()).abs() < 1e-6);
+
+    let cap = rig.transport.capture(rig.room).unwrap();
+    let stt = caption_of_type(&cap, "stt");
+    assert_eq!(stt.len(), 1);
+    assert_eq!(stt[0]["speakerName"], "Ann Lee");
+    assert_eq!(stt[0]["speakerId"], pid.to_string());
+    assert_eq!(stt[0]["speaker_id"], pid.to_string());
+    assert_eq!(stt[0]["speakerUserId"], user.to_string());
+    assert_eq!(
+        stt[0]["is_early"], false,
+        "a flash sentence renders as final"
+    );
+    assert_eq!(stt[0]["is_flash"], true);
+    let tr = caption_of_type(&cap, "translation");
+    assert_eq!(tr[0]["speakerName"], "Ann Lee");
+    // the confidence of the translate result is a probability as well
+    let t = &rig.results.translations()[0];
+    assert!((t.source_stt_confidence.unwrap() - (-0.5f64).exp()).abs() < 1e-6);
+}
+
+/// B-04: one segment of three sentences makes three translation messages that carry the
+/// sentence index, the last-sentence flag and the cumulative text of the segment so far.
+#[tokio::test]
+async fn multi_sentence_segment_captions_are_cumulative() {
+    let chain = chain_with(true, false, fast_tts(), fast_mt());
+    let pid = ParticipantId::new();
+    let rig = rig(&chain, pid).await;
+    let s = seg(
+        pid,
+        0,
+        0,
+        "One fine day. Two good ideas. Three more things.",
+        false,
+    );
+    let segment_id = s.segment_id.to_string();
+    rig.tx.send(s).await.unwrap();
+    rig.tx.send(marker(pid, 0)).await.unwrap();
+    drop(rig.tx);
+    rig.run.await.unwrap();
+
+    let cap = rig.transport.capture(rig.room).unwrap();
+    let mut tr = caption_of_type(&cap, "translation");
+    tr.sort_by_key(|v| v["sentenceIndex"].as_u64());
+    assert_eq!(tr.len(), 3, "{tr:?}");
+    for (i, v) in tr.iter().enumerate() {
+        assert_eq!(
+            v["segment_id"], segment_id,
+            "one segment id for all sentences"
+        );
+        assert_eq!(v["sentenceIndex"], i);
+        assert_eq!(v["isLastSentence"], i == 2);
+    }
+    assert_eq!(tr[0]["translations"]["vi"], "[vi] One fine day.");
+    assert_eq!(
+        tr[1]["translations"]["vi"],
+        "[vi] One fine day. [vi] Two good ideas."
+    );
+    assert_eq!(
+        tr[2]["translations"]["vi"],
+        "[vi] One fine day. [vi] Two good ideas. [vi] Three more things."
+    );
+    assert_eq!(
+        tr[2]["text"],
+        "One fine day. Two good ideas. Three more things."
+    );
+    assert_eq!(tr[2]["sentenceText"], "Three more things.");
+    assert_eq!(
+        tr[2]["sentenceTranslations"]["vi"],
+        "[vi] Three more things."
     );
 }

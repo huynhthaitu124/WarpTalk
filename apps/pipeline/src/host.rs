@@ -22,11 +22,12 @@ use warptalk_bus::{BusError, release_lease, renew_lease, try_acquire_lease};
 use warptalk_contracts::channels::{self, TRANSLATION_ROOM_COMMANDS};
 use warptalk_contracts::events::{AudioRoutesSnapshot, RoomCommand};
 use warptalk_contracts::keys;
-use warptalk_kernel::RoomId;
+use warptalk_kernel::{RoomId, WorkspaceId};
 use warptalk_pipeline_runtime::{PipelineConfig, SpeechToText, VadFactory};
 
 use crate::downstream::DownstreamStage;
 use crate::results::ResultSink;
+use crate::room_config::{RoomConfigSource, parse_workspace};
 use crate::routes::RoutesView;
 use crate::transport::MediaTransport;
 use crate::worker::{RoomWorker, RoomWorkerDeps, WorkerError};
@@ -84,8 +85,11 @@ pub struct HostDeps {
     pub vad_factory: VadFactory,
     pub downstream: Arc<dyn DownstreamStage>,
     pub results: Arc<dyn ResultSink>,
-    /// Hot-reloadable pipeline config shared by all rooms.
+    /// Hot-reloadable platform-scope pipeline config: used by rooms when `room_config` is `None`.
     pub config: watch::Receiver<PipelineConfig>,
+    /// Per-room config (platform < workspace < room settings, B-11). `None`: every room
+    /// follows `config`.
+    pub room_config: Option<Arc<dyn RoomConfigSource>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +344,13 @@ impl Inner {
         if view.ended {
             return Ok(StartOutcome::Inactive);
         }
-        let flash_override = self.read_flash_override(room).await;
+        let config = match &self.deps.room_config {
+            Some(src) => {
+                let ws = self.read_room_workspace(room).await;
+                src.config_for(room, ws).await
+            }
+            None => self.deps.config.clone(),
+        };
         let worker = Arc::new(
             RoomWorker::start(RoomWorkerDeps {
                 room,
@@ -349,8 +359,8 @@ impl Inner {
                 vad_factory: self.deps.vad_factory.clone(),
                 downstream: self.deps.downstream.clone(),
                 results: self.deps.results.clone(),
-                config: self.deps.config.clone(),
-                flash_override,
+                config,
+                flash_override: None,
                 identity: self.cfg.agent_identity.clone(),
                 initial_routes: view,
             })
@@ -463,18 +473,15 @@ impl Inner {
         )
     }
 
-    async fn read_flash_override(&self, room: RoomId) -> Option<bool> {
+    /// Workspace of a room (`translationRoom:{id}:workspace`); `None` when not written yet.
+    async fn read_room_workspace(&self, room: RoomId) -> Option<WorkspaceId> {
         let mut conn = self.deps.redis.clone();
         let raw: Option<String> = redis::cmd("GET")
-            .arg(keys::flash_mode(room))
+            .arg(crate::glossary::room_workspace_key(&room.to_string()))
             .query_async(&mut conn)
             .await
             .ok()?;
-        match raw?.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "on" | "yes" => Some(true),
-            "0" | "false" | "off" | "no" => Some(false),
-            _ => None,
-        }
+        parse_workspace(&raw?)
     }
 
     /// The snapshot carried by an `AUDIO_ROUTES_UPDATED` event, or the one in Redis when the

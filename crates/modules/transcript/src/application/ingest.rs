@@ -13,7 +13,7 @@ use super::ports::{
     PauseGate, RoomDirectory, RoomPolicy, TranscriptRepo, WorkspaceAiPolicy,
 };
 use crate::domain::{
-    Segment, Transcript, normalize_voice_type, truncate_chars, underlying_segment_id,
+    Segment, Transcript, chunk_index, normalize_voice_type, truncate_chars, underlying_segment_id,
 };
 
 /// Room retention cache (spec 12 §8).
@@ -156,8 +156,8 @@ impl IngestService {
             speaker_name,
             original_text: r.text.clone(),
             original_language: truncate_chars(&r.language, 15),
-            start_time_ms: ms(r.start_ms),
-            end_time_ms: ms(r.end_ms),
+            start_time_ms: offset_ms("start_ms", r.start_ms, &r, &transcript, segment_id),
+            end_time_ms: offset_ms("end_ms", r.end_ms, &r, &transcript, segment_id),
             // -1.0 is the "no logprobs" sentinel (WT-277): unknown, not zero.
             confidence: r.confidence.filter(|c| *c >= 0.0).map(|c| c.min(1.0)),
             is_final: r.is_final_chunk,
@@ -208,6 +208,7 @@ impl IngestService {
                     "segment_id": seg.id.to_string(),
                     "speaker_name": seg.speaker_name,
                     "start_ms": seg.start_time_ms,
+                    "end_ms": seg.end_time_ms,
                 },
             });
             let req = EmbeddingIndexRequest {
@@ -284,6 +285,8 @@ impl IngestService {
                 segment_id: segment.id,
                 workspace_id: transcript.workspace_id,
                 target_language: truncate_chars(&r.target_lang, 15),
+                chunk_index: chunk_index(&r.segment_id),
+                joined_with_lang: r.target_lang.clone(),
                 text: r.translated_text,
                 translator_model: truncate_chars(
                     r.translator_model.as_deref().unwrap_or("unknown"),
@@ -346,6 +349,27 @@ impl IngestService {
     }
 }
 
-fn ms(v: i64) -> i32 {
-    i32::try_from(v.max(0)).unwrap_or(i32::MAX)
+/// A millisecond offset of the segment for the `integer` columns. Producers send offsets from
+/// the session start (`anchor_ms` present). Older producers sent epoch milliseconds: those are
+/// taken relative to the transcript's creation. Anything that still does not fit `0..=i32::MAX`
+/// is logged and stored as NULL (never clamped to a value that looks real).
+fn offset_ms(
+    field: &str,
+    value: i64,
+    r: &SttResult,
+    transcript: &Transcript,
+    segment: Uuid,
+) -> Option<i32> {
+    let relative = if r.anchor_ms.is_none() && value > i64::from(i32::MAX) {
+        value - transcript.created_at.timestamp_millis()
+    } else {
+        value
+    };
+    match i32::try_from(relative) {
+        Ok(v) if v >= 0 => Some(v),
+        _ => {
+            tracing::warn!(%segment, field, value, "STT time offset out of range; stored as NULL");
+            None
+        }
+    }
 }

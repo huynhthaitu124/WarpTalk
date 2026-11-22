@@ -19,8 +19,9 @@ use super::ports::{
     RoomDirectory, RoomInfo,
 };
 use crate::domain::{
-    BRIDGE_IDENTITY, JoinGate, MAX_CHAT_CHARS, MAX_CHAT_PAGE, MAX_CLIENT_MESSAGE_ID_CHARS,
-    STATUS_FINISHED, WebhookKind, can_read_chat, is_bridge_audio_owner, is_ended_status, join_gate,
+    BRIDGE_IDENTITY, ClientTag, JoinGate, MAX_CHAT_CHARS, MAX_CHAT_PAGE,
+    MAX_CLIENT_MESSAGE_ID_CHARS, STATUS_FINISHED, WebhookKind, can_read_chat,
+    is_bridge_audio_owner, is_ended_status, is_listener_identity, join_gate,
 };
 
 /// LiveKit room empty timeout (seconds) used on CreateRoom.
@@ -87,7 +88,22 @@ impl MeetingService {
         user: UserId,
         room: RoomId,
         display_name: Option<String>,
+        client_tag: Option<&str>,
     ) -> AppResult<JoinGrant> {
+        // B-09: a secondary subscribe-only connection (web captions listener, macOS DubListener)
+        // gets its own LiveKit identity so it does not evict the user's main session.
+        let tag = client_tag
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| {
+                ClientTag::parse(t).ok_or_else(|| {
+                    AppError::validation(
+                        "INVALID_CLIENT_TAG",
+                        "clientTag must be \"listener\" or \"bridge-listener\"",
+                    )
+                })
+            })
+            .transpose()?;
         let info = self.room_info(room).await?;
         if is_ended_status(&info.status) {
             return Err(AppError::conflict(
@@ -145,12 +161,33 @@ impl MeetingService {
             self.repo.claim_host(meeting.id, user, now).await?;
         }
 
-        let identity = user.to_string();
+        let user_identity = user.to_string();
         let name = display_name
             .map(|n| n.trim().to_owned())
             .filter(|n| !n.is_empty())
             .or_else(|| participant.map(|p| p.display_name))
-            .unwrap_or_else(|| identity.clone());
+            .unwrap_or_else(|| user_identity.clone());
+        if let Some(tag) = tag {
+            // Subscribe-only seat: never touches the roster row of the main session.
+            let identity = format!("{user_identity}:{}", tag.as_str());
+            let token = AccessTokenBuilder::new(&self.livekit, &identity)
+                .name(&name)
+                .ttl(self.token_ttl)
+                .room(room_name.clone())
+                .room_join(true)
+                .can_publish(false)
+                .can_subscribe(true)
+                .can_publish_data(false)
+                .build()
+                .map_err(lk_err)?;
+            return Ok(JoinGrant {
+                room_name,
+                server_url: self.livekit.url.clone(),
+                token,
+                participant_identity: identity,
+            });
+        }
+        let identity = user_identity;
         self.repo
             .upsert_participant(NewParticipant {
                 meeting_room_id: meeting.id,
@@ -386,10 +423,6 @@ impl MeetingService {
         Ok(msg)
     }
 
-    fn livekit_configured(&self) -> bool {
-        !self.livekit.url.is_empty() && !self.livekit.api_key.is_empty()
-    }
-
     async fn publish_end(
         &self,
         info: &RoomInfo,
@@ -416,8 +449,8 @@ impl MeetingService {
 
     /// Spec: 11 §4.3 (host check, DeleteRoom first, single winner marks FINISHED and publishes).
     ///
-    /// Also succeeds when no meeting session exists yet or LiveKit is not configured: the
-    /// translation room is then ended through the [`RoomDirectory`] port.
+    /// The translation room is always ended through the [`RoomDirectory`] port (also when no
+    /// meeting session exists yet), before the LiveKit room is deleted.
     pub async fn end(&self, user: UserId, room: RoomId) -> AppResult<()> {
         let info = self.room_info(room).await?;
         let meeting = self.repo.find_current(room).await?;
@@ -434,7 +467,9 @@ impl MeetingService {
                 .publish_end(&info, room, &room.to_string(), self.clock.now())
                 .await;
         };
-        if !self.livekit_configured() {
+        // B-08: always end the translation room (idempotent): the room leaves IN_PROGRESS and
+        // `RoomEnded` reaches the pipeline, whether or not LiveKit is configured.
+        if !is_ended_status(&info.status) {
             self.rooms.end_room(room, user).await?;
         }
         match self
@@ -501,7 +536,9 @@ impl MeetingService {
             .participant
             .as_ref()
             .map(|p| p.identity.as_str())
-            .filter(|i| !i.is_empty());
+            .filter(|i| !i.is_empty())
+            // Secondary listener connections are not roster members.
+            .filter(|i| !is_listener_identity(i));
 
         match (kind, identity) {
             (WebhookKind::ParticipantJoined, Some(identity)) => {

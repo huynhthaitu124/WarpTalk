@@ -21,7 +21,7 @@ use warptalk_web::JwtKeys;
 
 use application::documents::{DocumentIndexPublisher, DocumentRepo, DocumentService};
 use application::invitations::{InvitationRepo, InvitationService};
-use application::ports::{UserDirectory, WorkspaceRepo};
+use application::ports::{SettingsObserver, UserDirectory, WorkspaceRepo};
 use application::service::WorkspaceService;
 use infrastructure::pg_documents::PgDocumentRepo;
 use infrastructure::pg_invitations::PgInvitationRepo;
@@ -33,7 +33,10 @@ pub use application::documents::{
     DocumentIndexRequest, DocumentsConfig, IndexOutcome, NoopDocumentIndexPublisher,
 };
 pub use application::invitations::{DEFAULT_INVITATION_TTL_DAYS, InvitationMail, InvitationMailer};
-pub use application::ports::{NoopUserDirectory, UserSummary};
+pub use application::ports::{
+    NoopUserDirectory, SettingsObserver as WorkspaceSettingsObserver, UserSummary,
+};
+pub use domain::AiPolicy;
 pub use infrastructure::mailers::{DevInvitationMailCapture, LogInvitationMailer};
 pub use infrastructure::redis_documents::{
     RedisDocumentIndexPublisher, document_results_consumer_config,
@@ -143,6 +146,11 @@ impl WorkspaceModule {
         self
     }
 
+    /// Be told after every successful settings write (B-12/B-13: refreshes per-room AI keys).
+    pub fn set_settings_observer(&self, observer: Arc<dyn SettingsObserver>) {
+        self.service.set_observer(observer);
+    }
+
     /// Handler for `embedding:index_results` (run with [`document_results_consumer_config`]);
     /// updates document ingestion status. Needs no object store.
     pub fn document_results_handler(&self) -> Arc<DocumentResultHandler> {
@@ -191,6 +199,12 @@ impl WorkspaceQueries {
     /// True when the workspace exists and is neither soft-deleted nor deactivated (BR-43).
     pub async fn is_active(&self, ws: WorkspaceId) -> AppResult<bool> {
         self.repo.is_active(ws).await
+    }
+
+    /// Effective AI policy flags of a workspace (`aiRetrievalAllowed`, `externalLlmAllowed`
+    /// default false; `aiSuggestEnabled` defaults true).
+    pub async fn ai_policy(&self, ws: WorkspaceId) -> AppResult<AiPolicy> {
+        self.repo.ai_policy(ws).await
     }
 
     /// Documents `role` may have the assistant answer from: active, AI-allowed, indexed

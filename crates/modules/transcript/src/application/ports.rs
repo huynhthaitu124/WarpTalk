@@ -108,8 +108,8 @@ pub struct NewSegment {
     pub speaker_name: String,
     pub original_text: String,
     pub original_language: String,
-    pub start_time_ms: i32,
-    pub end_time_ms: i32,
+    pub start_time_ms: Option<i32>,
+    pub end_time_ms: Option<i32>,
     pub confidence: Option<f64>,
     pub is_final: bool,
     pub now: DateTime<Utc>,
@@ -120,7 +120,13 @@ pub struct NewTranslation {
     pub segment_id: Uuid,
     pub workspace_id: WorkspaceId,
     pub target_language: String,
+    /// Sentence index inside the segment. `None`: the text translates the whole segment and
+    /// replaces any chunks.
+    pub chunk_index: Option<u32>,
+    /// This sentence's text (the segment's whole text when `chunk_index` is `None`).
     pub text: String,
+    /// Language the pieces are joined in (`warptalk_contracts::text::join_sentences`).
+    pub joined_with_lang: String,
     pub translator_model: String,
     pub latency_ms: Option<i32>,
     pub is_retranslated: bool,
@@ -168,7 +174,8 @@ pub trait TranscriptRepo: Send + Sync {
     /// Insert idempotently on `id`, advancing the transcript counters. False if it already existed.
     async fn insert_segment(&self, seg: &NewSegment) -> AppResult<bool>;
     async fn segment_with_transcript(&self, id: Uuid) -> AppResult<Option<(Segment, Transcript)>>;
-    /// Upsert the content (dedup on workspace/hash/lang) and make it the segment's current link.
+    /// Store the sentence, then upsert the concatenation of the segment's sentences so far
+    /// (dedup on workspace/hash/lang) and make it the segment's current link.
     async fn record_translation(&self, t: &NewTranslation) -> AppResult<()>;
     /// Upsert dubbing metadata. False when the segment has no current link for the language yet.
     async fn record_dubbing(&self, d: &NewDubbing) -> AppResult<bool>;

@@ -6,7 +6,9 @@ use warptalk_kernel::{RoomId, WorkspaceId};
 pub fn audio_routes(room: RoomId) -> String {
     format!("translationRoom:{room}:audio_routes")
 }
-// spec: 08 §2 (per-room flash mode override)
+/// DEPRECATED, nothing writes it and the pipeline no longer reads it: the per-room flash mode
+/// is `flash_mode_default` of the `pipeline` settings namespace at room scope (B-11).
+// spec: 08 §2
 pub fn flash_mode(room: RoomId) -> String {
     format!("translationRoom:{room}:flash_mode")
 }

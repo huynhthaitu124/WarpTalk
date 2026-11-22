@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use warptalk_audio::{Frame, resample};
+use warptalk_contracts::media::dub_track_name;
 use warptalk_kernel::RoomId;
 use warptalk_pipeline_runtime::ParticipantId;
 
@@ -233,6 +234,8 @@ pub type ParticipantPlan = Arc<dyn Fn(&RoomId) -> Vec<SimParticipant> + Send + S
 /// A dub chunk the pipeline published.
 #[derive(Debug, Clone)]
 pub struct DubRecord {
+    /// LiveKit track the chunk went to (`warptalk_contracts::media::dub_track_name`).
+    pub track_name: String,
     pub target_lang: String,
     pub voice: String,
     pub samples: usize,
@@ -450,6 +453,7 @@ impl MediaSession for SimulatedSession {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(DubRecord {
+                track_name: dub_track_name(target_lang),
                 target_lang: target_lang.to_owned(),
                 voice: voice.to_owned(),
                 samples: chunk.samples.len(),

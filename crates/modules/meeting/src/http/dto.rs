@@ -12,6 +12,9 @@ use crate::application::service::JoinGrant;
 #[serde(rename_all = "camelCase")]
 pub struct JoinRequest {
     pub display_name: Option<String>,
+    /// `listener` | `bridge-listener`: secondary subscribe-only connection, LiveKit identity
+    /// `{userId}:{clientTag}`. Absent: the main session (`{userId}`).
+    pub client_tag: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

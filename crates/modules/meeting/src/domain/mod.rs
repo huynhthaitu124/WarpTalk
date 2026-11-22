@@ -179,3 +179,35 @@ mod tests {
         assert_eq!(primary_language("vi-VN"), "vi");
     }
 }
+
+/// Optional `clientTag` of `POST /meetings/{id}/join` (B-09): a secondary, subscribe-only
+/// connection of the same user. Its LiveKit identity is `{userId}:{tag}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientTag {
+    Listener,
+    BridgeListener,
+}
+
+impl ClientTag {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "listener" => Some(Self::Listener),
+            "bridge-listener" => Some(Self::BridgeListener),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Listener => "listener",
+            Self::BridgeListener => "bridge-listener",
+        }
+    }
+}
+
+/// True for `{userId}:{clientTag}` identities (secondary listener connections).
+pub fn is_listener_identity(identity: &str) -> bool {
+    identity
+        .rsplit_once(':')
+        .is_some_and(|(_, tag)| ClientTag::parse(tag).is_some())
+}

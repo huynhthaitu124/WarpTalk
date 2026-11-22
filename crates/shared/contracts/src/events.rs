@@ -45,7 +45,9 @@ pub struct SttResult {
     pub is_final_chunk: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp_ms: Option<i64>,
-    // spec: 12 §6.1 (clean_flags, far_speaker_*)
+    // spec: 12 §6.1 (clean_flags, far_speaker_*). The pipeline also reports the speaking
+    // participant's display name here (`far_speaker_source = "participant"`, confidence 1.0):
+    // the transcript stores `far_speaker_name` as the segment's speaker name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clean_flags: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,6 +194,10 @@ pub struct AudioRoute {
     pub source_user_id: Option<UserId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_user_id: Option<UserId>,
+    /// Display name of the source participant (room participants table): the pipeline puts it
+    /// on captions (`speakerName`) and `stt:results` (`speaker_name`). Absent in old snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_display_name: Option<String>,
     pub source_language: String,
     pub target_language: String,
     pub voice_clone_enabled: bool,
@@ -418,6 +424,7 @@ mod tests {
                 target_participant_id: ParticipantId::new(),
                 source_user_id: Some(UserId::new()),
                 target_user_id: None,
+                source_display_name: Some("Ann".into()),
                 source_language: "vi".into(),
                 target_language: "en".into(),
                 voice_clone_enabled: false,
@@ -427,6 +434,7 @@ mod tests {
         let j = rt(s);
         assert_eq!(j["routes"][0]["status"], "SAVING_OUTPUTS");
         assert!(j["routes"][0]["source_user_id"].is_string());
+        assert_eq!(j["routes"][0]["source_display_name"], "Ann");
         assert!(j["routes"][0].get("target_user_id").is_none());
         // Old snapshots without the user ids still parse.
         let mut old = j.clone();
@@ -434,8 +442,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("source_user_id");
+        old["routes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_display_name");
         let back: AudioRoutesSnapshot = serde_json::from_value(old).unwrap();
         assert_eq!(back.routes[0].source_user_id, None);
+        assert_eq!(back.routes[0].source_display_name, None);
         assert_eq!(
             serde_json::to_value(RouteStatus::CaptionOnly).unwrap(),
             "CAPTION_ONLY"

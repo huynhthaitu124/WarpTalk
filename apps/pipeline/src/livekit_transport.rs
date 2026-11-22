@@ -12,7 +12,7 @@
 //!   16 kHz mono (native resampling, spec 08 hop 1); blocks are forwarded with `try_send`, so a
 //!   slow pipeline drops audio instead of blocking the SDK thread.
 //! - dub out: one `NativeAudioSource` + `LocalAudioTrack` per target language, published as
-//!   `ai-interpreter-{lang}`; chunks are resampled to 48 kHz and captured in 10 ms frames.
+//!   `dub-{lang}` (`warptalk_contracts::media::dub_track_name`); chunks are resampled to 48 kHz and captured in 10 ms frames.
 //! - captions: reliable data packets with a topic.
 
 use std::borrow::Cow;
@@ -31,9 +31,11 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use warptalk_audio::{Frame, f32_to_i16, resample};
+use warptalk_contracts::media::dub_track_name;
 use warptalk_kernel::RoomId;
 use warptalk_livekit::{LiveKitConfig, pipeline_agent_token};
 
+use crate::routes::is_primary_identity;
 use crate::transport::{
     MEDIA_EVENTS_DROPPED_METRIC, MediaError, MediaEvent, MediaSession, MediaTransport,
     ParticipantAudio, PcmChunk,
@@ -118,6 +120,7 @@ impl MediaTransport for LiveKitTransport {
                                 continue;
                             };
                             if AGENT_PREFIXES.iter().any(|p| id.starts_with(p))
+                                || !is_primary_identity(&id)
                                 || publication.source() != TrackSource::Microphone
                             {
                                 continue;
@@ -218,7 +221,7 @@ impl MediaSession for LiveKitSession {
                 let source =
                     NativeAudioSource::new(AudioSourceOptions::default(), PUBLISH_RATE_HZ, 1, 1000);
                 let track = LocalAudioTrack::create_audio_track(
-                    &format!("ai-interpreter-{target_lang}"),
+                    &dub_track_name(target_lang),
                     RtcAudioSource::Native(source.clone()),
                 );
                 self.room

@@ -299,6 +299,10 @@ async fn settings_read_write() {
     let (st, v) = c.call(Method::GET, &uri, member, None).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(v["maxParticipantsLimit"], 50);
+    // AI policy defaults: retrieval and external LLM off, suggestions on.
+    assert_eq!(v["aiRetrievalAllowed"], false);
+    assert_eq!(v["externalLlmAllowed"], false);
+    assert_eq!(v["aiSuggestEnabled"], true);
 
     let body = json!({"maxParticipantsLimit": 10, "allowGuestAccess": true,
         "defaultAiModel": "m1", "audioRetentionDays": 7});
@@ -325,6 +329,68 @@ async fn settings_read_write() {
         )
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn ai_policy_flags_are_written_where_the_readers_look() {
+    let Some(c) = ctx().await else { return };
+    let (owner, admin, member) = (UserId::new(), UserId::new(), UserId::new());
+    let id = c.create_ws(owner, &uniq("AI")).await;
+    c.add_member(&id, admin, WorkspaceRole::Admin).await;
+    c.add_member(&id, member, WorkspaceRole::Member).await;
+    let uri = format!("/workspaces/{id}/settings");
+    let body = json!({"aiRetrievalAllowed": true, "externalLlmAllowed": true,
+        "aiSuggestEnabled": false});
+
+    let (st, _) = c.call(Method::PUT, &uri, member, Some(body.clone())).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, v) = c.call(Method::PUT, &uri, admin, Some(body)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["aiRetrievalAllowed"], true);
+    assert_eq!(v["aiSuggestEnabled"], false);
+
+    // The exact jsonb keys the worker adapters and ai-plane `PgExternalLlmPolicy` read.
+    let ws: Uuid = id.parse().unwrap();
+    let (r, e, s): (Option<bool>, Option<bool>, Option<bool>) = sqlx::query_as(
+        "SELECT (settings -> 'aiRetrievalAllowed')::text::bool, \
+                (settings -> 'externalLlmAllowed')::text::bool, \
+                (settings -> 'aiSuggestEnabled')::text::bool \
+         FROM workspace.workspaces WHERE id = $1",
+    )
+    .bind(ws)
+    .fetch_one(&c.pool)
+    .await
+    .unwrap();
+    assert_eq!((r, e, s), (Some(true), Some(true), Some(false)));
+
+    // A later PUT that omits the flags (the old settings form) leaves them alone.
+    let (st, v) = c
+        .call(
+            Method::PUT,
+            &uri,
+            owner,
+            Some(json!({"maxParticipantsLimit": 12})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["maxParticipantsLimit"], 12);
+    assert_eq!(v["aiRetrievalAllowed"], true);
+    assert_eq!(v["externalLlmAllowed"], true);
+    assert_eq!(v["aiSuggestEnabled"], false);
+    let (_, v) = c.call(Method::GET, &uri, member, None).await;
+    assert_eq!(v["externalLlmAllowed"], true);
+
+    // Explicit false switches a flag off again.
+    let (_, v) = c
+        .call(
+            Method::PUT,
+            &uri,
+            owner,
+            Some(json!({"externalLlmAllowed": false})),
+        )
+        .await;
+    assert_eq!(v["externalLlmAllowed"], false);
+    assert_eq!(v["aiRetrievalAllowed"], true);
 }
 
 #[tokio::test]

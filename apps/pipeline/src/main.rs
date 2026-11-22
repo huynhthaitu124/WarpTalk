@@ -31,6 +31,7 @@ use warptalk_pipeline::fakes::{FakeMt, FakeMtConfig, FakeTts, FakeTtsConfig};
 use warptalk_pipeline::glossary::{RedisGlossaryProvider, RedisKv, spawn_invalidation_listener};
 use warptalk_pipeline::host::{HostConfig, HostDeps, PipelineHost};
 use warptalk_pipeline::results::RedisResultSink;
+use warptalk_pipeline::room_config::{RoomConfigSource, SettingsRoomConfig};
 use warptalk_pipeline::simulated::{SimParticipant, SimulatedTransport};
 use warptalk_pipeline::transport::MediaTransport;
 use warptalk_pipeline::tuning::{LatencyTuning, PipelineExtras};
@@ -129,7 +130,10 @@ async fn main() -> anyhow::Result<()> {
             vad_factory: energy_vad_factory(),
             downstream,
             results: Arc::new(RedisResultSink::new(redis, redis_cfg.stream_maxlen)),
-            config: cfg_rx,
+            config: cfg_rx.clone(),
+            room_config: store.map(|st| {
+                Arc::new(SettingsRoomConfig::new(st, cfg_rx)) as Arc<dyn RoomConfigSource>
+            }),
         },
     );
 
