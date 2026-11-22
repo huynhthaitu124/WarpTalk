@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
-  BookBookmark, Brain, Broadcast, Buildings, Check, CaretRight, CaretUpDown, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
+  BookBookmark, Brain, Broadcast, Buildings, Check, CaretRight, CaretUpDown, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
   SquaresFour, Sun, Users, X,
 } from '@phosphor-icons/react';
 import {
@@ -119,6 +119,7 @@ function Sidebar() {
           <SidebarNav label="Workspace" heading="Workspace">
             <SidebarLink to={wsPath('/members')} icon={ico(Users)} badge={pendingCount || null}>Members</SidebarLink>
             <SidebarLink to={wsPath('/knowledge')} icon={ico(Brain)}>Knowledge</SidebarLink>
+            <SidebarLink to={wsPath('/documents')} icon={ico(FileText)}>Documents</SidebarLink>
             <SidebarLink to={wsPath('/glossary')} icon={ico(BookBookmark)}>Glossary</SidebarLink>
             <SidebarLink to={wsPath('/settings')} icon={ico(GearSix)}>Settings</SidebarLink>
           </SidebarNav>
@@ -161,7 +162,7 @@ function Breadcrumb() {
     items.push({ label: 'Settings', to: rest[1] ? wsPath('/settings') : undefined });
     if (rest[1]) items.push({ label: SETTINGS_LABEL[rest[1]] ?? rest[1] });
   } else {
-    const label = { home: 'Home', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', knowledge: 'Knowledge', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
+    const label = { home: 'Home', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
     items.push({ label });
   }
   return (
@@ -252,6 +253,7 @@ export function Shell() {
         nav('go-meetings', 'Go to Meetings', <SquaresFour className="size-4" />, wsPath('/meetings'), 'G M'),
         nav('go-members', 'Go to Members', <Users className="size-4" />, wsPath('/members'), 'G P'),
         nav('go-knowledge', 'Go to Knowledge', <Brain className="size-4" />, wsPath('/knowledge'), 'G K'),
+        nav('go-documents', 'Go to Documents', <FileText className="size-4" />, wsPath('/documents')),
         nav('go-glossary', 'Go to Glossary', <BookBookmark className="size-4" />, wsPath('/glossary')),
         nav('go-settings', 'Go to Settings', <GearSix className="size-4" />, wsPath('/settings'), 'G S'),
         ...(admin ? [nav('go-ai', 'Go to AI providers', <Brain className="size-4" />, wsPath('/settings/ai'))] : []),

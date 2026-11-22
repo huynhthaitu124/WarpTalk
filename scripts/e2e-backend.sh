@@ -23,6 +23,9 @@ export CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:5199,http://localhost:5199
 export RUST_LOG="${RUST_LOG:-warn}"
 # TEST BACKEND ONLY: raw verification and invitation tokens go to Redis (dev:mail:*) so E2E can read them.
 export DEV_MAIL_CAPTURE=1
+# Documents land in a throwaway directory (local object store), not in the repo or a shared path.
+export STORAGE_PROVIDER=local
+export STORAGE_LOCAL_DIR="${STORAGE_LOCAL_DIR:-$(mktemp -d -t warptalk-e2e-storage.XXXXXX)}"
 unset LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET METRICS_BIND
 
 if [ "${E2E_SKIP_BUILD:-0}" != "1" ]; then

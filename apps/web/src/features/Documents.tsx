@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { DownloadSimple, FileText, MagnifyingGlass, UploadSimple, X } from '@phosphor-icons/react';
 import {
   Alert, Badge, Button, Card, Dialog, DialogContent, Drawer, EmptyState, Field, Input, PageHeader, Select, Skeleton, Switch, Table, TBody, TD, TH, THead, Tooltip, TR, useToast,
@@ -175,7 +175,7 @@ function UploadDialog({ ws, open, onOpenChange }: { ws: Workspace; open: boolean
 }
 
 // ---- detail drawer
-function Meta({ label, children }: { label: string; children: React.ReactNode }) {
+function Meta({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <dt className="text-eyebrow font-medium uppercase tracking-[0.4px] text-ink-subtle">{label}</dt>

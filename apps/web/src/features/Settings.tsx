@@ -7,6 +7,7 @@ import {
 import { cn } from '@/lib/cn';
 import { AiSettings } from './AiSettings';
 import { GlobalGlossaryAdmin } from './GlobalGlossary';
+import { VoiceSection } from './VoiceProfile';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
@@ -232,7 +233,7 @@ function AccountTab() {
   const { email, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   return (
-    <div className="flex max-w-md flex-col gap-4">
+    <div className="flex max-w-xl flex-col gap-4">
       <Card>
         <CardHeader title="Profile" />
         <CardBody className="flex items-center gap-3">
@@ -246,6 +247,7 @@ function AccountTab() {
           <Field label="Theme"><Select value={theme} onValueChange={(v) => setTheme(v as 'dark' | 'light')} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]} /></Field>
         </CardBody>
       </Card>
+      <VoiceSection />
       <div><Button onClick={() => void logout()}>Sign out</Button></div>
     </div>
   );

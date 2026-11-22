@@ -38,7 +38,7 @@ export default defineConfig({
     {
       // Pre-join camera/mic preview: Chromium's fake devices + auto-granted permission prompt.
       name: 'meeting-media',
-      testMatch: /meeting-media\.spec\.ts/,
+      testMatch: /(meeting-media|voice-media)\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: { ...launchOptions, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },

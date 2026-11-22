@@ -5,6 +5,7 @@ export { expect };
 export * from './api';
 export * from './db';
 export * from './native-mock';
+export * from './files';
 
 /**
  * Seeds the refresh token into localStorage once per tab (guarded by sessionStorage so a rotated
