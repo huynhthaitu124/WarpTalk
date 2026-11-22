@@ -54,6 +54,14 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [ ] macOS app: build thật trên Mac + sửa VERIFY; pipeline `livekit-rtc` build thật (cần clang ≥ 21)
 - [ ] Còn thiếu backend: documents upload, voice profile/consent, billing, notification, WarpBot chat, forgot-password, calendar
 
+## Trạng thái cuối 2026-11-22
+
+- Rust: 677 test pass toàn workspace, clippy -D warnings sạch.
+- Web (Next.js 16.4.6, npm audit 0 lỗ hổng): Playwright 303 pass / 0 fail / 12 skip; restyle theo legacy (LEGACY_AUDIT.md, ảnh compare-after/).
+- Contract audit: 14 BROKEN đã sửa kèm test producer+consumer thật.
+- macOS: 3 VERIFY còn lại (apps/macos/README.md §8), chưa compile.
+- Gói tải về: START-HERE.md.
+
 ## Quyết định 2026-11-22 (user)
 
 - `apps/web` chuyển từ Vite sang **Next.js (App Router, cùng major với legacy: Next 16)**. Thứ tự: hoàn tất restyle theo `apps/web/LEGACY_AUDIT.md` (đang chạy) → migrate sang Next.js giữ nguyên components/tests → Playwright + so sánh legacy.
