@@ -11,10 +11,11 @@ import {
 } from '@/ui';
 import { useAuth, useProfile } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
+import { IS_DEV } from '@/lib/env';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import { usePendingInvitations, useRoom } from '@/lib/queries';
 
-const SHOW_DESIGN = import.meta.env.DEV;
+const SHOW_DESIGN = IS_DEV;
 
 function WorkspaceSwitcher() {
   const { workspaces, current, select } = useWorkspace();

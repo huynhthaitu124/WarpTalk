@@ -18,6 +18,7 @@ import { useTheme } from '@/lib/theme';
 import type { Workspace, WorkspaceSettings } from '@/lib/schemas';
 import { ApiError } from '@/lib/api';
 import { errMsg } from './errors';
+import { IS_DEV } from '@/lib/env';
 
 function ReadOnlyNote({ role }: { role: string }) {
   return <Alert tone="info" className="mb-4" title="Read-only">Your role is {role.toLowerCase()}. Only workspace owners and admins can change these settings.</Alert>;
@@ -64,7 +65,7 @@ function WorkspaceTab({ ws }: { ws: Workspace }) {
 
 // ---- runtime settings (suggestion / pipeline)
 /** The raw JSON editor is developer tooling: dev builds only. */
-const SHOW_RAW = import.meta.env.DEV;
+const SHOW_RAW = IS_DEV;
 type Json = Record<string, unknown>;
 type FieldDef = { key: string; label: string; kind: 'bool' | 'number'; step?: number; hint?: string };
 const FIELDS: Record<Namespace, FieldDef[]> = {
