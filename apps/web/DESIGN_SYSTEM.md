@@ -21,7 +21,7 @@ Implementation map
 1. **Three layers.** `canvas` is the window ground and the recessed sidebar (no border). The main content is ONE raised panel on top of it: `bg-panel`, 16px radius on all four corners, 1px hairline, `shadow-panel`, inset 6px top/right and a 36px strip below (left butts the sidebar). Inside the panel, structure comes from full-bleed hairline bands, not boxes. Cards (`surface-1`) sit on the panel with a 1px hairline and a barely-there shadow.
 2. **One chromatic accent: lavender `#5e6ad2`.** Used for the primary action, focus ring, active tab/switch/checkbox and link emphasis only. Semantic colours (success/warning/danger/info) appear only in pills, alerts and toasts, always with a text label.
 3. **Dense and keyboard-first.** 28px pill buttons, 36px inputs, list rows 44px, Cmd/Ctrl+K reaches every destination, every interactive element has a visible `:focus-visible` ring.
-4. **Dark is the default, light is an equal.** Both themes are tokenised; no component hard-codes a colour. The theme is applied before first paint (inline script in `index.html`).
+4. **Dark is the default, light is an equal.** Both themes are tokenised; no component hard-codes a colour. The theme is applied before first paint (inline script in `app/layout.tsx`).
 5. **Colour never carries meaning alone.** Status pills show a dot plus a text label; the mic state has text; errors have text and `role="alert"`.
 6. **Motion is optional.** All transitions/animations are <= 180ms and are disabled under `prefers-reduced-motion: reduce`.
 
@@ -191,7 +191,7 @@ List pages have no visible h1: the breadcrumb is the title and `PageHeader` keep
 ## 6. Themes
 
 - Dark (`:root`, default) and light (`:root[data-theme="light"]`).
-- First paint: the inline script in `index.html` reads `localStorage["wt.theme"]` and sets `data-theme` before React mounts.
+- First paint: the inline script in `app/layout.tsx` reads `localStorage["wt.theme"]` and sets `data-theme` before React mounts.
 - Dev-only: the sidebar "Design system" link and command are shown only when `import.meta.env.DEV`; `/design` stays reachable by URL.
 - Toggles: top bar button, account menu, Settings -> Account, command menu ("Toggle theme").
 - Unsupported on purpose: system-follow. The macOS shell can set `data-theme` itself via `localStorage` if it wants to follow the OS.

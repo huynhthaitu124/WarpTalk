@@ -1,7 +1,7 @@
 # WarpTalk web: E2E test plan
 
-Real stack: Vite dev server (`:5199`) -> real `warptalk-api` (`:18080`, Postgres + Redis, LiveKit **not** configured).
-Run: `cd apps/web && npx playwright test` (starts `scripts/e2e-backend.sh` and `vite` itself).
+Real stack: Next.js dev server (`:3199`, `NEXT_PUBLIC_E2E_HARNESS=1`, `/api` rewritten to the backend) -> real `warptalk-api` (`:18080`, Postgres + Redis, LiveKit **not** configured).
+Run: `cd apps/web && npx playwright test` (starts `scripts/e2e-backend.sh`, `next dev` and, for the `export` project, `next build` + `scripts/serve-out.mjs` on `:3198` itself).
 Update screenshots: `npx playwright test --update-snapshots`.
 
 Conventions
@@ -311,6 +311,17 @@ Fixtures: `makeWav` in `fixtures/files.ts` generates silent and speech-like mono
 | VOICE-10 | P0 | `meeting-media` project (fake mic): Record sample | Live meter moves, timer counts, Stop locked until 10 s, auto-stop at 20 s; sample is mono PCM16 WAV about 10 s (24 kHz) in the enroll request; result or friendly error shown | auto |
 | VOICE-11 | P1 | Record, then Cancel | Microphone released, nothing kept, Record available again | auto |
 | VOICE-12 | P2 | Provider configured: success path end to end, `cloneEnabled` true | Needs a provider key in the test environment | todo |
+
+## 17. Static export (EXP) - `e2e/tests/export.spec.ts` (`export` project)
+
+The `export` project builds the app (`next build`, `output: 'export'` -> `out/`) and serves it with `scripts/serve-out.mjs` on `:3198` (same fallback rules as the macOS bundle server; `/api` proxied to the e2e backend). Harness modules are NOT available there (`NEXT_PUBLIC_E2E_HARNESS` is only set for `next dev`).
+
+| ID | Pri | Preconditions | Steps | Expected | Status |
+|---|---|---|---|---|---|
+| EXP-01 | P0 | signed in, room | Open `/rooms/<id>` directly, then reload | 200, SPA boots, room heading shown | auto |
+| EXP-02 | P1 | signed out | Open `/meetings/<id>`; request a missing `/_next/static/*.js` | Redirect to `/login`; asset is a real 404 (no HTML fallback for paths with an extension) | auto |
+
+Test harness note: the Vite-era specs imported `/e2e/harness/*.tsx` by URL. Under Next they use `window.__wtHarness.<name>()` (`src/HarnessBridge.tsx`, only when `NEXT_PUBLIC_E2E_HARNESS=1`).
 
 ## Fixes in this round
 

@@ -4,7 +4,7 @@
 #
 #   scripts/dev-up.sh                 # ha tang + build + migrate, IN RA lenh de ban tu chay tung cai
 #   scripts/dev-up.sh --start         # nhu tren, roi chay api+worker+pipeline nen (log: ./.logs/)
-#   scripts/dev-up.sh --start --web   # them Vite dev server (npm run dev)
+#   scripts/dev-up.sh --start --web   # them Next.js dev server (npm run dev, cong 3000)
 #   scripts/dev-up.sh --stop          # dung cac tien trinh nen (khong dung docker)
 #   scripts/dev-up.sh --down          # --stop + docker compose down (giu du lieu)
 #
@@ -105,8 +105,9 @@ set +a
 
 API_BIND="${HTTP_BIND:-127.0.0.1:8080}"
 API_URL="http://${API_BIND}"
-WEB_PORT_V="${WEB_PORT:-5173}"
-export VITE_API_PROXY="${VITE_API_PROXY:-$API_URL}"
+WEB_PORT_V="${WEB_PORT:-3000}"
+# next.config.ts rewrites /api/** to this backend (dev only).
+export API_PROXY_TARGET="${API_PROXY_TARGET:-$API_URL}"
 
 # ---------- ha tang ----------
 if [ "$DOCKER" = 1 ]; then
@@ -176,7 +177,7 @@ if [ "$START" = 1 ]; then
   run_bg pipeline "exec $PIPE_CMD"
   if [ "$WEB" = 1 ]; then
     [ -d apps/web/node_modules ] || (cd apps/web && npm ci)
-    run_bg web "cd apps/web && exec npm run dev"
+    run_bg web "cd apps/web && exec npm run dev -- -p ${WEB_PORT_V}"
   fi
   sleep 2
   for n in worker pipeline; do
@@ -191,14 +192,14 @@ cat <<EOT
 ================ SAN SANG ================
 API        : $API_URL        (health: $API_URL/health)
 LiveKit    : ${LIVEKIT_URL:-ws://localhost:7880}  (devkey/secret)
-Web        : http://localhost:${WEB_PORT_V}   (sau khi chay 'npm run dev')
+Web        : http://localhost:${WEB_PORT_V}   (Next.js, sau khi chay 'npm run dev')
 Nap env    : $ENVLOAD
 
 Lenh chay tung thanh phan (moi cai mot terminal, tai thu muc goc repo):
   1) API      : $ENVLOAD; $TARGET/warptalk-api
   2) Worker   : $ENVLOAD; $TARGET/warptalk-worker
   3) Pipeline : $ENVLOAD; $PIPE_CMD
-  4) Web      : $ENVLOAD; cd apps/web && npm install && npm run dev
+  4) Web      : $ENVLOAD; cd apps/web && npm install && npm run dev -- -p ${WEB_PORT_V}
 EOT
 if [ "$MODE" = fake ]; then
   cat <<'EOT'

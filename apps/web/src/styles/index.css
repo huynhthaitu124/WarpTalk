@@ -308,3 +308,7 @@
   }
 }
 
+
+/* Next's App Router injects a `<next-route-announcer>` (shadow DOM, `role="alert"`). Navigation here is react-router, which never
+   updates it, and it would be a second, empty alert next to the app's own `role="alert"` messages. */
+next-route-announcer { display: none; }

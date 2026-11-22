@@ -1,10 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // Ports can be moved (E2E_WEB_PORT / E2E_API_PORT) to run next to another stack on the defaults.
-const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 5199);
+const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 3199);
 const API_PORT = Number(process.env.E2E_API_PORT ?? 18080);
 const API = `http://127.0.0.1:${API_PORT}`;
 const baseURL = `http://127.0.0.1:${WEB_PORT}`;
+// Static export smoke test: `next build` -> out/ served by scripts/serve-out.mjs.
+const EXPORT_PORT = Number(process.env.E2E_EXPORT_PORT ?? 3198);
+const exportURL = `http://127.0.0.1:${EXPORT_PORT}`;
 
 // Optional override when the bundled browser build does not match the installed Playwright:
 //   PW_CHROMIUM=/opt/pw-browsers/chromium npx playwright test
@@ -33,6 +36,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /export\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], launchOptions },
     },
     {
@@ -43,6 +47,12 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         launchOptions: { ...launchOptions, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
       },
+    },
+    {
+      // The bundled macOS build: deep links on the static export (own server, see webServer below).
+      name: 'export',
+      testMatch: /export\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: exportURL, launchOptions },
     },
     {
       // The macOS app embeds this UI in a WKWebView at 1280x800; run the shell-level specs there.
@@ -68,9 +78,18 @@ export default defineConfig({
       gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     },
     {
-      command: `WEB_PORT=${WEB_PORT} VITE_API_PROXY=${API} npx vite --strictPort`,
+      // `next dev` with the test harness bridge on; /api is rewritten to the e2e backend.
+      command: `NEXT_PUBLIC_E2E_HARNESS=1 NEXT_DIST_DIR=.next-e2e API_PROXY_TARGET=${API} npx next dev -H 127.0.0.1 -p ${WEB_PORT}`,
       url: baseURL,
-      timeout: 60_000,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: `NEXT_DIST_DIR=.next-export npx next build && API_PROXY_TARGET=${API} node scripts/serve-out.mjs --port ${EXPORT_PORT}`,
+      url: exportURL,
+      timeout: 5 * 60_000,
       reuseExistingServer: !process.env.CI,
       stdout: 'ignore',
       stderr: 'pipe',

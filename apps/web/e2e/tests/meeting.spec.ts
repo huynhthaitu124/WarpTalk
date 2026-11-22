@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { call, inviteAndAccept, createRoom, createUser, expect, ok, signedInContext, test } from '../fixtures';
 
-const HARNESS = '/e2e/harness/captions.tsx';
+const HARNESS = 'captions';
 interface Harness {
   messages: { payload: string; now: number }[];
   translationLang: string;
@@ -13,7 +13,10 @@ interface Harness {
 async function mountCaptions(page: Page, input: Harness) {
   await page.goto('/login');
   await page.evaluate(async ({ path, i }) => {
-    const m = await import(/* @vite-ignore */ path);
+    const m = await (async () => {
+      for (let n = 0; n < 500 && !window.__wtHarness; n++) await new Promise((r) => setTimeout(r, 20));
+      return window.__wtHarness![path as 'captions']();
+    })();
     const el = document.createElement('div');
     el.id = 'harness';
     document.body.append(el);

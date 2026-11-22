@@ -2,7 +2,7 @@ import Foundation
 
 /// Which URL(s) the web view tries, in order. Pure (unit-tested).
 ///   1. the configured URL (default `http://localhost:3000`, the Next.js dev server),
-///   2. the fallback list (default `http://localhost:5173`, the old Vite dev server),
+///   2. the fallback list (empty by default; add extra dev URLs in Settings),
 ///   3. the web export bundled inside the app (`warptalk://app/`), when the build included one.
 enum WebURLPlan {
     static let bundledScheme = "warptalk"

@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from './api';
 import { z } from 'zod';
 import { session } from './session';
+import { apiUrl } from '@/lib/env';
 
 export interface Suggestion {
   suggestionId: string;
@@ -104,7 +105,7 @@ export function createSseParser(onMessage: (m: { event: string; data: string; id
 const GONE = new Set([404, 405, 501, 503]);
 
 async function open(path: string, signal: AbortSignal, lastId?: string): Promise<Response> {
-  const go = (t: string | null) => fetch(`/api/v1${path}`, { signal, headers: { accept: 'text/event-stream', ...(lastId ? { 'last-event-id': lastId } : {}), ...(t ? { authorization: `Bearer ${t}` } : {}) } });
+  const go = (t: string | null) => fetch(apiUrl(path), { signal, headers: { accept: 'text/event-stream', ...(lastId ? { 'last-event-id': lastId } : {}), ...(t ? { authorization: `Bearer ${t}` } : {}) } });
   let res = await go(session.accessToken);
   if (res.status === 401 && session.refreshToken) {
     const t = (await session.refresh())?.accessToken;

@@ -1,6 +1,13 @@
 node_modules
+.next
+out
 dist
 test-results
 playwright-report
 .e2e
 *.tsbuildinfo
+next-env.d.ts
+.next-e2e
+.next-export
+AGENTS.md
+CLAUDE.md

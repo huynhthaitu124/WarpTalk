@@ -183,7 +183,9 @@ test.describe('Design system and brand', () => {
         document.documentElement.dataset.theme = t;
         const cs = getComputedStyle(document.documentElement);
         const get = (n: string) => cs.getPropertyValue(`--${n}`).trim();
-        const lum = (hex: string) => {
+        const lum = (raw: string) => {
+          // The CSS pipeline may shorten #ffffff to #fff.
+          const hex = raw.length === 4 ? `#${[1, 2, 3].map((i) => raw[i]! + raw[i]!).join('')}` : raw;
           const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
           return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
         };

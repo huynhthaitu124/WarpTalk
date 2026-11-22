@@ -1,5 +1,6 @@
 // Session store: access token in memory, refresh token in localStorage (rotated on every refresh).
 import { authResponse, type AuthResponse } from './schemas';
+import { apiUrl } from '@/lib/env';
 
 const RT_KEY = 'wt.refresh';
 
@@ -59,7 +60,7 @@ export const session = {
     if (!rt) return Promise.resolve(null);
     inflight = (async () => {
       try {
-        const res = await fetch('/api/v1/auth/refresh', {
+        const res = await fetch(apiUrl('/auth/refresh'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ refreshToken: rt }),

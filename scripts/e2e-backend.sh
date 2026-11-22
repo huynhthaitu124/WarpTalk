@@ -19,7 +19,7 @@ export DATABASE_URL="${DATABASE_URL:-postgres://postgres@localhost:5432/warptalk
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
 export HTTP_BIND="${E2E_API_BIND:-127.0.0.1:18080}"
 export JWT_SECRET="$(head -c 48 /dev/urandom | base64 | tr -d '\n=+/' | head -c 64)"
-export CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:5199,http://localhost:5199}"
+export CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:3199,http://localhost:3199,http://127.0.0.1:3198,http://localhost:3198}"
 export RUST_LOG="${RUST_LOG:-warn}"
 # TEST BACKEND ONLY: raw verification and invitation tokens go to Redis (dev:mail:*) so E2E can read them.
 export DEV_MAIL_CAPTURE=1

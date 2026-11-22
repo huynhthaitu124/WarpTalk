@@ -6,13 +6,16 @@ import { call, createRoom, createUser, expect, inviteAndAccept, ok, signedInCont
 import { mountMeeting } from '../harness/helpers';
 
 const NOW = 1_700_000_000_000;
-const HARNESS = '/e2e/harness/captions.tsx';
-const AUDIO = '/e2e/harness/audio.ts';
+const HARNESS = 'captions';
+const AUDIO = 'audio';
 
 async function mountCaptions(page: Page, payloads: Record<string, unknown>[], lang = 'en') {
   await page.goto('/login');
   await page.evaluate(async ({ path, i }) => {
-    const m = await import(/* @vite-ignore */ path);
+    const m = await (async () => {
+      for (let n = 0; n < 500 && !window.__wtHarness; n++) await new Promise((r) => setTimeout(r, 20));
+      return window.__wtHarness![path as 'captions']();
+    })();
     const el = document.createElement('div');
     document.body.append(el);
     m.mount(el, i);
@@ -108,7 +111,10 @@ test.describe('Audio subscription contract', () => {
   async function run(page: Page, listen: string, remotes: Remote[], roster: Record<string, string>) {
     await page.goto('/login');
     return page.evaluate(async ({ path, a }) => {
-      const m = await import(/* @vite-ignore */ path);
+      const m = await (async () => {
+      for (let n = 0; n < 500 && !window.__wtHarness; n++) await new Promise((r) => setTimeout(r, 20));
+      return window.__wtHarness![path as 'captions']();
+    })();
       return m.run(a.listen, a.remotes, a.roster) as Record<string, string[]>;
     }, { path: AUDIO, a: { listen, remotes, roster } });
   }
@@ -217,8 +223,11 @@ test.describe('Live suggestions', () => {
   test('SUG-04 SSE parser: split chunks, comments, multi-line data, CRLF', async ({ page }) => {
     await page.goto('/login');
     const got = await page.evaluate(async () => {
-      const path = '/src/lib/suggestions.ts';
-      const m = await import(/* @vite-ignore */ path);
+      const path = 'suggestions';
+      const m = await (async () => {
+      for (let n = 0; n < 500 && !window.__wtHarness; n++) await new Promise((r) => setTimeout(r, 20));
+      return window.__wtHarness![path as 'captions']();
+    })();
       const out: { event: string; data: string }[] = [];
       const feed = m.createSseParser((x: { event: string; data: string }) => out.push(x));
       for (const c of [': hi\n\nevent: sugg', 'estion\ndata: {"a"', ':1}\n\ndata: l1\r\ndata: l2\r\n\r\n']) feed(c);

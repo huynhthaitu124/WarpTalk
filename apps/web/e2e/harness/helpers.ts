@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { HarnessOptions, MockMeeting } from './meeting';
 
-const HARNESS = '/e2e/harness/meeting.tsx';
+const HARNESS = 'meeting';
 
 /**
  * Mounts the real in-meeting UI (scripted media session, real backend for roster/host actions) on top of an
@@ -11,7 +11,10 @@ export async function mountMeeting(page: Page, kind: 'live' | 'offline' | 'ended
   await page.goto('/rooms');
   await page.waitForSelector('main');
   await page.evaluate(async ({ path, kind: k, o }) => {
-    const m = await import(/* @vite-ignore */ path);
+    const m = await (async () => {
+      for (let n = 0; n < 500 && !window.__wtHarness; n++) await new Promise((r) => setTimeout(r, 20));
+      return window.__wtHarness![path as 'captions']();
+    })();
     const el = document.createElement('div');
     el.id = 'harness';
     document.body.append(el);

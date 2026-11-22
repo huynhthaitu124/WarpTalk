@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { api } from './api';
 import { globalAudit, globalTerm, glossary, glossaryTerm, importResult, type GlobalStatus } from './schemas';
 import { session } from './session';
+import { apiUrl } from '@/lib/env';
 
 // ---- workspace glossaries
 export function useGlossaries(wsId: string | undefined) {
@@ -95,7 +96,7 @@ export function useImportTerms(glossaryId: string) {
 }
 /** Authenticated download (a plain link cannot carry the bearer token). Returns the CSV text. */
 export async function exportGlossaryCsv(glossaryId: string): Promise<string> {
-  const get = (token: string | null) => fetch(`/api/v1/glossaries/${glossaryId}/export`, { headers: { authorization: `Bearer ${token ?? ''}` } });
+  const get = (token: string | null) => fetch(apiUrl(`/glossaries/${glossaryId}/export`), { headers: { authorization: `Bearer ${token ?? ''}` } });
   let res = await get(session.accessToken);
   if (res.status === 401 && session.refreshToken) res = await get((await session.refresh())?.accessToken ?? null);
   if (!res.ok) throw new Error(`Export failed (${res.status})`);

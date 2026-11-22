@@ -4,7 +4,7 @@ import XCTest
 final class WebURLPlanTests: XCTestCase {
     func testDefaultsPreferNextThenViteThenBundle() {
         let c = WebURLPlan.candidates(primary: SettingsStoreDefaults.web, fallbacks: WebURLPlan.parseList(SettingsStoreDefaults.fallbacks), bundledAvailable: true)
-        XCTAssertEqual(c.map(\.absoluteString), ["http://localhost:3000", "http://localhost:5173", "warptalk://app/"])
+        XCTAssertEqual(c.map(\.absoluteString), ["http://localhost:3000", "http://localhost:3001", "warptalk://app/"])
     }
 
     func testDedupInvalidAndBundleOptional() {
@@ -32,7 +32,7 @@ final class WebURLPlanTests: XCTestCase {
     /// Same literals as `SettingsStore` (which is main-actor isolated).
     private enum SettingsStoreDefaults {
         static let web = "http://localhost:3000"
-        static let fallbacks = "http://localhost:5173"
+        static let fallbacks = "http://localhost:3001"
     }
 }
 

@@ -129,7 +129,7 @@ Tai khoan (mat khau chung): $PASSWORD
   Host  (OWNER)  : $HOST_EMAIL   userId $HOST_ID
   Guest (MEMBER) : $GUEST_EMAIL  userId $GUEST_ID
 
-Dang nhap web: http://localhost:${WEB_PORT:-5173}/ -> dung email/mat khau tren.
+Dang nhap web: http://localhost:${WEB_PORT:-3000}/ -> dung email/mat khau tren.
 Vao phong    : mo phong "$ROOM_TITLE" (Host), hoac nguoi khac nhap ma $ROOM_CODE.
 EOT
 if [ -n "$SIM_IDS" ]; then

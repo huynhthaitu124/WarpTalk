@@ -6,7 +6,7 @@ final class SettingsStore: ObservableObject {
     /// Next.js dev server (`apps/web`: `npm run dev`).
     static let defaultWebURL = "http://localhost:3000"
     /// Tried after the configured URL when it is unreachable (the previous Vite dev server).
-    static let defaultWebFallbackURLs = "http://localhost:5173"
+    static let defaultWebFallbackURLs = ""
     static let defaultBackendURL = "http://localhost:8080"      // used when the web app does not pass backendUrl
     private static let legacyViteURL = "http://localhost:5173"
 

@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { errorBody } from './schemas';
 import { session } from './session';
+import { apiUrl } from '@/lib/env';
 
 export class ApiError extends Error {
   constructor(
@@ -27,7 +28,7 @@ function url(path: string, query?: Query) {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
   const s = q.toString();
-  return `/api/v1${path}${s ? `?${s}` : ''}`;
+  return `${apiUrl(path)}${s ? `?${s}` : ''}`;
 }
 
 async function send(path: string, o: Omit<Opts<undefined>, 'schema'>, token: string | null) {
