@@ -1,6 +1,7 @@
-import CoreAudio
-import Foundation
 import AVFoundation
+import CoreAudio
+import Darwin
+import Foundation
 
 struct AudioDeviceInfo: Identifiable, Hashable {
     let objectID: AudioObjectID
@@ -97,7 +98,9 @@ enum DeviceManager {
     // MARK: Audio processes (macOS 14.2+ process objects)
 
     static func audioProcesses() -> [AudioProcessInfo] {
-        // VERIFY: kAudioHardwarePropertyProcessObjectList / kAudioProcessProperty* are macOS 14.2+ symbols.
+        // macOS 14.5 SDK CoreAudio/AudioHardware.h: kAudioHardwarePropertyProcessObjectList 'prs#' (:633),
+        // kAudioProcessPropertyPID 'ppid', ...BundleID 'pbid', ...IsRunningOutput 'piro' (:1973-1978); same reads as insidegui/AudioCap
+        // CoreAudioUtils.swift `readProcessList`. They only exist from macOS 14.2: callers guard with `#available(macOS 14.2, *)`/deployment target 14.2.
         let ids = getArray(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList, AudioObjectID.self)
         return ids.compactMap { id in
             guard let pid: pid_t = getValue(id, kAudioProcessPropertyPID, default: pid_t(0)) else { return nil }

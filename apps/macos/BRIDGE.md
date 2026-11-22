@@ -2,10 +2,10 @@
 
 Contract between the macOS app (WKWebView host) and the web app (`apps/web`). The web app owns auth, rooms, the meeting UI, captions and the LiveKit session for native meetings. The macOS app owns: capturing another app's audio, publishing it to the bridge room, voice-mode dub playback into a virtual device, the floating caption overlay, and macOS permissions.
 
-Status: written before the Swift code could be compiled; implementation is `Sources/Web/*` and `Sources/Features/External/NativeCaptureController.swift`.
+Status: the Swift code has not been compiled on a Mac yet (written on Linux; LiveKit and Apple API names were checked against the real SDK sources, see README §8). Implementation: `Sources/Web/*` and `Sources/Features/External/NativeCaptureController.swift`.
 
 ## Detecting the bridge
-`window.warptalkNative` exists only inside the macOS app, only for the configured web origin (scheme + host + port; default `http://localhost:5173`), only in the main frame. The script is injected at document start. Also fires `window.dispatchEvent(new Event('warptalk-native-ready'))`.
+`window.warptalkNative` exists only inside the macOS app, only for the ACTIVE web origin (scheme + host + port), only in the main frame. The active origin is the first URL that answers from: Settings URL (default `http://localhost:3000`, the Next.js dev server) -> fallback list (default `http://localhost:5173`) -> the bundled export `warptalk://app/` (when the app was built with `make bundle`). The script is injected at document start. Also fires `window.dispatchEvent(new Event('warptalk-native-ready'))`.
 ```ts
 const native = (window as any).warptalkNative as WarptalkNative | undefined; // undefined in a normal browser
 ```
@@ -18,6 +18,16 @@ export type PermissionKind = 'microphone' | 'screenRecording' | 'audioCapture';
 export type SettingsPane = PermissionKind | 'privacy';
 export type CaptureMode = 'text' | 'voice';
 export type CaptureBackend = 'auto' | 'processTap' | 'screenCaptureKit';
+
+/** Runtime configuration injected by the host (read it instead of hard-coding the backend). */
+export interface NativeConfig {
+  version: 1;
+  /** Backend API base WITHOUT `/api/v1`. Bundled app: "warptalk://app" (same-origin proxy, forwards `/api/**` to the backend URL in
+   *  native Settings, so the backend needs no CORS entry). Dev server: the backend URL from native Settings (e.g. "http://localhost:8080"). */
+  apiBaseUrl: string;
+  /** true when the page is served from the app bundle (`warptalk://app`). */
+  bundled: boolean;
+}
 
 export interface Capabilities {
   version: 1;
@@ -47,6 +57,7 @@ export interface StartExternalCaptureOptions {
   backendUrl?: string;               // e.g. "http://localhost:8080" (no /api/v1); falls back to the native Settings value
   heartbeatIntervalSeconds?: number; // default 15 (from the claim response)
   listenLanguage?: string;           // REQUIRED when mode === 'voice': subscribes to track "dub-{listenLanguage}"
+  nativeOverlayCaptions?: boolean;   // voice mode, default false: native also decodes its own `captions` packets and drives the overlay (do NOT also call pushOverlayCaption)
   dubOutputDeviceUid?: string;       // voice mode output device (BlackHole 2ch); defaults to native Settings value
   captureBackend?: CaptureBackend;   // default 'auto' = Process Tap, fall back to ScreenCaptureKit
 }
@@ -63,6 +74,7 @@ export interface CaptureStatus {
   audioFlowing: boolean;             // capture pipeline is delivering buffers (liveness, NOT "someone talks")
   lastAudioAt: string | null;        // ISO time the level last exceeded -60 dBFS
   lastHeartbeatAt: string | null;
+  leaseExpiresAt: string | null;     // server-computed end of the capturer lease from the last heartbeat (null before the first one)
   dubTrack: string | null;           // voice mode: subscribed track name, e.g. "dub-vi"
   error?: { code: string; message: string };
 }
@@ -77,6 +89,7 @@ export interface OverlayCaption {
 
 export interface WarptalkNative {
   version: 1;
+  config: NativeConfig;
   getCapabilities(): Promise<Capabilities>;
   listAudioApps(): Promise<AudioApp[]>;
   startExternalCapture(opts: StartExternalCaptureOptions): Promise<CaptureStatus>;
@@ -103,7 +116,8 @@ export type NativeEvent =
   | ({ type: 'status'; ts: string } & CaptureStatus)                     // every state change
   | { type: 'level'; ts: string; rmsDbfs: number; audioFlowing: boolean } // ~5 Hz while running
   | { type: 'audioFlowing'; ts: string; audioFlowing: boolean; lastAudioAt: string | null } // on change only
-  | { type: 'heartbeat'; ts: string; ok: boolean; at?: string; message?: string }
+  | { type: 'heartbeat'; ts: string; ok: boolean; at?: string; message?: string;
+      leaseExpiresAt?: string; serverTime?: string; leaseRemainingSeconds?: number }  // lease fields from the server (judge the lease with serverTime, not the Mac clock)
   | { type: 'error'; ts: string; code: string; message: string; fatal: boolean } // fatal => capture already stopped, state 'error' or 'idle'
   | { type: 'auth-required'; ts: string; reason: 'heartbeat' }           // 401: call updateAuth({accessToken})
   | { type: 'log'; ts: string; message: string };                        // informational, e.g. fallback to ScreenCaptureKit
@@ -114,20 +128,25 @@ window.addEventListener('warptalk-native', (e) => {
 ```
 
 ## Error codes
-`FORBIDDEN_ORIGIN`, `INVALID_ARGUMENT`, `UNKNOWN_METHOD`, `ALREADY_RUNNING`, `APP_NOT_RUNNING`, `NO_AUDIO_PROCESS` (app not playing sound yet), `PERMISSION_DENIED`, `CAPTURE_FAILED`, `AUTH_EXPIRED` (401 from backend), `LEASE_LOST` (heartbeat 409: another machine took over the capturer role), `NOT_REQUESTABLE`, `INTERNAL`, plus backend error codes passed through (e.g. `INVALID_STATE`, `FORBIDDEN`).
+`FORBIDDEN_ORIGIN`, `INVALID_ARGUMENT`, `UNKNOWN_METHOD`, `ALREADY_RUNNING`, `APP_NOT_RUNNING`, `NO_AUDIO_PROCESS` (app not playing sound yet), `PERMISSION_DENIED`, `CAPTURE_FAILED`, `AUTH_EXPIRED` (401 from backend), `LEASE_LOST` (heartbeat 409 with backend code `CAPTURER_LEASE_LOST`: another machine took over the capturer role), `NOT_REQUESTABLE`, `DUB_LISTENER_DISCONNECTED` (non-fatal event: the voice listener connection dropped), `INTERNAL`, plus backend error codes passed through unchanged (e.g. `INVALID_STATE`, `NOT_BRIDGE_ROOM` on a heartbeat 409 that is NOT a lost lease, `INVALID_CLIENT_TAG`, `FORBIDDEN`).
 
 ## Intended flow (web app)
 1. `listAudioApps()`; the user picks one (usually Chrome).
 2. Web app claims the room: `POST /translation-rooms/bridge/claim` (shape per spec 10 §2.1; it also handles takeover and `audio-mode`). The bridge-token endpoint requires the capturer role, so claim first.
 3. `startExternalCapture({ appBundleId, roomId, mode, accessToken, listenLanguage, ... })`.
-4. Native: bridge token -> publish captured audio (48 kHz mono) -> heartbeat every `heartbeatIntervalSeconds` with `{ audioFlowing, lastAudioAt, rmsDbfs }`.
+4. Native: bridge token (publish-only, stand-in identity) -> publish captured audio (48 kHz mono) -> heartbeat every `heartbeatIntervalSeconds` with body `{ audioFlowing, lastAudioAt, rmsDbfs }` (`POST /translation-rooms/{id}/bridge/capturer/heartbeat`; the response carries `leaseExpiresAt` + `serverTime`, surfaced in the `heartbeat` event).
 5. Web app receives captions through its own LiveKit connection (topic `captions`) and mirrors them: `pushOverlayCaption(...)`. The web app does NOT need to play the dub in external mode: voice mode plays it natively.
-6. `stopExternalCapture()` on stop; the web app ends the room via its own API if wanted.
+6. `stopExternalCapture()` on stop: native tears down, then calls `POST /translation-rooms/{id}/bridge/capturer/release` (best effort, errors only logged; skipped after `LEASE_LOST`). Calling release from the web as well is harmless. The web app ends the room via its own API if wanted.
 
-Voice mode needs a native audio path because WKWebView has no `setSinkId`: native opens its own listener connection (join token), subscribes ONLY to `dub-{listenLanguage}`, and plays it to `dubOutputDeviceUid` via AVAudioEngine. Set the meeting app's microphone to that device (BlackHole 2ch).
+Voice mode needs a native audio path because WKWebView has no `setSinkId`: native opens its own listener connection (`POST /meetings/{id}/join` with `{ "clientTag": "bridge-listener" }` => LiveKit identity `{userId}:bridge-listener`, subscribe-only, so it never evicts the web client of the same user), subscribes ONLY to the track named `dub-{listenLanguage}`, and plays it to `dubOutputDeviceUid` via AVAudioEngine. Set the meeting app's microphone to that device (BlackHole 2ch).
+
+### Captions JSON (topic `captions`, produced by `apps/pipeline/src/downstream.rs`)
+Only decoded natively with `nativeOverlayCaptions: true`; the web parser is `apps/web/src/lib/captions.ts`. Fields: `type` (`stt` | `translation`), `segment_id` (shared by the `stt` message and all translation messages of a segment: one overlay line), `speakerId`, `speakerName` (nullable; a UUID id is never shown as a name), `speakerUserId`, `text` (cumulative source text), `lang`, `translations` (CUMULATIVE per target language: replace, never append), `sentenceIndex`, `isLastSentence`, `sentenceText`, `sentenceTranslations`, `is_early` (always false: text is final), `is_flash` (flash-mode sentence, still final), `emittedAtMs`. Swift: `Sources/API/CaptionPacket.swift`, fixtures in `Tests/CaptionPacketTests.swift`.
 
 ## Notes for the web agent
-- Bridge calls are rejected unless the page origin equals the URL in native Settings. If the dev server moves port, change it there.
+- Bridge calls are rejected unless the page origin equals the ACTIVE web URL (see top). If the dev server moves port, change it in native Settings (or add it to the fallback list).
+- Use `window.warptalkNative.config.apiBaseUrl` as the API base when present (bundled app: same-origin proxy `warptalk://app/api/**` -> backend; no CORS). The static export must not assume it is served from `/` of a real host: the bundled app serves `index.html`, `<route>.html`, `<route>/index.html`, `_next/**`, and falls back to `index.html` for unknown extensionless paths. Server-Sent Events/streaming responses are NOT proxied (responses are buffered); use the direct backend URL for SSE.
+- `getUserMedia`/WebRTC under `warptalk://app` depends on WebKit treating the scheme as a secure context (unverified, README §8); if `navigator.mediaDevices` is undefined, run against `http://localhost:3000` instead.
 - Heartbeat semantics: `audioFlowing` = native capture is alive. A quiet meeting reports `audioFlowing: true` with an old `lastAudioAt`.
 - Native meetings run in the web view with browser LiveKit and `getUserMedia`; WKWebView supports WebRTC on macOS 14. Autoplay of remote audio is enabled. Output-device selection (`setSinkId`) is unavailable.
 - Playwright: run the web app in Chromium without the bridge and inject a stub before load:
@@ -136,9 +155,10 @@ await page.addInitScript(() => {
   const listeners: any[] = [];
   (window as any).warptalkNative = {
     version: 1,
+    config: { version: 1, apiBaseUrl: 'http://localhost:8080', bundled: false },
     getCapabilities: async () => ({ version: 1, platform: 'macos', osVersion: '14.5.0', processTap: true, screenCaptureKit: true, voiceMode: true, overlay: true, supportedApps: [], outputDevices: [], blackHoleInstalled: false }),
     listAudioApps: async () => [{ bundleId: 'com.google.Chrome', name: 'Google Chrome', pid: 1, producingAudio: true }],
-    startExternalCapture: async (o: any) => ({ state: 'running', roomId: o.roomId, appBundleId: o.appBundleId, mode: o.mode, backend: 'processTap', rmsDbfs: -30, audioFlowing: true, lastAudioAt: null, lastHeartbeatAt: null, dubTrack: null }),
+    startExternalCapture: async (o: any) => ({ state: 'running', roomId: o.roomId, appBundleId: o.appBundleId, mode: o.mode, backend: 'processTap', rmsDbfs: -30, audioFlowing: true, lastAudioAt: null, lastHeartbeatAt: null, leaseExpiresAt: null, dubTrack: null }),
     stopExternalCapture: async () => ({ state: 'idle' }),
     captureStatus: async () => ({ state: 'idle' }),
     updateAuth: async () => ({ updated: true }),

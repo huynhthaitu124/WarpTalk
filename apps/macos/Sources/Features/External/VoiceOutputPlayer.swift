@@ -46,12 +46,15 @@ final class VoiceOutputPlayer: @unchecked Sendable {
         engine.reset()
         if player.engine == nil { engine.attach(player) }
 
-        // Route this engine to the chosen device (must be done before start).
+        // Route this engine to the chosen device (must be done before start). `AVAudioIONode.audioUnit` (AVFAudio/AVAudioIONode.h:120,
+        // macOS) is the AUHAL unit, and kAudioOutputUnitProperty_CurrentDevice is its documented device selector.
         if let id = deviceID, let unit = engine.outputNode.audioUnit {
             var dev = id
             let st = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                           &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
-            if st != noErr { NSLog("[voice] set output device failed: \(st)") }   // VERIFY: works on AVAudioEngine.outputNode.audioUnit
+            if st != noErr { NSLog("[voice] set output device failed: \(st)") }
+        } else if deviceID != nil {
+            NSLog("[voice] outputNode.audioUnit is nil: playing on the system default output")
         }
         engine.connect(player, to: engine.mainMixerNode, format: fmt)
         do { try engine.start(); format = fmt } catch { NSLog("[voice] engine start failed: \(error)") }

@@ -22,16 +22,21 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         self.permissions = permissions; self.settings = settings
         super.init()
         capture.emit = { [weak self] type, payload in self?.dispatch(type, payload) }
+        // Opt-in (`nativeOverlayCaptions`): the native listener's own `captions` packets drive the overlay.
+        capture.onCaption = { [overlayModel] u in
+            overlayModel.push(speaker: u.speaker, text: u.text, translation: u.translation, segmentId: u.segmentId, isFinal: u.isFinal)
+        }
     }
 
     // MARK: WKScriptMessageHandlerWithReply
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
-        // VERIFY: exact signature / @MainActor-ness of the reply closure in the macOS 14 SDK.
+        // Signature: WKScriptMessageHandlerWithReply.h:90 (macOS 11+): replyHandler(Any?, String?), at most once; a non-nil
+        // second argument rejects the JS promise, so errors travel inside the `{ok:false,error}` payload instead.
         let origin = message.frameInfo.securityOrigin
         guard message.frameInfo.isMainFrame,
-              OriginPolicy.isTrusted(scheme: origin.protocol, host: origin.host, port: origin.port, allowed: settings.webURL) else {
+              OriginPolicy.isTrusted(scheme: origin.protocol, host: origin.host, port: origin.port, allowed: settings.activeWebURL) else {
             replyHandler(BridgeReply.fail("FORBIDDEN_ORIGIN", "Origin không được phép dùng native bridge."), nil)
             return
         }
@@ -66,7 +71,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                 accessToken: try r.string("accessToken"), backendUrl: r.optString("backendUrl"),
                 heartbeatIntervalSeconds: r.optDouble("heartbeatIntervalSeconds") ?? 15,
                 listenLanguage: r.optString("listenLanguage"), dubOutputDeviceUid: r.optString("dubOutputDeviceUid"),
-                captureBackend: backend))
+                captureBackend: backend, nativeOverlayCaptions: r.optBool("nativeOverlayCaptions") ?? false))
             return capture.status()
         case "stopExternalCapture":
             await capture.stop()

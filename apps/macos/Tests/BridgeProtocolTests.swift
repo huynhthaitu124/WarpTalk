@@ -27,6 +27,25 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertFalse(OriginPolicy.isTrusted(scheme: "https", host: "evil.example", port: 443, allowed: "http://localhost:5173"))
         XCTAssertTrue(OriginPolicy.isTrusted(scheme: "https", host: "app.example.com", port: 0, allowed: "https://app.example.com"))
         XCTAssertFalse(OriginPolicy.isTrusted(scheme: "http", host: "localhost", port: 5173, allowed: "not a url"))
+        // Next.js dev server (default) and the bundled custom scheme (WKSecurityOrigin gives port 0 for custom schemes).
+        XCTAssertTrue(OriginPolicy.isTrusted(scheme: "http", host: "localhost", port: 3000, allowed: "http://localhost:3000"))
+        XCTAssertFalse(OriginPolicy.isTrusted(scheme: "http", host: "localhost", port: 5173, allowed: "http://localhost:3000"))
+        XCTAssertTrue(OriginPolicy.isTrusted(scheme: "warptalk", host: "app", port: 0, allowed: "warptalk://app/"))
+        XCTAssertFalse(OriginPolicy.isTrusted(scheme: "warptalk", host: "other", port: 0, allowed: "warptalk://app/"))
+        XCTAssertFalse(OriginPolicy.isTrusted(scheme: "https", host: "app", port: 443, allowed: "warptalk://app/"))
+    }
+
+    func testInjectedScriptCarriesRuntimeConfig() {
+        // JSONSerialization escapes "/" as "\\/": compare with backslashes removed.
+        func flat(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "") }
+        let bundled = flat(BridgeScript.make(config: WebRuntimeConfig.make(activeWebURL: URL(string: "warptalk://app/"), backendURL: "http://localhost:8080/")))
+        XCTAssertTrue(bundled.contains("config: Object.freeze({"))
+        XCTAssertTrue(bundled.contains("\"bundled\":true"))
+        XCTAssertTrue(bundled.contains("\"apiBaseUrl\":\"warptalk://app\""), "same-origin proxy base for the bundled app")
+        let dev = flat(BridgeScript.make(config: WebRuntimeConfig.make(activeWebURL: URL(string: "http://localhost:3000"), backendURL: "http://localhost:8080/")))
+        XCTAssertTrue(dev.contains("\"bundled\":false"))
+        XCTAssertTrue(dev.contains("\"apiBaseUrl\":\"http://localhost:8080\""), "backend URL without trailing slash")
+        XCTAssertFalse(dev.contains("__CONFIG_JSON__"))
     }
 
     func testInjectedScriptExposesContract() {

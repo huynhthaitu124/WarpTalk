@@ -10,6 +10,8 @@ import CoreAudio
 /// - `muteBehavior = .unmuted`: the user still hears the meeting normally.
 /// - The tap's process list is fixed at creation, so a watchdog rebuilds the tap when new helper processes
 ///   appear (e.g. Chrome spawns an audio process only once a tab starts playing).
+/// Sources: macOS 14.5 SDK headers CoreAudio/CATapDescription.h, AudioHardwareTapping.h (API_AVAILABLE macos(14.2)), AudioHardware.h
+/// (aggregate-device keys, `kAudioTapPropertyFormat`), and Apple-pattern sample insidegui/AudioCap `ProcessTap.swift`.
 /// - Needs TCC "Audio Recording"/system audio permission (NSAudioCaptureUsageDescription); the prompt shows on first start.
 final class ProcessTapCapture: AudioCaptureSource, @unchecked Sendable {
     let displayName = "Core Audio process tap"
@@ -55,8 +57,9 @@ final class ProcessTapCapture: AudioCaptureSource, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         teardownLocked()
 
-        // VERIFY: initializer parameter type. Header is NSArray<NSNumber*>; if the compiler wants [AudioObjectID], drop the map.
-        let desc = CATapDescription(stereoMixdownOfProcesses: objects.map { NSNumber(value: $0) })
+        // CATapDescription.h declares `initStereoMixdownOfProcesses:(NSArray<NSNumber*>*)` as NS_REFINED_FOR_SWIFT; the Swift
+        // overlay takes `[AudioObjectID]` (same call as insidegui/AudioCap ProcessTap.swift:`CATapDescription(stereoMixdownOfProcesses: [objectID])`).
+        let desc = CATapDescription(stereoMixdownOfProcesses: objects)
         desc.uuid = UUID()
         desc.name = "WarpTalk tap"
         desc.isPrivate = true
@@ -87,7 +90,7 @@ final class ProcessTapCapture: AudioCaptureSource, @unchecked Sendable {
         let dict: [String: Any] = [
             kAudioAggregateDeviceNameKey: "WarpTalk Tap",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
-            kAudioAggregateDeviceMainSubDeviceKey: out.uid,   // VERIFY: key name on 14.2 SDK (older: ...MasterSubDeviceKey)
+            kAudioAggregateDeviceMainSubDeviceKey: out.uid,   // AudioHardware.h:1583 (value "master"); same dictionary as AudioCap
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,

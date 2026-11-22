@@ -38,6 +38,16 @@ final class ResamplerTests: XCTestCase {
         XCTAssertEqual(out.frameLength, 960)
     }
 
+    /// Right-only stereo must survive the mono downmix (AVAudioConverter.downmix = true; the default would remap to the left channel only).
+    func testStereoDownmixKeepsRightChannel() throws {
+        let f = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+        let b = AVAudioPCMBuffer(pcmFormat: f, frameCapacity: 4800)!
+        b.frameLength = 4800
+        for i in 0..<4800 { b.floatChannelData![0][i] = 0; b.floatChannelData![1][i] = 0.5 * sinf(Float(i) * 0.05) }
+        let out = try XCTUnwrap(Resampler().convert(b))
+        XCTAssertGreaterThan(Resampler.rmsDbfs(out), -30)
+    }
+
     func testRms() {
         XCTAssertEqual(Resampler.rmsDbfs(sine(rate: 48000, channels: 1, frames: 4800)), -9, accuracy: 1)
     }

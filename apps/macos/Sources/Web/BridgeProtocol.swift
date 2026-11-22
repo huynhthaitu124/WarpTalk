@@ -43,7 +43,12 @@ enum OriginPolicy {
 
 /// JS injected at document start (main frame, page world). Exposes `window.warptalkNative`.
 enum BridgeScript {
-    static let source = """
+    /// Script for the default config (used by tests); the app injects `make(config:)`.
+    static var source: String { make(config: WebRuntimeConfig(apiBaseUrl: "", bundled: false)) }
+
+    static func make(config: WebRuntimeConfig) -> String { template.replacingOccurrences(of: "__CONFIG_JSON__", with: config.json) }
+
+    private static let template = """
     (() => {
       if (window.warptalkNative) return;
       const call = async (method, params) => {
@@ -55,6 +60,7 @@ enum BridgeScript {
       };
       window.warptalkNative = Object.freeze({
         version: 1,
+        config: Object.freeze(__CONFIG_JSON__),
         getCapabilities: () => call('getCapabilities'),
         listAudioApps: () => call('listAudioApps'),
         startExternalCapture: (opts) => call('startExternalCapture', opts),

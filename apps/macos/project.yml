@@ -10,11 +10,12 @@ configFiles:
   Release: Config/Base.xcconfig
 settings:
   base:
-    SWIFT_VERSION: "5.10"
+    SWIFT_VERSION: "5.0"                      # Swift language MODE 5 (the code is not Swift-6 strict-concurrency clean); toolchain >= 6.1
+    ENABLE_USER_SCRIPT_SANDBOXING: NO         # the web-bundle phase reads ../web/out and writes into the app bundle
 packages:
   LiveKit:
     url: https://github.com/livekit/client-sdk-swift
-    from: 2.0.0   # any 2.x; if Audio/BridgePublisher.swift fails to compile, see VERIFY notes and bump
+    exactVersion: 2.19.0   # API verified against this tag (see Features/External/*.swift). Its Package.swift needs swift-tools 6.1 = Xcode 16.3+
 targets:
   WarpTalk:
     type: application
@@ -23,6 +24,13 @@ targets:
       - path: Sources
     dependencies:
       - package: LiveKit
+    postBuildScripts:
+      # Copies apps/web/out (Next.js `output: 'export'`) to WarpTalk.app/Contents/Resources/web when it exists.
+      # Optional unless REQUIRE_WEB_BUNDLE=YES (make bundle). Override the source with WEB_OUT_DIR=/path.
+      - name: Bundle web export
+        script: |
+          bash "${SRCROOT}/Scripts/copy-web.sh"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.warptalk   # PLACEHOLDER: change to your own reverse-DNS id
@@ -46,7 +54,7 @@ targets:
         NSMicrophoneUsageDescription: "WarpTalk dùng micro của bạn để gửi giọng nói vào phòng dịch trực tiếp."
         NSAudioCaptureUsageDescription: "WarpTalk ghi lại âm thanh của ứng dụng họp (Chrome, Zoom, Teams...) để dịch cuộc họp bên ngoài."
         NSScreenCaptureUsageDescription: "WarpTalk chỉ dùng quyền Ghi màn hình (phương án dự phòng) để lấy âm thanh của ứng dụng họp, không lưu hình ảnh."
-        # DEMO ONLY: allow plain http/ws to the Vite dev server (http://localhost:5173), the backend and LiveKit.
+        # DEMO ONLY: allow plain http/ws to the Next.js dev server (http://localhost:3000), the backend and LiveKit.
         # Remove for production (https/wss only).
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

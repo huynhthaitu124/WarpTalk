@@ -40,6 +40,9 @@ struct StartCaptureParams {
     var listenLanguage: String?      // required for voice
     var dubOutputDeviceUid: String?
     var captureBackend: String       // "auto" | "processTap" | "screenCaptureKit"
+    /// Voice mode only: also decode the listener's own `captions` packets and feed the overlay (default false: the web app
+    /// mirrors captions through `pushOverlayCaption`, enabling both would show every line twice).
+    var nativeOverlayCaptions: Bool = false
 }
 
 struct BridgeError: LocalizedError {
@@ -57,6 +60,8 @@ final class NativeCaptureController {
 
     /// (eventType, payload) — the bridge adds `type` and `ts` and dispatches `warptalk-native`.
     var emit: (String, [String: Any]) -> Void = { _, _ in }
+    /// Overlay updates decoded from the native listener's `captions` packets (only with `nativeOverlayCaptions`).
+    var onCaption: (@MainActor (OverlayUpdate) -> Void)?
     private let defaultBackendURL: () -> String
     private let defaultDubDeviceUID: () -> String
     private let permissions: PermissionsManager
@@ -73,6 +78,7 @@ final class NativeCaptureController {
     private var heartbeatTask: Task<Void, Never>?
     private var meterTask: Task<Void, Never>?
     private var lastHeartbeatAt: Date?
+    private var leaseExpiresAt: Date?
     private var lastFlowing = false
     private var lastError: (code: String, message: String)?
 
@@ -96,6 +102,7 @@ final class NativeCaptureController {
             "audioFlowing": snap.flowing,
             "lastAudioAt": nullable(snap.lastAudioAt.map { APIDates.string($0) }),
             "lastHeartbeatAt": nullable(lastHeartbeatAt.map { APIDates.string($0) }),
+            "leaseExpiresAt": nullable(leaseExpiresAt.map { APIDates.string($0) }),
             "dubTrack": nullable(dub?.subscribedTrackName),
         ]
         if let e = lastError { d["error"] = ["code": e.code, "message": e.message] }
@@ -130,10 +137,22 @@ final class NativeCaptureController {
                 let uid = p.dubOutputDeviceUid ?? defaultDubDeviceUID()
                 let player = VoiceOutputPlayer(outputDeviceUID: uid)
                 voice = player
-                let listener = DubListener(language: p.listenLanguage ?? "en") { [player] buf in player.enqueue(buf) }
+                let language = p.listenLanguage ?? "en"
+                let listener = DubListener(language: language) { [player] buf in player.enqueue(buf) }
+                if p.nativeOverlayCaptions {
+                    listener.onCaptionData = { [weak self] data in
+                        guard let self, let packet = CaptionPacket.parse(data),
+                              let update = packet.overlayUpdate(listenLanguage: language) else { return }
+                        self.onCaption?(update)
+                    }
+                }
+                listener.onDisconnect = { [weak self] message in
+                    self?.emit("error", ["code": "DUB_LISTENER_DISCONNECTED", "message": message, "fatal": false])
+                }
+                // Subscribe-only, identity `{userId}:bridge-listener` (never evicts the web client of the same user).
+                dub = listener                      // retained first so a failed connect is still torn down
                 let grant = try await api.meetingJoin(roomId: p.roomId, clientTag: "bridge-listener")
                 try await listener.connect(url: grant.serverUrl, token: grant.token)
-                dub = listener
             }
 
             let bt = try await api.bridgeToken(roomId: p.roomId)
@@ -153,11 +172,24 @@ final class NativeCaptureController {
         }
     }
 
-    func stop() async {
+    /// `releaseLease`: give the capturer role back (`POST .../bridge/capturer/release`) so another machine can take it
+    /// at once. Skipped when we already lost it (409) or when capture never started.
+    func stop(releaseLease: Bool = true) async {
         guard state != .idle else { return }
+        let wasRunning = state == .running
+        let roomId = params?.roomId
+        let api = self.api
         setState(.stopping)
         await teardown()
+        if releaseLease, wasRunning, let api, let roomId {
+            do { try await api.releaseCapturer(roomId: roomId) }
+            catch { emit("log", ["message": "Release capturer lỗi (bỏ qua): \(error.localizedDescription)"]) }
+        }
         lastError = nil
+        lastHeartbeatAt = nil
+        leaseExpiresAt = nil
+        params = nil
+        self.api = nil
         setState(.idle)
     }
 
@@ -236,17 +268,29 @@ final class NativeCaptureController {
         guard let api else { return }
         let snap = activity.snapshot()
         do {
-            try await api.heartbeat(roomId: roomId, BridgeHeartbeatRequest(audioFlowing: snap.flowing, lastAudioAt: snap.lastAudioAt, rmsDbfs: snap.rmsDbfs))
+            let st = try await api.heartbeat(roomId: roomId, BridgeHeartbeatRequest(audioFlowing: snap.flowing, lastAudioAt: snap.lastAudioAt, rmsDbfs: snap.rmsDbfs))
             lastHeartbeatAt = Date()
-            emit("heartbeat", ["ok": true, "at": APIDates.string(Date())])
-        } catch let e as APIError where e.status == 409 {
-            lastError = ("LEASE_LOST", "Mất quyền capturer (409).")
-            emit("error", ["code": "LEASE_LOST", "message": "Mất quyền capturer (409). Đã dừng capture.", "fatal": true])
-            Task { await self.stop() }
-        } catch let e as APIError where e.status == 401 {
-            emit("auth-required", ["reason": "heartbeat"])     // web app should call updateAuth({accessToken})
+            leaseExpiresAt = st?.leaseExpiresAt
+            var ev: [String: Any] = ["ok": true, "at": APIDates.string(Date())]
+            if let e = st?.leaseExpiresAt { ev["leaseExpiresAt"] = APIDates.string(e) }
+            if let t = st?.serverTime { ev["serverTime"] = APIDates.string(t) }
+            if let r = st?.leaseRemainingSeconds { ev["leaseRemainingSeconds"] = r }
+            emit("heartbeat", ev)
         } catch {
-            emit("heartbeat", ["ok": false, "message": error.localizedDescription])
+            switch HeartbeatFailure.classify(error) {
+            case .leaseLost(let message):
+                lastError = ("LEASE_LOST", message)
+                emit("error", ["code": "LEASE_LOST", "message": "Mất quyền capturer (409). Đã dừng capture.", "fatal": true])
+                Task { await self.stop(releaseLease: false) }
+            case .conflict(let code, let message):
+                lastError = (code, message)
+                emit("error", ["code": code, "message": message, "fatal": true])
+                Task { await self.stop(releaseLease: false) }
+            case .authRequired:
+                emit("auth-required", ["reason": "heartbeat"])     // web app should call updateAuth({accessToken})
+            case .transient(let message):
+                emit("heartbeat", ["ok": false, "message": message])
+            }
         }
     }
 

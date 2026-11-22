@@ -23,8 +23,10 @@ final class Resampler {
 
         if converter == nil || converterInput != input.format {
             converter = AVAudioConverter(from: input.format, to: outputFormat)
+            // AVAudioConverter.h: `downmix` defaults to NO, i.e. channel *remapping* (stereo -> mono would keep only the left
+            // channel). YES mixes the channels instead. Header: AVFAudio/AVAudioConverter.h `@property BOOL downmix`.
+            converter?.downmix = true
             converterInput = input.format
-            // VERIFY: default stereo->mono mixing of AVAudioConverter is an average (no clipping); otherwise set channelMap/mixer.
         }
         guard let converter else { return nil }
 

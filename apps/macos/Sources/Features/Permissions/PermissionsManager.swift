@@ -59,13 +59,20 @@ final class PermissionsManager: ObservableObject {
 
     func recordAudioCaptureResult(success: Bool) { audioCapture = success ? .granted : .denied }
 
-    // Deep links (System Settings, macOS 13+/14).
-    enum Pane: String {
-        case microphone = "Privacy_Microphone"
-        case screenRecording = "Privacy_ScreenCapture"
-        // VERIFY: pane id for "Audio Recording"/system audio is Privacy_AudioCapture on 14.2+; falls back to Privacy root.
-        case audioCapture = "Privacy_AudioCapture"
-        case privacy = "Privacy"
+    // Deep links (System Settings, macOS 13+/14). Pane ids: bvanpeski/SystemPreferences macos_preferencepanes-Ventura.md
+    // ("Privacy & Security": Privacy_Microphone, Privacy_ScreenCapture). On macOS 14.2+ system-audio recording lives in the
+    // same pane, now titled "Screen & System Audio Recording" (section "System Audio Recording Only"), so `audioCapture`
+    // opens `Privacy_ScreenCapture`. No separate `Privacy_AudioCapture` id could be confirmed.
+    enum Pane {
+        case microphone, screenRecording, audioCapture, privacy
+
+        var query: String {
+            switch self {
+            case .microphone: return "Privacy_Microphone"
+            case .screenRecording, .audioCapture: return "Privacy_ScreenCapture"
+            case .privacy: return "Privacy"
+            }
+        }
 
         /// Wire names used by the JS bridge: microphone | screenRecording | audioCapture | privacy.
         static func from(wire: String) -> Pane? {
@@ -80,7 +87,7 @@ final class PermissionsManager: ObservableObject {
     }
 
     func open(_ pane: Pane) {
-        let urls = ["x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)",
+        let urls = ["x-apple.systempreferences:com.apple.preference.security?\(pane.query)",
                     "x-apple.systempreferences:com.apple.preference.security"]
         for u in urls { if let url = URL(string: u), NSWorkspace.shared.open(url) { return } }
     }
