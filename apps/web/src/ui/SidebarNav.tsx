@@ -8,8 +8,8 @@ import { cn } from '@/lib/cn';
  */
 export function SidebarNav({ children, label = 'Primary', heading }: { children: ReactNode; label?: string; heading?: string }) {
   return (
-    <nav aria-label={label} className="flex flex-col gap-0.5">
-      {heading && <p className="px-2 pb-1 pt-1 text-eyebrow font-medium uppercase tracking-[0.4px] text-ink-subtle">{heading}</p>}
+    <nav aria-label={label} className="flex flex-col gap-px">
+      {heading && <p className="mb-1 flex h-6 items-center px-2 text-[12px] font-medium text-ink-subtle">{heading}</p>}
       {children}
     </nav>
   );
@@ -33,7 +33,7 @@ export function SidebarLink({
         end={end}
         className={({ isActive }) =>
           cn(
-            'flex h-[30px] min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-body-sm font-medium tracking-tight no-underline transition-colors focus-ring hover:no-underline',
+            'flex h-[30px] min-w-0 flex-1 items-center gap-2.5 rounded-[8px] px-2 text-body font-medium no-underline transition-colors focus-ring hover:no-underline',
             actions?.length && 'pr-14',
             (active ?? isActive) ? 'bg-surface-3 text-ink' : 'text-ink/90 hover:bg-surface-3/60 hover:text-ink',
           )

@@ -6,7 +6,6 @@ import { App } from './App';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { ToastProvider, TooltipProvider } from '@/ui';
-import '@fontsource-variable/inter/wght.css';
 import './styles/index.css';
 
 const queryClient = new QueryClient({

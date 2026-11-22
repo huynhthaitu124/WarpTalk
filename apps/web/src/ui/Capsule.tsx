@@ -30,7 +30,8 @@ export function HostCapsule({ name, size, className }: { name: string; size?: 's
 export function LanguageCapsule({ source, targets, labels, size, className }: { source: string; targets: string[]; labels: string; size?: 'sm' | 'lg'; className?: string }) {
   const codes = [source, ...targets];
   return (
-    <Capsule size={size} className={cn('gap-1', className)} aria-label={labels} title={labels} data-testid="room-languages">
+    <Capsule size={size} className={cn('gap-1', className)} title={labels} data-testid="room-languages">
+      <span className="sr-only">{labels}</span>
       {codes.map((c, i) => (
         <span key={`${c}-${i}`} className="inline-flex items-center gap-1" aria-hidden>
           {i > 0 && <span className="text-ink-tertiary">·</span>}

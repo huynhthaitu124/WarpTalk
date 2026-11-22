@@ -103,6 +103,8 @@ test.describe('Auth', () => {
     });
     // Client-side navigation fires several authed queries at once (settings + members).
     await page.getByRole('link', { name: 'Settings' }).click();
+    // Settings swaps the sidebar for its own nav (legacy): go back to the app nav for Members.
+    await page.getByRole('link', { name: 'Back to app' }).click();
     await page.getByRole('link', { name: 'Members' }).click();
     await expect(page.getByRole('table', { name: 'Workspace members' })).toBeVisible();
     expect(refreshes).toBe(1);

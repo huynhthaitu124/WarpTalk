@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { House, Tray, Plus, GearSix, SquaresFour, Moon, Sun, MagnifyingGlass } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Brand, Button, Card, CardBody, CardHeader, Checkbox, CommandMenuProvider, Dialog, DialogContent, DialogTrigger,
+  Alert, Avatar, Badge, Brand, Button, Capsule, Card, CardBody, CardHeader, Checkbox, CommandMenuProvider, Dialog, DialogContent, DialogTrigger,
   Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator, DropdownTrigger, EmptyState, Field, Input, Kbd, ListRow,
   Select, SidebarLink, SidebarNav, Skeleton, StatusPill, Switch, Table, TBody, TD, TH, THead, TR, Tabs, TabsContent, TabsList, TabsTrigger,
   Textarea, Tooltip, useCommandMenu, useToast, ROOM_STATUS_SAMPLE,
@@ -133,6 +133,11 @@ function Demos() {
           <Badge>Neutral</Badge><Badge tone="primary">Primary</Badge><Badge tone="success">Success</Badge><Badge tone="warning">Warning</Badge><Badge tone="danger">Danger</Badge><Badge tone="info">Info</Badge>
         </div>
         <div className="flex flex-wrap gap-2">{ROOM_STATUS_SAMPLE.map((s) => <StatusPill key={s} status={s} />)}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          {['OWNER', 'ADMIN', 'MEMBER'].map((s) => <StatusPill key={s} status={s} />)}
+          {['CONNECTED', 'INVITED', 'KICKED'].map((s) => <StatusPill key={s} status={s} />)}
+          <Capsule><span>Info capsule</span></Capsule>
+        </div>
       </Section>
 
       <Section id="cards" title="Cards, lists & tables">

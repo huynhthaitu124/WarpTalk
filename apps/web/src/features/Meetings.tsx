@@ -60,10 +60,10 @@ function DayStrip({ rooms, day, onDay }: { rooms: Room[]; day: string | null; on
               key={k}
               type="button"
               aria-pressed={sel}
-              aria-label={`Show meetings on ${dayLabel(k)}`}
               onClick={() => onDay(sel ? null : k)}
               className={cn('flex w-11 flex-col items-center gap-0.5 rounded-xl py-1 focus-ring', sel ? 'bg-surface-2' : 'hover:bg-surface-2/60')}
             >
+              <span className="sr-only">Show meetings on </span>
               <span className="text-[10px] font-medium uppercase text-ink-subtle">{fmt.format(d)}</span>
               <span className={cn('grid size-6 place-items-center rounded-pill text-body-sm tabular-nums', sel ? 'bg-primary font-semibold text-on-primary' : k === todayKey ? 'font-semibold text-chip-primary-text' : 'text-ink')}>{d.getDate()}</span>
               <span aria-hidden className={cn('size-1 rounded-pill', withRooms.has(k) ? 'bg-primary' : 'bg-transparent')} />

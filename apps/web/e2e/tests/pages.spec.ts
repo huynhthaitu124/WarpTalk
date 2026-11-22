@@ -126,19 +126,19 @@ test.describe('Knowledge search', () => {
 });
 
 test.describe('Design system and brand', () => {
-  test('DS-01 the real logo and favicon, Inter actually loaded', async ({ app, workspace }) => {
+  test('DS-01 the real logo and favicon, legacy system font stack', async ({ app, workspace }) => {
+    // The sidebar header is the workspace switcher now (legacy), so the logo is checked on the sign-in page.
     await app.goto(`/${workspace.slug}/home`);
-    const logo = app.getByRole('complementary', { name: 'Sidebar' }).getByRole('img', { name: 'WarpTalk' });
+    await expect(app.getByTestId('workspace-switcher')).toBeVisible();
+    const anon = await app.context().browser()!.newPage();
+    await anon.goto(`${new URL(app.url()).origin}/login`);
+    const logo = anon.locator('img[alt="WarpTalk"]').first();
     await expect(logo).toBeVisible();
     expect(await logo.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(100);
-    await expect(app.locator('link[rel="icon"][href="/favicon-32.png"]')).toHaveCount(1);
+    await expect(anon.locator('link[rel="icon"][href="/favicon-32.png"]')).toHaveCount(1);
     expect((await app.request.get('/favicon-32.png')).ok()).toBe(true);
-    const inter = await app.evaluate(async () => {
-      await document.fonts.ready;
-      return [...document.fonts].some((f) => f.family.includes('Inter') && f.status === 'loaded');
-    });
-    expect(inter, 'an Inter @font-face is loaded (not just a locally installed Inter)').toBe(true);
-    expect(await app.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain('Inter');
+    expect(await anon.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain('system-ui');
+    await anon.close();
   });
 
   test('DS-02/03 sidebar: grouped, 30px rows, 13px labels, duotone icons', async ({ app, workspace }) => {

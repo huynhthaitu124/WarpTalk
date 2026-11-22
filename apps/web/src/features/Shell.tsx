@@ -116,6 +116,7 @@ function SettingsSidebar() {
           <ArrowLeft className="size-4" aria-hidden />Back to app
         </Link>
       </div>
+      {current && <p className="truncate px-5 pb-1 text-body-sm text-ink-muted" data-testid="current-workspace" title={current.name}>{current.name}</p>}
       <nav aria-label="Settings sections" className="flex flex-col px-3 pb-3 pt-1">
         {visible.map((s, i) => (
           <div key={s.id} className="flex flex-col gap-px">
