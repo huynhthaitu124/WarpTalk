@@ -34,6 +34,7 @@ use warptalk_pipeline::results::RedisResultSink;
 use warptalk_pipeline::simulated::{SimParticipant, SimulatedTransport};
 use warptalk_pipeline::transport::MediaTransport;
 use warptalk_pipeline::tuning::{LatencyTuning, PipelineExtras};
+use warptalk_pipeline::voice_state::RedisVoiceState;
 use warptalk_pipeline_runtime::testing::{FakeStt, energy_vad_factory};
 use warptalk_pipeline_runtime::{PipelineConfig, SpeechToText};
 use warptalk_settings::{
@@ -90,7 +91,20 @@ async fn main() -> anyhow::Result<()> {
     let downstream: Arc<dyn DownstreamStage> = match providers {
         Some(p) => {
             info!("chain: STT -> MT -> TTS -> dub");
-            Arc::new(TranslateDubStage::assemble(p, mt_rx, tts_rx, tuning_rx).0)
+            // Consent and the enrolled clone come from the keys the api publishes
+            // (`voice:consent:{userId}`); unreadable state means no consent (fail closed).
+            let voice = RedisVoiceState::new(Arc::new(RedisKv(redis.clone())));
+            Arc::new(
+                TranslateDubStage::assemble_with_voice(
+                    p,
+                    mt_rx,
+                    tts_rx,
+                    tuning_rx,
+                    voice.clone(),
+                    voice,
+                )
+                .0,
+            )
         }
         None => {
             warn!(

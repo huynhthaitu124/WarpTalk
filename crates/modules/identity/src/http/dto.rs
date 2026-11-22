@@ -137,3 +137,85 @@ impl From<MeView> for MeDto {
         }
     }
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantConsentRequest {
+    pub granted: bool,
+    pub consent_version: String,
+    /// SHA-256 hex of the consent text the user acknowledged.
+    pub acknowledgement_hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollRequest {
+    pub sample_base64: String,
+    /// `wav` (default) or `pcm16` (raw mono little-endian; needs `sampleRate`).
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsentDto {
+    pub granted: bool,
+    pub consent_version: Option<String>,
+    pub granted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceProfileDto {
+    pub id: uuid::Uuid,
+    pub status: String,
+    pub language: Option<String>,
+    pub quality_score: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStatusDto {
+    pub consent: ConsentDto,
+    pub profile: Option<VoiceProfileDto>,
+    /// Consent active and a provider voice exists: dubbing may use the user's cloned voice.
+    pub clone_enabled: bool,
+}
+
+impl From<crate::application::voice::VoiceStatus> for VoiceStatusDto {
+    fn from(s: crate::application::voice::VoiceStatus) -> Self {
+        let clone_enabled = s.clone_enabled();
+        Self {
+            consent: ConsentDto {
+                granted: s.consent.is_some(),
+                consent_version: s.consent.as_ref().map(|c| c.version.clone()),
+                granted_at: s.consent.as_ref().map(|c| c.granted_at),
+            },
+            profile: s.profile.map(|p| VoiceProfileDto {
+                id: p.id,
+                status: p.status,
+                language: p.language,
+                quality_score: p.quality_score,
+                created_at: p.created_at,
+            }),
+            clone_enabled,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollResponse {
+    pub profile_id: uuid::Uuid,
+    pub status: &'static str,
+    pub quality_score: i32,
+    pub duration_seconds: f32,
+    pub language: String,
+}

@@ -48,6 +48,7 @@ pub mod routes;
 pub mod simulated;
 pub mod transport;
 pub mod tuning;
+pub mod voice_state;
 pub mod wav;
 pub mod worker;
 

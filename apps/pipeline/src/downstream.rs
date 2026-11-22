@@ -47,8 +47,9 @@ use warptalk_mt::{
 use warptalk_pipeline_runtime::SttSegment;
 use warptalk_telemetry::{Outcome, record_stage_latency, record_stage_outcome};
 use warptalk_tts::{
-    CloneLadder, DubChunk, NoConsent, NoProfiles, Synthesizer, TtsCache, TtsConfig, TtsDeps,
-    TtsEvent, TtsOutputs, TtsStage, VoiceCatalogProvider, VoiceCloner, VoiceResolver,
+    CloneLadder, ConsentChecker, DubChunk, NoConsent, NoProfiles, Synthesizer, TtsCache, TtsConfig,
+    TtsDeps, TtsEvent, TtsOutputs, TtsStage, VoiceCatalogProvider, VoiceCloner, VoiceProfiles,
+    VoiceResolver,
 };
 
 use crate::prewarm::PrewarmSynthesizer;
@@ -265,6 +266,25 @@ impl TranslateDubStage {
         tts_cfg: watch::Receiver<TtsConfig>,
         tuning: watch::Receiver<LatencyTuning>,
     ) -> (Self, Arc<PrewarmSynthesizer>) {
+        Self::assemble_with_voice(
+            p,
+            mt_cfg,
+            tts_cfg,
+            tuning,
+            Arc::new(NoConsent),
+            Arc::new(NoProfiles),
+        )
+    }
+
+    /// [`Self::assemble`] with the runtime consent check and persisted voice profiles.
+    pub fn assemble_with_voice(
+        p: Providers,
+        mt_cfg: watch::Receiver<MtConfig>,
+        tts_cfg: watch::Receiver<TtsConfig>,
+        tuning: watch::Receiver<LatencyTuning>,
+        consent: Arc<dyn ConsentChecker>,
+        profiles: Arc<dyn VoiceProfiles>,
+    ) -> (Self, Arc<PrewarmSynthesizer>) {
         let dub = p.synthesizer.is_some();
         let synth = PrewarmSynthesizer::new(
             p.synthesizer
@@ -272,9 +292,9 @@ impl TranslateDubStage {
         );
         let voices = Arc::new(VoiceResolver {
             cfg: tts_cfg.clone(),
-            consent: Arc::new(NoConsent),
+            consent,
             ladder: CloneLadder::new(tts_cfg.clone(), p.cloner),
-            profiles: Arc::new(NoProfiles),
+            profiles,
             catalog: p.catalog,
         });
         let stage = Self::new(TranslateDubDeps {

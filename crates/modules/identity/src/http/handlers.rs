@@ -1,12 +1,15 @@
 use axum::extract::State;
-use axum::http::StatusCode;
-use warptalk_kernel::AppResult;
+use axum::http::{HeaderMap, StatusCode};
+use base64::Engine;
+use warptalk_kernel::{AppError, AppResult};
 use warptalk_web::AuthUser;
 use warptalk_web::extract::Json;
 
 use super::HttpState;
 use super::dto::*;
+use crate::application::voice::SampleInput;
 use crate::application::{RegisterCommand, SettingsUpdate};
+use crate::domain::validation;
 
 pub async fn register(
     State(s): State<HttpState>,
@@ -102,4 +105,99 @@ pub async fn put_settings(
 
 pub async fn me(State(s): State<HttpState>, u: AuthUser) -> AppResult<Json<MeDto>> {
     Ok(Json(s.profile.me(u.user_id()).await?.into()))
+}
+
+fn header(h: &HeaderMap, name: &str) -> Option<String> {
+    h.get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+pub async fn get_voice(State(s): State<HttpState>, u: AuthUser) -> AppResult<Json<VoiceStatusDto>> {
+    Ok(Json(s.voice.status(u.user_id()).await?.into()))
+}
+
+pub async fn grant_voice_consent(
+    State(s): State<HttpState>,
+    u: AuthUser,
+    headers: HeaderMap,
+    Json(b): Json<GrantConsentRequest>,
+) -> AppResult<Json<VoiceStatusDto>> {
+    if !b.granted {
+        return Err(AppError::validation(
+            "VALIDATION_ERROR",
+            "granted must be true (use DELETE to revoke)",
+        ));
+    }
+    let ip = header(&headers, "x-forwarded-for")
+        .map(|v| v.split(',').next().unwrap_or("").trim().to_owned())
+        .filter(|v| !v.is_empty());
+    let out = s
+        .voice
+        .grant(
+            u.user_id(),
+            &b.consent_version,
+            &b.acknowledgement_hash,
+            ip,
+            header(&headers, "user-agent"),
+        )
+        .await?;
+    Ok(Json(out.into()))
+}
+
+pub async fn revoke_voice_consent(
+    State(s): State<HttpState>,
+    u: AuthUser,
+) -> AppResult<Json<VoiceStatusDto>> {
+    Ok(Json(s.voice.revoke(u.user_id()).await?.into()))
+}
+
+pub async fn enroll_voice(
+    State(s): State<HttpState>,
+    u: AuthUser,
+    Json(b): Json<EnrollRequest>,
+) -> AppResult<Json<EnrollResponse>> {
+    let bad = |m: &str| AppError::validation("VOICE_SAMPLE_INVALID", m);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b.sample_base64.trim())
+        .map_err(|_| bad("sampleBase64 is not valid base64"))?;
+    let pcm_rate = match b.format.as_deref().unwrap_or("wav") {
+        "wav" => None,
+        "pcm16" | "pcm" => Some(
+            b.sample_rate
+                .ok_or_else(|| bad("sampleRate is required for pcm16"))?,
+        ),
+        _ => return Err(bad("format must be wav or pcm16")),
+    };
+    let language = match b
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        Some(l) => {
+            validation::language_tag(l).map_err(|m| AppError::validation("VALIDATION_ERROR", m))?
+        }
+        None => s.profile.get_profile(u.user_id()).await?.preferred_language,
+    };
+    let r = s
+        .voice
+        .enroll(
+            u.user_id(),
+            SampleInput {
+                bytes,
+                pcm_rate,
+                language,
+                display_name: b.display_name,
+            },
+        )
+        .await?;
+    Ok(Json(EnrollResponse {
+        profile_id: r.profile_id,
+        status: "active",
+        quality_score: r.quality_score,
+        duration_seconds: r.duration_seconds,
+        language: r.language,
+    }))
 }

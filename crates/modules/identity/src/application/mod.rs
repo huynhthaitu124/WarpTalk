@@ -4,6 +4,7 @@ pub mod auth;
 pub mod ports;
 pub mod profile;
 pub mod tokens;
+pub mod voice;
 
 pub use auth::{AuthService, AuthSession, RegisterCommand};
 pub use ports::{IdentityRepository, VerificationMailer};

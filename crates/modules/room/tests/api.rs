@@ -11,7 +11,9 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use warptalk_config::JwtConfig;
 use warptalk_kernel::{Clock, FixedClock, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole};
-use warptalk_room::application::ports::{InMemoryWorkspacePolicy, NoopVoiceConsentDirectory};
+use warptalk_room::application::ports::{
+    InMemoryWorkspacePolicy, NoopVoiceConsentDirectory, VoiceConsentDirectory,
+};
 use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_room::{MIGRATIONS, RoomDeps, RoomModule};
 use warptalk_web::JwtKeys;
@@ -30,6 +32,24 @@ async fn ctx() -> Option<Ctx> {
 }
 
 async fn ctx_with(clock: Arc<dyn Clock>) -> Option<Ctx> {
+    ctx_with_consent(clock, Arc::new(NoopVoiceConsentDirectory)).await
+}
+
+/// Consent directory the tests flip at runtime (stands in for the identity adapter).
+#[derive(Default)]
+struct SettableConsent(std::sync::Mutex<std::collections::HashSet<UserId>>);
+
+#[async_trait::async_trait]
+impl VoiceConsentDirectory for SettableConsent {
+    async fn has_voice_clone_consent(&self, user: UserId) -> warptalk_kernel::AppResult<bool> {
+        Ok(self.0.lock().unwrap().contains(&user))
+    }
+}
+
+async fn ctx_with_consent(
+    clock: Arc<dyn Clock>,
+    consent: Arc<dyn VoiceConsentDirectory>,
+) -> Option<Ctx> {
     let (Ok(db), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
     else {
         println!("DATABASE_URL / REDIS_URL unset; skipping");
@@ -53,7 +73,7 @@ async fn ctx_with(clock: Arc<dyn Clock>) -> Option<Ctx> {
         jwt: keys.clone(),
         clock,
         workspace: policy.clone(),
-        consent: Arc::new(NoopVoiceConsentDirectory),
+        consent,
         events: Arc::new(RedisRoomEventPublisher::new(redis.clone())),
     });
     Some(Ctx {
@@ -1580,4 +1600,87 @@ async fn participant_language_update_reconciles_routes() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn voice_clone_route_is_enabled_only_with_consent() {
+    let consent = Arc::new(SettableConsent::default());
+    let Some(c) = ctx_with_consent(Arc::new(SystemClock), consent.clone()).await else {
+        return;
+    };
+    let (host, alice) = (UserId::new(), UserId::new());
+    let ws = WorkspaceId::new();
+    for u in [host, alice] {
+        c.policy.set_role(ws, u, WorkspaceRole::Member);
+    }
+    let rooms = "/translation-rooms";
+    let body = json!({"workspaceId": ws, "title": "Clone", "sourceLanguage": "vi",
+        "targetLanguages": ["en"], "requiresApproval": false});
+    let (st, v) = c.call(Method::POST, rooms, host, Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    for (u, lang) in [(host, "vi"), (alice, "en")] {
+        let (st, v) = c
+            .call(
+                Method::POST,
+                &format!("{rooms}/{room}/join"),
+                u,
+                Some(json!({"speakLanguage": lang, "listenLanguage": lang})),
+            )
+            .await;
+        assert_eq!(st, StatusCode::OK, "{v}");
+    }
+    // alice opted in to cloning her voice; whether it takes effect depends on consent only
+    sqlx::query(
+        "UPDATE translation_room.translation_room_participants SET is_using_voice_clone = true \
+         WHERE user_id = $1",
+    )
+    .bind(alice.as_uuid())
+    .execute(&c.pool)
+    .await
+    .unwrap();
+    let (st, _) = c.post(&format!("{rooms}/{room}/start"), host).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // no consent: never cloned
+    assert!(!clone_flag(&c, &room, host).await);
+    // consent granted: the next reconcile enables it
+    consent.0.lock().unwrap().insert(alice);
+    relisten(&c, &room, alice, "vi").await;
+    relisten(&c, &room, alice, "en").await;
+    relisten(&c, &room, alice, "vi").await;
+    assert!(clone_flag(&c, &room, host).await);
+    // consent revoked: the next reconcile switches it off again
+    consent.0.lock().unwrap().remove(&alice);
+    relisten(&c, &room, alice, "en").await;
+    relisten(&c, &room, alice, "vi").await;
+    assert!(!clone_flag(&c, &room, host).await);
+}
+
+async fn clone_flag(c: &Ctx, room: &str, viewer: UserId) -> bool {
+    let uri = format!("/translation-rooms/{room}/audio-routes");
+    let (st, v) = c.call(Method::GET, &uri, viewer, None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let flags: Vec<bool> = v["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["sourceLanguage"] == "en")
+        .map(|r| r["voiceCloneEnabled"].as_bool().unwrap())
+        .collect();
+    assert_eq!(flags.len(), 1, "{v}");
+    flags[0]
+}
+
+async fn relisten(c: &Ctx, room: &str, user: UserId, lang: &str) {
+    let uri = format!("/translation-rooms/{room}/participants/me/languages");
+    let (st, v) = c
+        .call(
+            Method::PUT,
+            &uri,
+            user,
+            Some(json!({"listenLanguage": lang})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
 }

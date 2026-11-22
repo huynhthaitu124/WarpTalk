@@ -6,16 +6,19 @@ mod handlers;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::extract::FromRef;
 use axum::routing::{get, post};
 use warptalk_web::JwtKeys;
 
+use crate::application::voice::VoiceService;
 use crate::application::{AuthService, ProfileService};
 
 #[derive(Clone)]
 pub(crate) struct HttpState {
     pub auth: Arc<AuthService>,
     pub profile: Arc<ProfileService>,
+    pub voice: Arc<VoiceService>,
     pub jwt: JwtKeys,
 }
 
@@ -40,6 +43,16 @@ pub(crate) fn router(state: HttpState) -> Router {
         .route(
             "/me/settings",
             get(handlers::get_settings).put(handlers::put_settings),
+        )
+        .route("/me/voice", get(handlers::get_voice))
+        .route(
+            "/me/voice/consent",
+            post(handlers::grant_voice_consent).delete(handlers::revoke_voice_consent),
+        )
+        .route(
+            "/me/voice/enroll",
+            // 30 s of 48 kHz stereo 16-bit is ~5.8 MB (7.7 MB base64).
+            post(handlers::enroll_voice).layer(DefaultBodyLimit::max(9 * 1024 * 1024)),
         )
         .with_state(state)
 }

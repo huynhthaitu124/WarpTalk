@@ -19,9 +19,15 @@ use warptalk_db::{Migration, ModuleMigrations};
 use warptalk_kernel::{AppResult, Clock, UserId};
 use warptalk_web::JwtKeys;
 
+pub use application::voice::{
+    NoopVoiceCloner, NoopVoiceProviderAdmin, NoopVoiceStatePublisher, VoiceCloner, VoiceDeps,
+    VoiceProviderAdmin, VoiceRuntimeState, VoiceStatePublisher,
+};
 pub use application::{IdentityRepository, VerificationMailer};
 pub use domain::{Policy, UserSummary};
-pub use infrastructure::{DevMailCapture, LogMailer};
+pub use infrastructure::{
+    CartesiaVoice, DevMailCapture, LogMailer, RedisVoiceStatePublisher, consent_key,
+};
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "identity",
@@ -36,6 +42,11 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             name: "auth_flow",
             sql: include_str!("../migrations/0002_auth_flow.sql"),
         },
+        Migration {
+            version: 3,
+            name: "voice",
+            sql: include_str!("../migrations/0003_voice.sql"),
+        },
     ],
 };
 
@@ -45,17 +56,25 @@ pub struct IdentityDeps {
     pub clock: Arc<dyn Clock>,
     pub mailer: Arc<dyn VerificationMailer>,
     pub policy: Policy,
+    /// Voice provider / runtime ports (no-ops by default).
+    pub voice: VoiceDeps,
 }
 
 pub struct IdentityModule {
     state: http::HttpState,
     repo: Arc<dyn IdentityRepository>,
+    voice: Arc<application::voice::VoiceService>,
 }
 
 impl IdentityModule {
     pub fn new(deps: IdentityDeps) -> Self {
         let repo: Arc<dyn IdentityRepository> =
-            Arc::new(infrastructure::PgIdentityRepository::new(deps.pool));
+            Arc::new(infrastructure::PgIdentityRepository::new(deps.pool.clone()));
+        let voice = Arc::new(application::voice::VoiceService::new(
+            Arc::new(infrastructure::PgVoiceRepository::new(deps.pool)),
+            deps.voice,
+            deps.clock.clone(),
+        ));
         let auth = Arc::new(application::AuthService::new(
             repo.clone(),
             deps.mailer,
@@ -68,9 +87,11 @@ impl IdentityModule {
             state: http::HttpState {
                 auth,
                 profile,
+                voice: voice.clone(),
                 jwt: deps.jwt,
             },
             repo,
+            voice,
         }
     }
 
@@ -82,13 +103,20 @@ impl IdentityModule {
     pub fn queries(&self) -> IdentityQueries {
         IdentityQueries {
             repo: self.repo.clone(),
+            voice: self.voice.clone(),
         }
+    }
+
+    /// Retries provider voice deletions that failed earlier (call from a periodic job).
+    pub async fn retry_voice_deletions(&self, limit: i64) -> AppResult<usize> {
+        self.voice.retry_pending_deletions(limit).await
     }
 }
 
 #[derive(Clone)]
 pub struct IdentityQueries {
     repo: Arc<dyn IdentityRepository>,
+    voice: Arc<application::voice::VoiceService>,
 }
 
 impl IdentityQueries {
@@ -98,5 +126,17 @@ impl IdentityQueries {
 
     pub async fn find_by_email(&self, email: &str) -> AppResult<Option<UserSummary>> {
         self.repo.find_summary_by_email(email).await
+    }
+}
+
+impl IdentityQueries {
+    /// Active voice-clone consent (BR-94).
+    pub async fn voice_clone_consent(&self, user: UserId) -> AppResult<bool> {
+        self.voice.voice_clone_consent(user).await
+    }
+
+    /// The user's provider voice id; `None` without active consent or an active profile.
+    pub async fn provider_voice(&self, user: UserId) -> AppResult<Option<String>> {
+        self.voice.provider_voice(user).await
     }
 }

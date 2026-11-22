@@ -9,3 +9,4 @@ pub use account::{AccountFlags, AccountStatus};
 pub use policy::Policy;
 pub mod profile;
 pub use profile::{Profile, Settings, UserSummary};
+pub mod voice;

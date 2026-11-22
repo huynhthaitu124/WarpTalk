@@ -75,6 +75,7 @@ async fn setup() -> Option<Env> {
         clock: clock.clone(),
         mailer: mailer.clone(),
         policy: Policy::default(),
+        voice: warptalk_identity::VoiceDeps::default(),
     });
     Some(Env {
         app: module.router(),
