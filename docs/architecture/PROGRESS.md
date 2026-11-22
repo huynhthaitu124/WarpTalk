@@ -54,6 +54,10 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [ ] macOS app: build thật trên Mac + sửa VERIFY; pipeline `livekit-rtc` build thật (cần clang ≥ 21)
 - [ ] Còn thiếu backend: documents upload, voice profile/consent, billing, notification, WarpBot chat, forgot-password, calendar
 
+## Quyết định 2026-11-22 (user)
+
+- `apps/web` chuyển từ Vite sang **Next.js (App Router, cùng major với legacy: Next 16)**. Thứ tự: hoàn tất restyle theo `apps/web/LEGACY_AUDIT.md` (đang chạy) → migrate sang Next.js giữ nguyên components/tests → Playwright + so sánh legacy.
+
 ## Bị chặn bởi môi trường (cần user quyết)
 
 - Không build được LiveKit Rust RTC (`webrtc-sys` cần clang ≥ 21; máy có clang 18). Tải LLVM 21 bị chặn bởi permission.
