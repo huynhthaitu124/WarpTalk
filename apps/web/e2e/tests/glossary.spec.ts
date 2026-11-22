@@ -120,7 +120,7 @@ test.describe('Workspace glossary', () => {
     try {
       await m.page.goto(`/${workspace.slug}/glossary`);
       await expect(m.page.getByRole('button', { name: 'New glossary' })).toHaveCount(0);
-      await expect(m.page.getByText('Read-only')).toBeVisible();
+      await expect(m.page.getByText('Read-only', { exact: true })).toBeVisible();
       await m.page.getByRole('link', { name: 'Shared terms' }).click();
       await expect(m.page.getByTestId('term-row')).toHaveCount(1);
       for (const name of ['Import CSV', 'Edit', 'Delete']) await expect(m.page.getByRole('button', { name, exact: true })).toHaveCount(0);
@@ -251,6 +251,8 @@ raw.describe('Glossary a11y and visuals', () => {
         await page.setViewportSize({ width: s.w, height: s.h });
         await page.addInitScript((t) => { try { localStorage.setItem('wt.theme', t); } catch { /* ignore */ } }, theme);
         await seedSession(page, d.tokens);
+        // Published global terms are shared platform state (GLOS-06 publishes one): pin the card out for stable pixels.
+        await page.route('**/glossaries/global', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
         const masks = () => [page.getByTestId('account-menu'), page.getByTestId('glossary-updated')];
         const settle = async () => { await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(150); };
         await page.goto(`/${d.ws.slug}/glossary`);

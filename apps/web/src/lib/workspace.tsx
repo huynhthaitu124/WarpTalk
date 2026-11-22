@@ -83,7 +83,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [workspaces, fromUrl, navigate, loc.pathname, loc.search]);
 
   const wsPath = useCallback((p = '/home') => (current ? `/${current.slug}${p}` : '/workspaces'), [current]);
-  const loading = q.isLoading || counting;
+  // A refetch with nothing resolved yet (e.g. right after accepting an invitation) is still "loading".
+  const loading = q.isLoading || counting || (!current && q.isFetching);
   const value = useMemo(() => ({ workspaces, current, loading, select, wsPath }), [workspaces, current, loading, select, wsPath]);
   return <WsCtx.Provider value={value}>{children}</WsCtx.Provider>;
 }
