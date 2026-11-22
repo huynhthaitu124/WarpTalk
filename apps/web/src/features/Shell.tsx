@@ -365,7 +365,6 @@ export function Shell() {
  */
 export function SkipLink() {
   const navigate = useNavigate();
-  const loc = useLocation();
   return (
     <a
       href="#main"
@@ -373,7 +372,8 @@ export function SkipLink() {
         const main = document.getElementById('main');
         if (!main) return;
         e.preventDefault();
-        navigate({ pathname: loc.pathname, search: loc.search, hash: '#main' });
+        // The live URL, not router state: a redirect may be committed to history before the router re-renders.
+        navigate({ pathname: window.location.pathname, search: window.location.search, hash: '#main' });
         main.focus();
         main.scrollIntoView();
       }}

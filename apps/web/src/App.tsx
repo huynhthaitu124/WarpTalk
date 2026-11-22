@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { useWorkspace, WorkspaceProvider } from '@/lib/workspace';
 import { Padded, Skeleton } from '@/ui';
@@ -32,13 +32,20 @@ function Protected() {
   );
 }
 
-/** Old unprefixed list URLs (`/rooms`, `/meetings`, `/settings`, `/`) forward to the current workspace, keeping the query. */
+/**
+ * Old unprefixed list URLs (`/rooms`, `/meetings`, `/settings`, `/`) forward to the current workspace, keeping the
+ * query and hash. Search/hash are read from the live URL when the redirect fires (not at render time): the redirect
+ * effect can run a beat after the page is interactive, and a hash set meanwhile (skip link) must survive it.
+ */
 function ToWorkspace({ to }: { to: string }) {
   const { current, loading, wsPath } = useWorkspace();
-  const loc = useLocation();
-  if (loading) return <div className="p-8"><Skeleton className="h-8 w-48" /></div>;
-  if (!current) return <Navigate to={`/workspaces${loc.search}`} replace />;
-  return <Navigate to={`${wsPath(to)}${loc.search}`} replace />;
+  const navigate = useNavigate();
+  const target = current ? wsPath(to) : '/workspaces';
+  useEffect(() => {
+    if (loading) return;
+    navigate(`${target}${window.location.search}${window.location.hash}`, { replace: true });
+  }, [loading, target, navigate]);
+  return loading ? <div className="p-8"><Skeleton className="h-8 w-48" /></div> : null;
 }
 
 export function App() {
