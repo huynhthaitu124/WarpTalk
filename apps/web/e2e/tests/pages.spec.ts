@@ -154,7 +154,8 @@ test.describe('Design system and brand', () => {
     // no lucide strokes left in the shell: phosphor svgs use fill, lucide uses stroke="currentColor" on the root
     expect(await app.locator('svg.lucide').count()).toBe(0);
     // Features without a backend are not advertised
-    for (const n of ['Calendar', 'Glossary', 'Documents', 'Voice profiles']) await expect(side.getByRole('link', { name: n })).toHaveCount(0);
+    await expect(side.getByRole('link', { name: 'Glossary' })).toHaveCount(1); // backed by the glossary API
+    for (const n of ['Calendar', 'Documents', 'Voice profiles']) await expect(side.getByRole('link', { name: n })).toHaveCount(0);
   });
 
   test('DS-07 tables inside cards do not draw a second frame', async ({ app, tokens, workspace }) => {

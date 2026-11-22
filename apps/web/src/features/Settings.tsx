@@ -274,6 +274,7 @@ export function SettingsPage() {
   const { section } = useParams();
   const [params] = useSearchParams();
   if (!section) {
+    if (loading) return <Skeleton className="h-40" />; // wsPath() is only meaningful once the workspace is resolved
     // Old `?tab=` links.
     const t = params.get('tab');
     if (t === 'members') return <Navigate to={wsPath('/members')} replace />;
