@@ -69,3 +69,4 @@ export async function loginViaUi(page: Page, u: { email: string; password: strin
   await page.getByLabel('Password').fill(u.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
+export * from './worker';

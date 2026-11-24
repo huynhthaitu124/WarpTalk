@@ -132,11 +132,11 @@ export function parseTranscript(json: unknown): TranscriptLine[] {
     const at = s.startTimeMs ?? s.startMs ?? s.atMs;
     return [{
       id: str(s.id) ?? str(s.segmentId) ?? `seg-${n}`,
-      speaker: speaker === 'me' ? 'Me' : speaker === 'others' ? 'Others' : speaker,
+      speaker: speaker === 'me' || speaker === 'Tôi' ? 'Me' : speaker === 'others' ? 'Others' : speaker,
       text,
       atMs: typeof at === 'number' ? at : undefined,
       final: s.isFinal !== false,
-      mine: channel === 'me' || speaker === 'Me',
+      mine: channel === 'me' || speaker === 'Me' || speaker === 'Tôi', // the backend names the host's own side "Tôi"
     }];
   });
   return lines;

@@ -78,7 +78,7 @@ const norm = (t: string) => t.trim().replace(/\s+/g, ' ').toLowerCase();
 
 /**
  * Native final segments the polled transcript does not contain yet. A segment is "already persisted" when a polled line has its
- * clientSegmentId, its server id (uuid v5 of the session + clientSegmentId) or, as a fallback, the same side and text (each polled line
+ * clientSegmentId, its server id (uuid v5 of the session + clientSegmentId) or, as a fallback, the same text (each polled line
  * accounts for at most one native segment).
  */
 export function pendingSegments(sessionId: string, polled: TranscriptLine[], local: LiveSegment[]): LiveSegment[] {
@@ -89,7 +89,7 @@ export function pendingSegments(sessionId: string, polled: TranscriptLine[], loc
     const direct = byId.get(l.clientSegmentId) ?? byId.get(uuidV5(sessionId, l.clientSegmentId) ?? '');
     if (direct) { claimed.add(direct.id); continue; }
     const text = norm(l.text);
-    const twin = polled.find((p) => !claimed.has(p.id) && p.mine === (l.channel === 'me') && norm(p.text) === text);
+    const twin = polled.find((p) => !claimed.has(p.id) && norm(p.text) === text);
     if (twin) { claimed.add(twin.id); continue; }
     pending.push(l);
   }
