@@ -4016,6 +4016,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -4113,6 +4114,7 @@ dependencies = [
  "warptalk-bus",
  "warptalk-config",
  "warptalk-contracts",
+ "warptalk-copilot",
  "warptalk-db",
  "warptalk-identity",
  "warptalk-kernel",
@@ -4128,6 +4130,7 @@ dependencies = [
  "warptalk-transcript",
  "warptalk-web",
  "warptalk-workspace",
+ "wiremock",
 ]
 
 [[package]]
@@ -4147,9 +4150,11 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
  "uuid",
  "warptalk-bus",
+ "warptalk-config",
  "warptalk-contracts",
  "warptalk-db",
  "warptalk-kernel",
@@ -4222,10 +4227,53 @@ dependencies = [
 [[package]]
 name = "warptalk-copilot"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "redis",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+ "warptalk-bus",
+ "warptalk-config",
+ "warptalk-contracts",
+ "warptalk-db",
+ "warptalk-kernel",
+ "warptalk-web",
+ "wiremock",
+]
 
 [[package]]
 name = "warptalk-copilot-core"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "futures",
+ "rand 0.8.8",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "warptalk-audio",
+ "warptalk-ingress",
+ "warptalk-pipeline-runtime",
+ "warptalk-stt",
+]
 
 [[package]]
 name = "warptalk-db"
@@ -4398,6 +4446,7 @@ dependencies = [
  "tracing",
  "warptalk-assistant",
  "warptalk-config",
+ "warptalk-copilot",
  "warptalk-db",
  "warptalk-identity",
  "warptalk-knowledge",

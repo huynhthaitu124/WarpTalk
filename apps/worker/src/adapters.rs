@@ -223,3 +223,7 @@ fn classify(e: &LlmError) -> TranslateError {
         TranslateError::Permanent(e.to_string())
     }
 }
+
+/// Summary adapters (read-only transcript and room lookups) live with the summary feature so
+/// `apps/api` can reuse them.
+pub use warptalk_assistant::summary::{PgRoomMetaSource, PgTranscriptSource};

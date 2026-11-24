@@ -11,6 +11,8 @@ use warptalk_llm::LlmProvider;
 pub enum Purpose {
     SuggestionDecide,
     SuggestionGenerate,
+    /// Post-session summary / minutes / action items.
+    Summary,
 }
 
 impl Purpose {
@@ -18,6 +20,7 @@ impl Purpose {
         match self {
             Self::SuggestionDecide => "suggestion_decide",
             Self::SuggestionGenerate => "suggestion_generate",
+            Self::Summary => "summary",
         }
     }
 }

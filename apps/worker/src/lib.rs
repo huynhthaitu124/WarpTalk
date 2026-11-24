@@ -20,17 +20,22 @@ use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 
 use crate::adapters::{
-    AiChatTranslator, PgChatTargetLanguages, PgRoomDirectory, PgSuggestionRoomDirectory,
-    PgWorkspaceAiPolicy,
+    AiChatTranslator, PgChatTargetLanguages, PgRoomDirectory, PgRoomMetaSource,
+    PgSuggestionRoomDirectory, PgTranscriptSource, PgWorkspaceAiPolicy,
 };
 use redis::aio::ConnectionManager;
 use warptalk_ai_plane::ai::AiProviders;
 use warptalk_ai_plane::knowledge::{
     DenyDocumentAccess, KnowledgeParts, ServiceRetriever, build_knowledge_module,
 };
+use warptalk_assistant::suggestion::LlmResolver;
 use warptalk_assistant::suggestion::{
     EngineDeps, RedisConsentPolicy, RedisRoomSignals, SettingsConfigSource, SuggestionEngine,
     SuggestionState, SuggestionWorker,
+};
+use warptalk_assistant::summary::{
+    PgSummaryRepository, RedisFollowUpSource, RedisSummaryBus, SummaryDeps, SummaryService,
+    SummaryWorker,
 };
 use warptalk_knowledge::infrastructure::{INDEX_RESULTS_STREAM, RedisResultPublisher};
 use warptalk_knowledge::{KnowledgeModule, index_consumer_config, purge_consumer_config};
@@ -45,6 +50,9 @@ use warptalk_workspace::{
 
 /// Model pipelines the suggestion worker runs at once across rooms.
 const SUGGESTION_MAX_PIPELINES: usize = 8;
+
+/// Summary jobs a worker process runs at once.
+const SUMMARY_MAX_JOBS: usize = 4;
 
 /// How long shutdown waits for consumers to stop before giving up.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -173,6 +181,34 @@ pub async fn build_ai_plane(
         suggestion,
         ai,
     })
+}
+
+/// Post-session summary worker: transcript and room adapters, the platform LLM resolver,
+/// live follow-ups from Redis. Registers the `summary` settings namespace.
+pub async fn build_summary(
+    pool: PgPool,
+    redis_url: &str,
+    llm: Arc<dyn LlmResolver>,
+    settings: &SettingsStore,
+) -> anyhow::Result<Arc<SummaryWorker>> {
+    let redis = warptalk_bus::connect(redis_url)
+        .await
+        .context("connecting to Redis")?;
+    warptalk_assistant::summary::register_config(settings);
+    let service = SummaryService::new(SummaryDeps {
+        repo: PgSummaryRepository::new(pool.clone()),
+        transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
+        rooms: Arc::new(PgRoomMetaSource::new(pool)),
+        followups: Arc::new(RedisFollowUpSource::new(redis.clone())),
+        llm,
+        settings: settings.clone(),
+        bus: Arc::new(RedisSummaryBus::new(redis)),
+        clock: Arc::new(SystemClock),
+    });
+    Ok(Arc::new(SummaryWorker::new(
+        Arc::new(service),
+        SUMMARY_MAX_JOBS,
+    )))
 }
 
 /// Settings store for the worker: platform defaults registered, invalidation listener running.

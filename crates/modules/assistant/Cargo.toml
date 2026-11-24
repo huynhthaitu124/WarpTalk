@@ -30,6 +30,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 sha2 = { workspace = true }
 metrics = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
-futures = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true }
+warptalk-config = { workspace = true }

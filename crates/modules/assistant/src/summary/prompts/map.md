@@ -1,0 +1,1 @@
+This is part {{part}} of {{parts}} of a long meeting. Summarize only this part: put a faithful account of it in `summary_detailed` (a short paragraph in `summary_short`), and list the decisions, action items, open questions and topics that occur in it. Another pass will merge all parts.

@@ -2,6 +2,7 @@
 
 mod dto;
 mod handlers;
+pub mod summary;
 
 use std::sync::Arc;
 
@@ -16,6 +17,8 @@ use crate::application::LlmConfigService;
 pub struct AppState {
     pub llm_config: Arc<LlmConfigService>,
     pub jwt: JwtKeys,
+    /// Post-session summary routes, mounted when configured.
+    pub summary: Option<summary::SummaryApi>,
 }
 
 impl FromRef<AppState> for JwtKeys {
@@ -26,7 +29,11 @@ impl FromRef<AppState> for JwtKeys {
 
 /// Paths relative to `/api/v1`.
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let summary = state
+        .summary
+        .clone()
+        .map(|api| summary::router(api, state.jwt.clone()));
+    let router = Router::new()
         .route(
             "/ai/workspaces/{id}/config",
             axum::routing::get(handlers::get_config).put(handlers::put_config),
@@ -39,5 +46,9 @@ pub fn router(state: AppState) -> Router {
             "/ai/workspaces/{id}/credentials/{provider}/test",
             post(handlers::test_credential),
         )
-        .with_state(state)
+        .with_state(state);
+    match summary {
+        Some(r) => router.merge(r),
+        None => router,
+    }
 }

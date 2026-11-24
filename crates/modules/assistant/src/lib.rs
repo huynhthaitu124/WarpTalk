@@ -11,6 +11,7 @@ pub mod domain;
 pub mod http;
 pub mod infrastructure;
 pub mod suggestion;
+pub mod summary;
 
 use std::sync::Arc;
 
@@ -27,11 +28,18 @@ use infrastructure::PgLlmConfigRepository;
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
     module: "assistant",
-    migrations: &[Migration {
-        version: 1,
-        name: "byo_llm",
-        sql: include_str!("../migrations/0001_byo_llm.sql"),
-    }],
+    migrations: &[
+        Migration {
+            version: 1,
+            name: "byo_llm",
+            sql: include_str!("../migrations/0001_byo_llm.sql"),
+        },
+        Migration {
+            version: 2,
+            name: "meeting_summaries",
+            sql: include_str!("../migrations/0002_meeting_summaries.sql"),
+        },
+    ],
 };
 
 pub struct AssistantDeps {
@@ -44,10 +52,18 @@ pub struct AssistantDeps {
     pub notifier: Arc<dyn ConfigNotifier>,
 }
 
+/// Dependencies of the summary REST routes.
+pub struct SummaryHttpDeps {
+    pub service: Arc<summary::SummaryService>,
+    pub access: Arc<dyn summary::RoomAccess>,
+    pub clock: Arc<dyn Clock>,
+}
+
 pub struct AssistantModule {
     llm_config: Arc<LlmConfigService>,
     repo: Arc<dyn LlmConfigRepository>,
     jwt: JwtKeys,
+    summary: Option<http::summary::SummaryApi>,
 }
 
 impl AssistantModule {
@@ -65,7 +81,18 @@ impl AssistantModule {
             llm_config,
             repo,
             jwt: deps.jwt,
+            summary: None,
         }
+    }
+
+    /// Mount the post-session summary routes (`meetings/{room_id}/summary`, action items).
+    pub fn with_summary(mut self, deps: SummaryHttpDeps) -> Self {
+        self.summary = Some(http::summary::SummaryApi {
+            service: deps.service,
+            access: deps.access,
+            clock: deps.clock,
+        });
+        self
     }
 
     /// Routes relative to the API prefix (`/api/v1`), state applied.
@@ -73,6 +100,7 @@ impl AssistantModule {
         http::router(http::AppState {
             llm_config: self.llm_config.clone(),
             jwt: self.jwt.clone(),
+            summary: self.summary.clone(),
         })
     }
 

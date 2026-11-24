@@ -95,6 +95,7 @@ impl From<crate::suggestion::Purpose> for LlmPurpose {
         match p {
             crate::suggestion::Purpose::SuggestionDecide => Self::SuggestionDecide,
             crate::suggestion::Purpose::SuggestionGenerate => Self::SuggestionGenerate,
+            crate::suggestion::Purpose::Summary => Self::Summary,
         }
     }
 }

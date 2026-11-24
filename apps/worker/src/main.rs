@@ -6,9 +6,10 @@ use warptalk_ai_plane::knowledge::build_vector_store;
 use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_worker::{
-    build_ai_plane, build_settings, build_transcript_module, chat_translate_consumer,
-    join_consumers, knowledge_consumers, route_status::route_status_consumer, spawn_consumers,
-    spawn_suggestion, workspace_document_consumer,
+    build_ai_plane, build_settings, build_summary, build_transcript_module,
+    chat_translate_consumer, join_consumers, knowledge_consumers,
+    route_status::route_status_consumer, spawn_consumers, spawn_suggestion,
+    workspace_document_consumer,
 };
 
 /// Resolves on Ctrl-C or SIGTERM.
@@ -77,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
     );
     // Workspace AI config changes made through the API apply here without a restart.
     let _ai_config_listener = ai.spawn_invalidation_listener(&redis_cfg.url);
+    let summary = build_summary(pool.clone(), &redis_cfg.url, ai.clone(), &settings).await?;
     let chat_translate =
         chat_translate_consumer(pool.clone(), &redis_cfg.url, &ai, &settings).await?;
     let plane = build_ai_plane(
@@ -94,8 +96,10 @@ async fn main() -> anyhow::Result<()> {
     consumers.push(chat_translate);
     consumers.push(workspace_document_consumer(pool.clone()));
     consumers.push(route_status_consumer(pool.clone()));
+    consumers.extend(summary.consumers());
     let mut handles = spawn_consumers(&redis_cfg.url, consumers, &rx).await?;
     handles.push(spawn_suggestion(&redis_cfg.url, plane.suggestion.clone(), &rx).await?);
+    handles.push(summary.clone().spawn_sweeper(rx.clone()));
     tracing::info!(consumers = handles.len(), "worker started");
 
     shutdown_signal().await;
