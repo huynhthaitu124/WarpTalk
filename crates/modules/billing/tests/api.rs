@@ -74,6 +74,23 @@ async fn ctx() -> Option<Ctx> {
     warptalk_db::run_migrations(&pool, &[MIGRATIONS])
         .await
         .unwrap();
+    // Tests use fixed provider ids (events, invoices, customers); purge leftovers from earlier
+    // runs once per process, before any test touches the tables.
+    static PURGE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    PURGE
+        .get_or_init(|| async {
+            sqlx::query(
+                "TRUNCATE subscription.customers, subscription.subscriptions, subscription.payments, \
+                 subscription.invoices, subscription.credit_transactions, \
+                 subscription.credit_balance_snapshots, subscription.usage_records, \
+                 subscription.workspace_entitlement_overrides, subscription.webhook_events, \
+                 subscription.admin_audit",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        })
+        .await;
     let keys = JwtKeys::from_config(&JwtConfig {
         secret: "test-secret-test-secret-test-secret-1234".into(),
         issuer: "test".into(),
@@ -216,6 +233,11 @@ impl Ctx {
     }
 
     async fn link_customer(&self, cus: &str) {
+        sqlx::query("DELETE FROM subscription.customers WHERE stripe_customer_id = $1")
+            .bind(cus)
+            .execute(&self.pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO subscription.customers (workspace_id, stripe_customer_id) VALUES ($1, $2)",
         )

@@ -4410,6 +4410,7 @@ dependencies = [
  "uuid",
  "warptalk-ai-plane",
  "warptalk-assistant",
+ "warptalk-billing",
  "warptalk-bus",
  "warptalk-config",
  "warptalk-contracts",

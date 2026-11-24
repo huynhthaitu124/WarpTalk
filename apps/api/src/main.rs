@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to PostgreSQL")?;
 
-    for module in ["identity", "assistant", "copilot"] {
+    for module in ["identity", "assistant", "copilot", "subscription"] {
         let migrated: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
         )
@@ -74,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
         voice_cloner: None,
         voice_admin: None,
         stt_token_issuer: None,
+        billing_config: None,
     };
     let (verification_mailer, invitation_mailer) =
         warptalk_api::auth_wiring::mailers(&redis_cfg.url).context("configuring email delivery")?;

@@ -100,8 +100,23 @@ Cột "ai dùng": **A** = `warptalk-api`, **W** = `warptalk-worker`, **P** = `wa
 | `EMAIL_DEFAULT_LANG` | không | `vi` | `en` | Ngôn ngữ mẫu email (`vi` hoặc `en`) |
 | `GOOGLE_CLIENT_IDS` | không | không | `123-web.apps.googleusercontent.com,123-mac.apps.googleusercontent.com` | Danh sách OAuth client id (phân tách dấu phẩy) được chấp nhận làm `aud` của Google ID token (web + macOS). Thiếu thì `POST /api/v1/auth/google` trả `503 GOOGLE_NOT_CONFIGURED` |
 | `DEV_MAIL_CAPTURE` (bổ sung) | | | `1` | Ngoài `dev:mail:verify:{email}`, token đặt lại mật khẩu lưu ở `dev:mail:reset:{email}` (TTL 1 giờ). Ưu tiên cao hơn `RESEND_API_KEY` |
+| `STRIPE_SECRET_KEY` | không (cần cho thanh toán) | không | `sk_test_...` | **BÍ MẬT**. Thiếu thì `POST /workspaces/{id}/billing/checkout` và `/portal` trả `503 STRIPE_NOT_CONFIGURED`; các route đọc vẫn chạy |
+| `STRIPE_WEBHOOK_SECRET` | không (cần cho webhook) | không | `whsec_...` | **BÍ MẬT**. Thiếu thì `POST /billing/webhooks/stripe` trả 503; chữ ký sai trả 400 |
+| `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS` | không | `plans.stripe_price_id` | `price_...` | Price id của gói; gói không có price id thì `purchasable=false` |
+| `BILLING_SUCCESS_URL`, `BILLING_CANCEL_URL` | không | `{APP_BASE_URL}/billing?checkout=success` / `=cancelled` | | URL quay lại sau Stripe Checkout (mặc định localhost:3000 nếu không có `APP_BASE_URL`) |
+| `BILLING_PORTAL_RETURN_URL` | không | `{APP_BASE_URL}/billing` | | URL quay lại từ Stripe Customer Portal |
+| `BILLING_TOPUP_USD_PER_CREDIT` | không | `0.0002` | `0.0002` | Giá USD mỗi credit khi nạp thêm |
+| `COPILOT_STT_MODEL` | không | `gpt-4o-transcribe` | | Tên model STT ghi vào usage của copilot (worker metering tính giá theo rate card) |
 
 Ngoài ra A và W còn đọc nhóm AI/Qdrant ở 3.3 và 3.4.
+
+### 3.2.1 Billing enforcement
+
+- Worker (`apps/worker`) đọc stream usage, trừ credit theo rate card và ghi trạng thái dịch vụ AI vào Redis: `workspace:{id}:ai_service_state` (`healthy|low_balance|in_overage|suspended`) và `workspace:{id}:ai_service_suspended` (lý do, ví dụ `insufficient_credits`, `trial_ended`; khoá bị xoá khi hết suspended).
+- Khi workspace `suspended`: `POST /copilot/sessions/{id}/stt-token` trả `402 INSUFFICIENT_CREDITS`. Ingest transcript vẫn được nhận (không mất dữ liệu cuộc họp), kèm cờ `insufficientCredits` trên kết quả. Đọc trạng thái lỗi thì fail-open (không chặn họp).
+- Webhook Stripe: cấu hình endpoint `POST /api/v1/billing/webhooks/stripe` trên Stripe Dashboard (ký bằng `STRIPE_WEBHOOK_SECRET`; xử lý idempotent theo event id).
+- Hiện chỉ copilot bị chặn theo credit; assistant (gợi ý, tóm tắt) chỉ ghi usage chứ chưa bị chặn.
+- API yêu cầu migration `subscription` (chạy `warptalk-migrator` trước).
 
 ### 3.3 AI nền tảng và BYO (A, W; riêng `OPENAI_API_KEY` còn P)
 

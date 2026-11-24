@@ -86,6 +86,16 @@ impl LlmResolver for Resolver {
 
 async fn seed(pool: &sqlx::PgPool, ws: Uuid, room: Uuid) {
     sqlx::query(
+        "INSERT INTO workspace.workspaces (id, name, slug, owner_id, settings, created_at) \
+         VALUES ($1, 'ws', $2, $3, '{\"externalLlmAllowed\": true}'::jsonb, now())",
+    )
+    .bind(ws)
+    .bind(format!("ws-{ws}"))
+    .bind(Uuid::now_v7())
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
         "INSERT INTO translation_room.translation_rooms \
          (id, workspace_id, host_id, title, translation_room_code, source_language, \
           target_languages, created_at) \
@@ -184,6 +194,7 @@ async fn end_marker_on_the_stream_produces_exactly_one_summary_and_regenerate_ru
         &pool,
         &[
             warptalk_settings::MIGRATIONS,
+            warptalk_workspace::MIGRATIONS,
             warptalk_room::MIGRATIONS,
             warptalk_transcript::MIGRATIONS,
             warptalk_assistant::MIGRATIONS,

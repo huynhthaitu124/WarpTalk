@@ -103,6 +103,10 @@ async fn env() -> Option<Env> {
         Some(redis.clone()),
         warptalk_api::ApiOptions {
             stt_token_issuer: Some(Arc::new(issuer)),
+            billing_config: Some(warptalk_billing::application::service::BillingConfig {
+                webhook_secret: Some("whsec_test".into()),
+                ..Default::default()
+            }),
             ..warptalk_api::ApiOptions::default()
         },
     )
@@ -130,6 +134,7 @@ fn warptalk_migrator_sets() -> Vec<warptalk_db::ModuleMigrations> {
         warptalk_knowledge::MIGRATIONS,
         warptalk_assistant::MIGRATIONS,
         warptalk_copilot::MIGRATIONS,
+        warptalk_billing::MIGRATIONS,
     ]
 }
 
@@ -781,4 +786,74 @@ async fn copilot_session_end_to_end() {
     assert_eq!(b["status"], "ENDED");
     // Let any straggling redis pipeline settle before the process exits.
     tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn billing_routes_and_credit_gate() {
+    let Some(e) = env().await else { return };
+    let host = e.user("Host").await;
+    let ws = e.workspace(&host).await;
+
+    // Seeded plans are public to any signed-in user.
+    let (s, b) = call(&e.app, "GET", "/billing/plans", None, Some(&host.token)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let slugs: Vec<&str> = b
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["slug"].as_str())
+        .collect();
+    for want in ["free", "pro", "business"] {
+        assert!(slugs.contains(&want), "{slugs:?}");
+    }
+
+    // The webhook route is mounted and rejects a bad signature.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/billing/webhooks/stripe")
+        .header("stripe-signature", "t=1,v1=deadbeef")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp = e.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A session can be created; once the trial has ended the stt-token is refused with 402.
+    let (s, b) = call(
+        &e.app,
+        "POST",
+        "/copilot/sessions",
+        Some(json!({"workspaceId": ws.to_string(), "title": "Gate", "platform": "zoom",
+                    "meetingUrl": "https://zoom.us/j/9", "languages": {"me": "vi", "others": "en"}})),
+        Some(&host.token),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = b["id"].as_str().unwrap().to_owned();
+    let (s, b) = call(
+        &e.app,
+        "GET",
+        &format!("/workspaces/{ws}/billing"),
+        None,
+        Some(&host.token),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    sqlx::query(
+        "UPDATE subscription.subscriptions SET trial_ends_at = now() - interval '1 day' \
+         WHERE workspace_id = $1",
+    )
+    .bind(ws.as_uuid())
+    .execute(&e.pool)
+    .await
+    .unwrap();
+    let (s, b) = call(
+        &e.app,
+        "POST",
+        &format!("/copilot/sessions/{id}/stt-token"),
+        None,
+        Some(&host.token),
+    )
+    .await;
+    assert_eq!(s, StatusCode::PAYMENT_REQUIRED, "{b}");
+    assert_eq!(b["code"], "INSUFFICIENT_CREDITS", "{b}");
 }

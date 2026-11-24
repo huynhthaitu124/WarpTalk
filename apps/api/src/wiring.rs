@@ -33,12 +33,13 @@ use warptalk_assistant::summary::{
     SummaryService,
 };
 use warptalk_assistant::{AssistantDeps, AssistantModule, SummaryHttpDeps};
+use warptalk_billing::{BillingDeps, BillingModule};
 use warptalk_bus::publish_json;
 use warptalk_config::JwtConfig;
 use warptalk_contracts::events::{DomainEventEnvelope, MEETING_PRODUCER};
 use warptalk_copilot::application::ports::{
-    CreatedRoom, NewSessionRoom, NoSttTokenIssuer, RoomState, SessionRooms, SttTokenIssuer,
-    WorkspaceMembers,
+    CreatedRoom, Metering, NewSessionRoom, NoSttTokenIssuer, RoomState, SessionRooms,
+    SttTokenIssuer, WorkspaceMembers,
 };
 use warptalk_copilot::infrastructure::openai_stt::{OpenAiSttConfig, OpenAiSttTokenIssuer};
 use warptalk_copilot::infrastructure::redis_adapters::{RedisRateLimiter, RedisSegmentSink};
@@ -515,6 +516,8 @@ pub struct ApiOptions {
     /// Overrides the ephemeral STT token issuer (tests); default is OpenAI when `OPENAI_API_KEY`
     /// is set, else `POST /copilot/sessions/{id}/stt-token` answers 503 `STT_NOT_CONFIGURED`.
     pub stt_token_issuer: Option<Arc<dyn SttTokenIssuer>>,
+    /// Overrides the billing config (tests); default reads `STRIPE_*` / `BILLING_*` env.
+    pub billing_config: Option<warptalk_billing::application::service::BillingConfig>,
 }
 
 /// Room's consent port backed by identity's voice-consent facade (BR-94).
@@ -683,6 +686,7 @@ pub async fn build(
     let suggestions_redis = redis.clone();
     let copilot_redis = redis.clone();
     let summary_redis = redis.clone();
+    let billing_redis = redis.clone();
     let effects = RoomEffectsHandles::default();
     let policy_conn = redis.clone();
     let room_queries_cell: Arc<std::sync::OnceLock<RoomQueries>> = Arc::default();
@@ -752,7 +756,24 @@ pub async fn build(
             }
         }
     });
+    let billing = BillingModule::new(BillingDeps {
+        pool: pool.clone(),
+        jwt: jwt.clone(),
+        clock: Arc::new(SystemClock),
+        access: Arc::new(crate::billing_wiring::BillingWorkspaceAccess(
+            workspace.queries(),
+        )),
+        gateway: crate::billing_wiring::stripe_gateway_from_env(),
+        state_sink: billing_redis.map(|c| {
+            Arc::new(warptalk_billing::infrastructure::redis_state::RedisStateSink::new(c))
+                as Arc<dyn warptalk_billing::application::ports::ServiceStateSink>
+        }),
+        config: opts
+            .billing_config
+            .unwrap_or_else(crate::billing_wiring::billing_config_from_env),
+    });
     let copilot = copilot_redis.map(|conn| {
+        let usage_conn = conn.clone();
         CopilotModule::new(CopilotDeps {
             pool: pool.clone(),
             jwt: jwt.clone(),
@@ -766,6 +787,13 @@ pub async fn build(
             sink: Arc::new(RedisSegmentSink::new(conn.clone())),
             stt_tokens,
             rate_limiter: Arc::new(RedisRateLimiter::new(conn)),
+        })
+        .with_metering(Metering {
+            usage: Arc::new(
+                warptalk_copilot::infrastructure::redis_adapters::RedisUsageSink::new(usage_conn),
+            ),
+            gate: Arc::new(crate::billing_wiring::BillingCreditGate(billing.queries())),
+            stt_model: crate::billing_wiring::copilot_stt_model(),
         })
     });
 
@@ -811,7 +839,7 @@ pub async fn build(
         ai.spawn_invalidation_listener(url);
     }
     warptalk_assistant::summary::register_config(&settings);
-    let summary_service = Arc::new(SummaryService::new(SummaryDeps {
+    let summary_service = SummaryService::new(SummaryDeps {
         repo: PgSummaryRepository::new(pool.clone()),
         transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
         rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
@@ -829,7 +857,13 @@ pub async fn build(
             None => Arc::new(NoBus),
         },
         clock: Arc::new(SystemClock),
-    }));
+    });
+    let summary_service = Arc::new(match &summary_redis {
+        Some(c) => summary_service.with_usage(Arc::new(
+            warptalk_assistant::usage::RedisUsageSink::new(c.clone()),
+        )),
+        None => summary_service,
+    });
     let assistant = assistant.with_summary(SummaryHttpDeps {
         service: summary_service,
         access: Arc::new(PgRoomAccess::new(
@@ -878,6 +912,7 @@ pub async fn build(
     let api = Router::new()
         .merge(identity.router())
         .merge(workspace.router())
+        .merge(billing.router())
         .merge(room.router())
         .merge(meeting_router)
         .merge(settings_router)
