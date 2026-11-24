@@ -42,6 +42,11 @@ pub trait SegmentSink: Send + Sync {
     /// Flush (best effort) and stop background work.
     async fn close(&self);
     fn stats(&self) -> SinkStats;
+    /// The last delivery attempt was answered 401 (bearer expired): the app should call
+    /// `update_bearer`. Default: never.
+    fn unauthorized(&self) -> bool {
+        false
+    }
 }
 
 /// Collects segments in memory.
@@ -134,6 +139,7 @@ struct Inner {
     rejected: AtomicU64,
     dropped_overflow: AtomicU64,
     offline: AtomicBool,
+    unauthorized: AtomicBool,
 }
 
 enum PostOutcome {
@@ -234,6 +240,7 @@ impl HttpSegmentSink {
             rejected: AtomicU64::new(0),
             dropped_overflow: AtomicU64::new(0),
             offline: AtomicBool::new(false),
+            unauthorized: AtomicBool::new(false),
         });
         let task = tokio::spawn(run(inner.clone()));
         Ok(Arc::new(Self {
@@ -290,6 +297,7 @@ async fn run(inner: Arc<Inner>) {
                         .delivered
                         .fetch_add(batch.len() as u64, Ordering::Relaxed);
                     inner.offline.store(false, Ordering::Relaxed);
+                    inner.unauthorized.store(false, Ordering::Relaxed);
                     attempt = 0;
                 }
                 PostOutcome::Rejected(code) => {
@@ -306,6 +314,9 @@ async fn run(inner: Arc<Inner>) {
                 PostOutcome::Retry(why) => {
                     debug!(%why, attempt, "segment post failed; will retry");
                     inner.offline.store(true, Ordering::Relaxed);
+                    inner
+                        .unauthorized
+                        .store(why == "http 401", Ordering::Relaxed);
                     inner.retries.fetch_add(1, Ordering::Relaxed);
                     let wait = inner.backoff_for(attempt);
                     attempt = attempt.saturating_add(1);
@@ -322,6 +333,10 @@ async fn run(inner: Arc<Inner>) {
 
 #[async_trait]
 impl SegmentSink for HttpSegmentSink {
+    fn unauthorized(&self) -> bool {
+        self.inner.unauthorized.load(Ordering::Relaxed)
+    }
+
     async fn submit(&self, segment: SegmentRecord) {
         let Some(segment) = sanitize(segment) else {
             self.inner.rejected.fetch_add(1, Ordering::Relaxed);

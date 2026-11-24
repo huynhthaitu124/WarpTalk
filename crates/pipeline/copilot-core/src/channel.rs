@@ -475,7 +475,12 @@ impl Worker {
                 self.next_open_after = Some(
                     Instant::now() + Duration::from_millis(self.ctx.engine.reconnect_backoff_ms),
                 );
-                self.error("stt_open", msg.clone());
+                let code = if msg.ends_with("http 401") {
+                    "auth_required"
+                } else {
+                    "stt_open"
+                };
+                self.error(code, msg.clone());
                 self.status(StatusKind::SttUnavailable, Some(msg));
                 false
             }

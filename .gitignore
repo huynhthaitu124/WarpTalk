@@ -17,4 +17,4 @@ dump.rdb
 
 # CopilotCore build outputs (make core)
 apps/macos/CopilotCore/CopilotCore.xcframework/
-apps/macos/CopilotCore/CopilotCore.swift
+apps/macos/CopilotCore/Sources/CopilotCore/CopilotCore.swift

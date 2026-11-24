@@ -120,9 +120,19 @@ impl CopilotEngine {
         let h = tokio::spawn(async move {
             let mut tick = tokio::time::interval(period);
             let mut offline = false;
+            let mut unauth = false;
             let mut last_dropped = [0u64; 2];
             loop {
                 tick.tick().await;
+                let un = sink.unauthorized();
+                if un && !unauth {
+                    events.emit(CopilotEvent::Error {
+                        channel: None,
+                        code: "auth_required".into(),
+                        message: "segment upload rejected with http 401".into(),
+                    });
+                }
+                unauth = un;
                 let off = sink.stats().offline;
                 if off != offline {
                     offline = off;

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build the copilot-core Swift package inputs (macOS only):
 #   apps/macos/CopilotCore/CopilotCore.xcframework   universal static lib + header + modulemap
-#   apps/macos/CopilotCore/CopilotCore.swift         generated UniFFI Swift bindings
+#   apps/macos/CopilotCore/Sources/CopilotCore/CopilotCore.swift   generated UniFFI Swift bindings
+# Both belong to the checked-in local Swift package apps/macos/CopilotCore/Package.swift
+# (module `CopilotCore`, binary target `CopilotCoreFFI`).
 #
 # Prereqs: Xcode command line tools, rustup with targets
 #   rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -41,9 +43,9 @@ lipo -create \
 cp "$STAGE/gen/warptalk_copilot_coreFFI.h" "$STAGE/headers/"
 cp "$STAGE/gen/warptalk_copilot_coreFFI.modulemap" "$STAGE/headers/module.modulemap"
 
-rm -rf "$OUT/CopilotCore.xcframework" "$OUT/CopilotCore.swift"
-mkdir -p "$OUT"
+rm -rf "$OUT/CopilotCore.xcframework"
+mkdir -p "$OUT" "$OUT/Sources/CopilotCore"
 xcodebuild -create-xcframework -library "$STAGE/lib/$LIB" -headers "$STAGE/headers" \
   -output "$OUT/CopilotCore.xcframework"
-cp "$STAGE/gen/warptalk_copilot_core.swift" "$OUT/CopilotCore.swift"
-echo "OK: $OUT/CopilotCore.xcframework and CopilotCore.swift"
+cp "$STAGE/gen/warptalk_copilot_core.swift" "$OUT/Sources/CopilotCore/CopilotCore.swift"
+echo "OK: $OUT/CopilotCore.xcframework and Sources/CopilotCore/CopilotCore.swift"
