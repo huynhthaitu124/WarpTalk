@@ -2,7 +2,7 @@
 
 Contract between the macOS app (WKWebView host) and the web app (`apps/web`). The web app owns auth, rooms, the meeting UI, captions and the LiveKit session for native meetings. The macOS app owns: capturing another app's audio, publishing it to the bridge room, voice-mode dub playback into a virtual device, the floating caption overlay, and macOS permissions.
 
-Status: the Swift code has not been compiled on a Mac yet (written on Linux; LiveKit and Apple API names were checked against the real SDK sources, see README §8). Implementation: `Sources/Web/*` and `Sources/Features/External/NativeCaptureController.swift`.
+Status: the Swift code (including `Sources/Features/Copilot`) has not been compiled on a Mac yet (written on Linux; LiveKit and Apple API names were checked against the real SDK sources, see README §8). Implementation: `Sources/Web/*` and `Sources/Features/External/NativeCaptureController.swift`.
 
 ## Detecting the bridge
 `window.warptalkNative` exists only inside the macOS app, only for the ACTIVE web origin (scheme + host + port), only in the main frame. The active origin is the first URL that answers from: Settings URL (default `http://localhost:3000`, the Next.js dev server) -> fallback list (default `http://localhost:5173`) -> the bundled export `warptalk://app/` (when the app was built with `make bundle`). The script is injected at document start. Also fires `window.dispatchEvent(new Event('warptalk-native-ready'))`.
@@ -40,6 +40,8 @@ export interface Capabilities {
   supportedApps: { name: string; bundleIds: string[] }[];
   outputDevices: { uid: string; name: string; isVirtual: boolean }[];
   blackHoleInstalled: boolean;
+  copilot: boolean;                  // copilot engine linked (built with `make core`)
+  inputDevices: { uid: string; name: string }[];
 }
 
 export interface AudioApp {
@@ -119,7 +121,8 @@ export type NativeEvent =
   | { type: 'heartbeat'; ts: string; ok: boolean; at?: string; message?: string;
       leaseExpiresAt?: string; serverTime?: string; leaseRemainingSeconds?: number }  // lease fields from the server (judge the lease with serverTime, not the Mac clock)
   | { type: 'error'; ts: string; code: string; message: string; fatal: boolean } // fatal => capture already stopped, state 'error' or 'idle'
-  | { type: 'auth-required'; ts: string; reason: 'heartbeat' }           // 401: call updateAuth({accessToken})
+  | { type: 'auth-required'; ts: string; reason: 'heartbeat' | 'copilot' }  // 401: call updateAuth({accessToken})
+  | CopilotNativeEvent                                                    // see Copilot sessions
   | { type: 'log'; ts: string; message: string };                        // informational, e.g. fallback to ScreenCaptureKit
 
 window.addEventListener('warptalk-native', (e) => {
@@ -127,24 +130,72 @@ window.addEventListener('warptalk-native', (e) => {
 });
 ```
 
-## Copilot sessions (P1 TODO, ADR 0001)
+## Copilot sessions (P1, ADR 0001)
 
-Product direction: WarpTalk is a meeting assistant copilot. The web app creates a copilot session (`POST /copilot/sessions`, a room of type `COPILOT_SESSION`) and, when the host is the macOS app, asks native to capture audio for it. **Not implemented in Swift yet**; the web app (`apps/web/src/features/Sessions.tsx`, `src/lib/native.ts`) already calls these two OPTIONAL methods when they exist and otherwise behaves like a plain browser ("Audio capture needs the WarpTalk desktop app" notice, the session is still created):
+WarpTalk is a meeting assistant copilot (transparent: the overlay is NOT hidden from screen share by default). The web app creates a session (`POST /copilot/sessions`, room type `COPILOT_SESSION`) and asks native to capture audio for it. Native runs the on-device Rust engine (`crates/pipeline/copilot-core` through UniFFI): microphone = channel `me` ("Tôi"), meeting-app audio (Process Tap, fallback ScreenCaptureKit) = channel `others` ("Người khác"). The engine does VAD/endpointing + streaming STT (token from `POST /copilot/sessions/{id}/stt-token`) and posts text segments to `POST /copilot/sessions/{id}/segments` itself; the web app only has to start/stop, refresh the token, and render the `copilot.*` events + suggestions.
+
+Implementation: `Sources/Features/Copilot/*`. The web UI shows "Start capture" when `typeof native.startCopilotSession === 'function'`; check `capabilities.copilot` (false = app built without `make core`: start rejects `ENGINE_UNAVAILABLE`).
 
 ```ts
-interface WarptalkNative {
-  /** Capture mic ("me" channel) + meeting-app audio via process tap ("others" channel) for an existing session and
-   *  stream transcript segments to the backend (`POST /copilot/sessions/{id}/segments`). Resolves with the capture status. */
-  startCopilotSession?(o: { sessionId: string; accessToken: string; apiBaseUrl: string }): Promise<CaptureStatus>;
-  /** Stops capture and flushes pending segments; the backend finalizes the transcript (`__MEETING_END__`). */
-  stopCopilotSession?(): Promise<CaptureStatus>;
+export type CopilotChannel = 'me' | 'others';
+export type CopilotStatusKind = 'started' | 'stopped' | 'speechStart' | 'speechEnd' | 'sttConnected' | 'sttUnavailable'
+  | 'sinkOnline' | 'sinkOffline' | 'audioDropped';
+
+export interface StartCopilotSessionOptions {
+  sessionId: string;                 // id from POST /copilot/sessions
+  accessToken: string;               // web JWT; refresh with updateAuth() (also forwarded to the engine)
+  apiBaseUrl: string;                // backend origin WITHOUT /api/v1. A non-http(s) value (bundled "warptalk://app") falls back to the native Settings backend URL
+  appBundleId?: string;              // meeting app for the `others` channel; default = native Settings (Chrome). '' / omitted => Settings value
+  micDeviceUid?: string;             // input device uid (capabilities.inputDevices); default = Settings, '' = system default
+  languages?: string[];              // STT language hint (first entry is used), e.g. ['vi','en']
+  speakerNames?: { me?: string; others?: string }; // overlay labels, default "Tôi" / "Người khác"
 }
+
+/** CaptureStatus (above) plus copilot fields. mode/dubTrack/lastHeartbeatAt/leaseExpiresAt are always null. */
+export interface CopilotStatus extends Omit<CaptureStatus, 'mode'> {
+  mode: null;
+  sessionId: string | null;          // == roomId
+  channels: { me: 'running' | 'off'; others: 'running' | 'waiting' | 'off' };
+  // others 'waiting': meeting app not running / not playing audio yet; native retries every 5 s and emits copilot.error once.
+}
+
+export interface OverlaySuggestionInput {
+  id: string;                        // same id updates in place
+  category: string;                  // free text, shown as a chip ("question", "risk", ...)
+  content: string;
+  followUp?: string | boolean;       // string: follow-up question text under the content; true: this item IS a follow-up
+}
+
+interface WarptalkNative {
+  capabilities: ...                  // getCapabilities() additionally returns { copilot: boolean; inputDevices: {uid:string;name:string}[] }
+  /** Starts mic + meeting-app capture and the engine. Resolves with CopilotStatus (state 'running') once the engine started and the
+   *  mic runs; the `others` channel may still be 'waiting'. Shows the overlay in copilot mode (unless Settings disable auto-show). */
+  startCopilotSession?(o: StartCopilotSessionOptions): Promise<CopilotStatus>;
+  /** Stops capture, flushes pending segments to the backend (can take seconds), resolves with state 'idle'. The backend finalizes the
+   *  transcript (`__MEETING_END__`) on its own side. Safe to call when idle. */
+  stopCopilotSession?(): Promise<CopilotStatus>;
+  copilotStatus?(): Promise<CopilotStatus>;
+  /** Suggestions / follow-ups (e.g. from GET /meetings/{id}/suggestions/stream; use the direct backend URL, SSE is not proxied). */
+  pushOverlaySuggestion?(s: OverlaySuggestionInput): Promise<null>;
+  clearOverlaySuggestion?(id: string): Promise<null>;
+}
+
+export type CopilotNativeEvent =
+  | { type: 'copilot.partial'; ts: string; channel: CopilotChannel; text: string }                 // live text of the current utterance
+  | { type: 'copilot.segment'; ts: string; clientSegmentId: string; channel: CopilotChannel; text: string; language: string;
+      startMs: number; endMs: number; confidence: number | null; isFinal: boolean; likelyEcho: boolean; utteranceSeq: number }
+  | { type: 'copilot.status'; ts: string; channel: CopilotChannel | null; kind: CopilotStatusKind; detail: string | null }
+  | { type: 'copilot.error'; ts: string; channel: CopilotChannel | null; code: string; message: string; fatal?: boolean }
+  | { type: 'copilot.levels'; ts: string; channel: CopilotChannel; rms: number };                  // throttled by the core, linear RMS 0..1
 ```
 
-- `sessionId`: id returned by `POST /copilot/sessions`; `accessToken`: the web app's JWT (refresh through `updateAuth`, `auth-required` event as for external capture); `apiBaseUrl`: backend origin WITHOUT `/api/v1` (the web app passes its own origin when it has none configured).
-- Status and errors reuse `CaptureStatus` and the `warptalk-native` events (`status`, `level`, `audioFlowing`, `error`, `auth-required`). Suggested error codes: `ALREADY_RUNNING`, `PERMISSION_DENIED`, `NO_AUDIO_PROCESS`, `AUTH_EXPIRED`.
-- Overlay (transcript + suggestions + follow-ups from `GET /meetings/{id}/suggestions/stream`) stays P1 and is not part of these methods.
-- The web UI only shows "Start capture"/"Stop capture" when `typeof native.startCopilotSession === 'function'`, so shipping the methods turns the buttons on without a web change.
+- Events arrive on `window` `warptalk-native` like the others; `status` events (state changes, `CopilotStatus` shape) and `auth-required` (now `reason: 'heartbeat' | 'copilot'`: the engine got a 401, call `updateAuth({accessToken})`) are shared with external capture.
+- `copilot.segment` is a transcript line; the same `clientSegmentId` can arrive again (early sentence -> final): upsert by it. `likelyEcho: true` = a `me` utterance dominated by `others` (speaker bleed): the overlay hides it, the web UI should de-emphasise or hide it. Times are ms offsets from session start. The backend already receives every segment from the engine: the web app must NOT post them again.
+- `copilot.error` with `fatal: true` means start failed (`state: 'error'`, capture already torn down); other errors are non-fatal (engine STT hiccup, `others` capture waiting: `APP_NOT_RUNNING` / `NO_AUDIO_PROCESS`).
+- `updateAuth` refreshes the bearer for both external capture and the copilot engine. `clearOverlay()` also clears copilot lines and suggestions.
+- One capture at a time per feature: `startCopilotSession` while a copilot session runs rejects `ALREADY_RUNNING`. External capture and copilot are independent controllers (do not run both on the same app).
+- Error codes (rejections of start): `ALREADY_RUNNING`, `INVALID_ARGUMENT`, `PERMISSION_DENIED` (microphone), `ENGINE_UNAVAILABLE`, `CAPTURE_FAILED`, `AUTH_EXPIRED`.
+- Native Settings (not part of the bridge): default meeting app (Chrome/Zoom/Teams/Safari), microphone, overlay position, auto-show overlay. Hidden `copilotFakeStt` default (`defaults write <bundle id> copilotFakeStt -bool YES`) uses the core's fake STT for demos.
 
 ## Error codes
 `FORBIDDEN_ORIGIN`, `INVALID_ARGUMENT`, `UNKNOWN_METHOD`, `ALREADY_RUNNING`, `APP_NOT_RUNNING`, `NO_AUDIO_PROCESS` (app not playing sound yet), `PERMISSION_DENIED`, `CAPTURE_FAILED`, `AUTH_EXPIRED` (401 from backend), `LEASE_LOST` (heartbeat 409 with backend code `CAPTURER_LEASE_LOST`: another machine took over the capturer role), `NOT_REQUESTABLE`, `DUB_LISTENER_DISCONNECTED` (non-fatal event: the voice listener connection dropped), `INTERNAL`, plus backend error codes passed through unchanged (e.g. `INVALID_STATE`, `NOT_BRIDGE_ROOM` on a heartbeat 409 that is NOT a lost lease, `INVALID_CLIENT_TAG`, `FORBIDDEN`).
@@ -180,6 +231,11 @@ await page.addInitScript(() => {
     startExternalCapture: async (o: any) => ({ state: 'running', roomId: o.roomId, appBundleId: o.appBundleId, mode: o.mode, backend: 'processTap', rmsDbfs: -30, audioFlowing: true, lastAudioAt: null, lastHeartbeatAt: null, leaseExpiresAt: null, dubTrack: null }),
     stopExternalCapture: async () => ({ state: 'idle' }),
     captureStatus: async () => ({ state: 'idle' }),
+    // optional copilot methods (omit to test the browser-only path)
+    startCopilotSession: async (o: any) => ({ state: 'running', roomId: o.sessionId, sessionId: o.sessionId, channels: { me: 'running', others: 'running' }, mode: null, rmsDbfs: -30, audioFlowing: true }),
+    stopCopilotSession: async () => ({ state: 'idle' }),
+    copilotStatus: async () => ({ state: 'idle' }),
+    pushOverlaySuggestion: async () => null, clearOverlaySuggestion: async () => null,
     updateAuth: async () => ({ updated: true }),
     showOverlay: async (v: boolean) => ({ visible: v }),
     pushOverlayCaption: async () => null, clearOverlay: async () => null,

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var web: WebViewModel
     @State private var outputs: [AudioDeviceInfo] = []
+    @State private var inputs: [AudioDeviceInfo] = []
 
     var body: some View {
         Form {
@@ -33,7 +34,21 @@ struct SettingsView: View {
                     Text("Mặc định hệ thống").tag("")
                     ForEach(outputs) { d in Text(DeviceManager.isVirtual(d) ? "\(d.name) (ảo)" : d.name).tag(d.uid) }
                 }
-                Button("Quét lại thiết bị") { outputs = DeviceManager.outputDevices() }
+                Button("Quét lại thiết bị") { outputs = DeviceManager.outputDevices(); inputs = DeviceManager.inputDevices() }
+            }
+            Section("Copilot (phiên họp)") {
+                Picker("Ứng dụng họp mặc định (kênh \"Người khác\")", selection: $settings.meetingAppBundleId) {
+                    ForEach(MeetingAppSpec.all, id: \.bundleIDs[0]) { spec in Text(spec.name).tag(spec.bundleIDs[0]) }
+                }
+                Picker("Micro (kênh \"Tôi\")", selection: $settings.micDeviceUID) {
+                    Text("Mặc định hệ thống").tag("")
+                    ForEach(inputs) { d in Text(d.name).tag(d.uid) }
+                }
+                Picker("Vị trí overlay", selection: $settings.overlayPosition) {
+                    ForEach(OverlayPosition.allCases) { p in Text(p.label).tag(p) }
+                }
+                Toggle("Tự hiện overlay khi bắt đầu phiên", isOn: $settings.copilotAutoShowOverlay)
+                Text("Web app có thể ghi đè ứng dụng họp và micro khi gọi startCopilotSession.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Overlay phụ đề") {
                 Toggle("Click xuyên qua", isOn: $settings.overlayClickThrough)
@@ -41,7 +56,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 560)
-        .onAppear { outputs = DeviceManager.outputDevices() }
+        .frame(width: 560, height: 720)
+        .onAppear { outputs = DeviceManager.outputDevices(); inputs = DeviceManager.inputDevices() }
     }
 }
