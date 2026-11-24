@@ -27,7 +27,8 @@ use crate::adapters::{
 use redis::aio::ConnectionManager;
 use warptalk_ai_plane::ai::AiProviders;
 use warptalk_ai_plane::knowledge::{
-    DenyDocumentAccess, KnowledgeParts, document_source_from_env, ServiceRetriever, build_knowledge_module,
+    DenyDocumentAccess, KnowledgeParts, ServiceRetriever, build_knowledge_module,
+    document_source_from_env,
 };
 use warptalk_assistant::suggestion::LlmResolver;
 use warptalk_assistant::suggestion::{

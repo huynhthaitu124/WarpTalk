@@ -65,4 +65,4 @@ cargo run -q -p warptalk-pipeline --bin pipeline-bench --release -- --rooms 4 --
 
 - Adapter LiveKit của pipeline và app macOS **chưa từng được compile** (môi trường phát triển không có clang 21 / Xcode). Lần build đầu trên Mac có thể cần sửa vài chỗ đánh dấu `UNVERIFIED` / `VERIFY`.
 - Một số giao thức provider (OpenAI Realtime, Cartesia, Gemini) chưa đối chiếu được với tài liệu chính thức (bị chặn mạng) → đánh dấu `UNVERIFIED` trong code.
-- PDF/DOCX chưa trích text (document vào trạng thái skipped). Chưa có notification, lịch. Billing/email/Google cần key thật: xem `docs/DEPLOY.md`.
+- PDF/DOCX được trích text ở worker (pdf-extract, zip+quick-xml; PDF scan cần OCR engine, chưa có: document vẫn `skipped`; document cũ đã skipped cần index lại: PATCH đổi title hoặc cờ AI để kích hoạt reindex, chưa có endpoint reindex-all). Chưa có notification, lịch. Billing/email/Google cần key thật: xem `docs/DEPLOY.md`.
