@@ -5,6 +5,7 @@ Run: `cd apps/web && npx playwright test` (starts `scripts/e2e-backend.sh`, `nex
 Update screenshots: `npx playwright test --update-snapshots`.
 
 Conventions
+- Feature flags (ADR 0001): the fixtures mock `GET /api/v1/features` with **everything on** by default (`flags` option, `fixtures/features.ts`), so the translation / dubbing / voice / bridge specs below keep testing that UI; `test.use({ flags: FLAGS_DEFAULT })` gives the platform defaults (translation hidden), `flags: 'real'` hits the backend. Copilot endpoints are mocked with `mockCopilot` (`fixtures/copilot.ts`) except in the "real backend" SESS specs.
 - Every test creates fresh random users/workspaces (`e2e-<label>-<hex>@example.com`), so the suite is re-runnable against a dirty DB.
 - Email verification and invitations: the test backend runs with `DEV_MAIL_CAPTURE=1`, which stores the raw token in Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`). Fixtures read it with `redis-cli GET` and call `POST /auth/verify-email` / `POST /invitations/accept` (`fixtures/api.ts`: `verifyEmail`, `inviteAndAccept`). No psql for verification or membership (`addWorkspaceMember` is deleted). psql remains only for state with no public API: `expireBridgeLease`, `seedMeetingRow` (the meeting row a LiveKit join creates), `seedChatTranslation` (what the AI translation worker stores) and `makeSystemAdmin`.
 - Signed-in state is arranged by seeding the refresh token into localStorage; the app boots through its real silent-refresh path. Auth specs use the real login form.
@@ -382,3 +383,28 @@ All P0 and P1 cases are automated; the nine `todo` cases are P2. Spec files: `e2
 6. A bridge-room viewer is not a room participant, so `POST /meetings/{id}/join` (captions) is refused for them (`not a participant of this meeting`); a viewer cannot read captions until the join gate admits workspace members of a bridge room.
 7. Bridge claim/takeover/heartbeat responses omit the lease expiry; the UI derives staleness from `capturerLeaseAt + leaseSeconds` and the server clock may differ from the browser's.
 8. No endpoint to end/release a bridge room's capturer lease on stop (`stopExternalCapture` only stops native; the lease ages out after 45 s).
+
+## 13. Feature flags (FEAT) and copilot sessions (SESS)
+
+Defaults for FEAT/SESS: platform flags `translationMeetings,dubbing,voiceClone,externalBridge = false`, `copilot = true`.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| FEAT-01 | P0 | Flags off: Home | Sidebar has Home + Copilot, no Meetings / External meeting; quick actions are copilot ones only; Home copy mentions transcripts, suggestions, follow-ups, minutes; page title "Home · WarpTalk" | auto |
+| FEAT-02 | P1 | Flags off: command menu, key `C` | "Start copilot session" and "Go to Copilot sessions" present, no meeting/external entries; `C` opens the start dialog | auto |
+| FEAT-03 | P0 | Flags off: open `/rooms`, `/meetings`, `/join`, `/external`, `/:ws/meetings`, `/rooms/:id`, `/meetings/:id` | Each lands on `/:ws/home`, no alert | auto |
+| FEAT-04 | P1 | Flags off: Settings -> Account | No voice cloning section | auto |
+| FEAT-05 | P0 | `GET /features` answers 404 | Behaves as the defaults; `/external` redirects | auto |
+| FEAT-06 | P1 | Request carries `workspaceId`; navigating does not refetch | Cached per workspace | auto |
+| FEAT-07 | P1 | `copilot=false` | Copilot nav/quick action hidden, `/:ws/sessions` redirects Home | auto |
+| FEAT-10 | P0 | Flags on | Meetings + External meeting nav, New meeting / Join by code quick actions, create dialog, `/rooms` forwards to Meetings | auto |
+| FEAT-11 | P1 | `voiceClone` on | Voice cloning section in Settings -> Account | auto |
+| FEAT-12 | P1 | `externalBridge` on | `/external` opens from the nav | auto |
+| FEAT-13 | P1 | Only `externalBridge` on | Only that entry; `/meetings` redirects | auto |
+| FEAT-14 | P1 | `translationMeetings` on, `dubbing` off, then on | Audio routes card and "I listen in" only with dubbing | auto |
+| SESS-01..06 | P0 | Sessions list (mocked): rows, count, `GET /copilot/sessions?workspaceId=`, open detail; empty state + dialog deep link; browser start dialog explains the desktop app, validates, POSTs `{workspaceId,title,platform,meetingUrl,languages{me,others}}`; native host calls `startCopilotSession({sessionId,accessToken,apiBaseUrl})` and Stop capture calls `stopCopilotSession`; 404 = empty, 500 = API message | | auto |
+| SESS-10..15 | P0 | Detail: live transcript polls while IN_PROGRESS (new segment appears), follow-ups; ended: summary + decisions + action items, no polling; mark done / reopen (PATCH); regenerate summary; unknown session; fallback to the room | | auto |
+| SESS-20..22 | P1 | Home quick actions + recent sessions, empty state copy, "Open action items" tab (mine) | | auto |
+| SESS-30..32 | P0 | Real backend: platform features, create in the dialog -> list -> detail -> End session, session created by API shows on Home/list | | auto |
+| A11Y-12 | P0 | axe: sessions list, action items tab, start dialog, detail live and ended, dark + light | | auto |
+| VR-20/21 | P1 | Screenshots: list, detail ended, detail live at 1280 and 390, dark + light; start dialog 1280/390 | | auto |

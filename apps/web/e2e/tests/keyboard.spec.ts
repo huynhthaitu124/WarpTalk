@@ -93,6 +93,8 @@ test.describe('Keyboard (signed in)', () => {
   test('KBD-06 command menu opens the create-meeting dialog', async ({ app }) => {
     await app.goto('/');
     await expect(app.getByTestId('current-workspace')).not.toHaveText('No workspace');
+    // the entry exists once the feature flags have loaded
+    await expect(app.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Meetings', exact: true })).toBeVisible();
     await app.keyboard.press('ControlOrMeta+k');
     await app.keyboard.type('create meeting');
     await app.keyboard.press('Enter');

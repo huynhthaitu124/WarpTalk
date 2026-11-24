@@ -17,7 +17,7 @@ test.describe('Flags off (platform defaults)', () => {
   test('FEAT-01 navigation: Copilot replaces Meetings and External meeting; Home says "copilot", not "translate"', async ({ app, workspace }) => {
     await app.goto(`/${workspace.slug}/home`);
     await expect(nav(app).getByRole('link', { name: 'Home' })).toBeVisible();
-    await expect(nav(app).getByRole('link', { name: 'Copilot' })).toHaveAttribute('href', `/${workspace.slug}/sessions`);
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toHaveAttribute('href', `/${workspace.slug}/sessions`);
     await expect(nav(app).getByRole('link', { name: 'Meetings' })).toHaveCount(0);
     await expect(nav(app).getByRole('link', { name: 'External meeting' })).toHaveCount(0);
     const quick = app.getByRole('region', { name: 'Quick actions' });
@@ -30,6 +30,7 @@ test.describe('Flags off (platform defaults)', () => {
 
   test('FEAT-02 command menu and shortcuts: no meeting/external entries; C starts a copilot session', async ({ app, workspace }) => {
     await app.goto(`/${workspace.slug}/home`);
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toBeVisible();
     await app.keyboard.press('ControlOrMeta+k');
     const menu = app.getByRole('dialog', { name: 'Command menu' });
     await expect(menu.getByRole('option', { name: /Start copilot session/ })).toBeVisible();
@@ -59,7 +60,7 @@ test.describe('Flags off (platform defaults)', () => {
   test('FEAT-05 a missing endpoint (404) behaves like the defaults', async ({ app, workspace }) => {
     await mockFeatures(app, 'missing');
     await app.goto(`/${workspace.slug}/home`);
-    await expect(nav(app).getByRole('link', { name: 'Copilot' })).toBeVisible();
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toBeVisible();
     await expect(nav(app).getByRole('link', { name: 'Meetings' })).toHaveCount(0);
     await app.goto('/external');
     await expectHome(app, workspace.slug);
@@ -68,10 +69,10 @@ test.describe('Flags off (platform defaults)', () => {
   test('FEAT-06 flags are asked per workspace and cached', async ({ app, workspace }) => {
     const f = await mockFeatures(app, FLAGS_DEFAULT);
     await app.goto(`/${workspace.slug}/home`);
-    await expect(nav(app).getByRole('link', { name: 'Copilot' })).toBeVisible();
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toBeVisible();
     await expect.poll(() => f.calls().some((u) => new URL(u).searchParams.get('workspaceId') === workspace.id)).toBe(true);
     const n = f.calls().filter((u) => u.includes(workspace.id)).length;
-    await nav(app).getByRole('link', { name: 'Copilot' }).click();
+    await nav(app).getByRole('link', { name: 'Copilot', exact: true }).click();
     await nav(app).getByRole('link', { name: 'Home' }).click();
     await expect(app.getByRole('heading', { name: /Welcome back/ })).toBeVisible();
     expect(f.calls().filter((u) => u.includes(workspace.id)).length).toBe(n);
@@ -80,7 +81,7 @@ test.describe('Flags off (platform defaults)', () => {
   test('FEAT-07 copilot flag off hides the Copilot entry and redirects /sessions', async ({ app, workspace }) => {
     await mockFeatures(app, { copilot: false });
     await app.goto(`/${workspace.slug}/home`);
-    await expect(nav(app).getByRole('link', { name: 'Copilot' })).toHaveCount(0);
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toHaveCount(0);
     await expect(app.getByRole('link', { name: 'Start copilot session' })).toHaveCount(0);
     await app.goto(`/${workspace.slug}/sessions`);
     await expectHome(app, workspace.slug);
@@ -94,7 +95,7 @@ test.describe('Flags on (mocked endpoint)', () => {
     await app.goto(`/${workspace.slug}/home`);
     await expect(nav(app).getByRole('link', { name: 'Meetings' })).toBeVisible();
     await expect(nav(app).getByRole('link', { name: 'External meeting' })).toBeVisible();
-    await expect(nav(app).getByRole('link', { name: 'Copilot' })).toBeVisible();
+    await expect(nav(app).getByRole('link', { name: 'Copilot', exact: true })).toBeVisible();
     const quick = app.getByRole('region', { name: 'Quick actions' });
     await expect(quick.getByRole('link', { name: 'New meeting' })).toBeVisible();
     await expect(quick.getByRole('link', { name: 'Join by code' })).toBeVisible();
