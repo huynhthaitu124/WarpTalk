@@ -1006,7 +1006,15 @@ async fn apply_effect(
         } => {
             let (sub, _) = ensure_sub(c, ws, None, now).await?;
             let payment = upsert_payment(
-                c, &sub, amount_cents, &currency, "card", "paid", &session_id, None, now,
+                c,
+                &sub,
+                amount_cents,
+                &currency,
+                "card",
+                "paid",
+                &session_id,
+                None,
+                now,
             )
             .await?;
             post_tx(
@@ -1064,7 +1072,15 @@ async fn apply_effect(
             .await
             .map_err(db)?;
             let payment = upsert_payment(
-                c, &sub, amount_cents, &currency, "card", "paid", &invoice_id, None, now,
+                c,
+                &sub,
+                amount_cents,
+                &currency,
+                "card",
+                "paid",
+                &invoice_id,
+                None,
+                now,
             )
             .await?;
             let number = format!(

@@ -63,7 +63,8 @@ pub struct BillingModule {
 impl BillingModule {
     pub fn new(deps: BillingDeps) -> Self {
         let store: Arc<dyn BillingStore> = Arc::new(PgBillingStore::new(deps.pool));
-        let sink: Arc<dyn ServiceStateSink> = deps.state_sink.unwrap_or_else(|| Arc::new(NoStateSink));
+        let sink: Arc<dyn ServiceStateSink> =
+            deps.state_sink.unwrap_or_else(|| Arc::new(NoStateSink));
         Self {
             service: Arc::new(BillingService::new(
                 store.clone(),

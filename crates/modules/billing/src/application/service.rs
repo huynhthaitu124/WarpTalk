@@ -13,8 +13,8 @@ use warptalk_kernel::{
 use warptalk_stripe::{CheckoutLine, CheckoutMode, CheckoutRequest, StripeError};
 
 use super::ports::{
-    AdjustOutcome, BillingStore, GroupBy, PaymentGateway, PlanRow, RateCardInput,
-    ServiceStateSink, SubscriptionRow, WebhookEffect, WorkspaceAccess,
+    AdjustOutcome, BillingStore, GroupBy, PaymentGateway, PlanRow, RateCardInput, ServiceStateSink,
+    SubscriptionRow, WebhookEffect, WorkspaceAccess,
 };
 use super::views::{
     AdjustResult, BillingOverview, CheckoutUrl, PlanView, SubscriptionView, TransactionView,
@@ -102,7 +102,9 @@ fn not_configured() -> AppError {
 }
 
 fn str_at<'a>(v: &'a Value, ptr: &str) -> Option<&'a str> {
-    v.pointer(ptr).and_then(Value::as_str).filter(|s| !s.is_empty())
+    v.pointer(ptr)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
 }
 
 fn ts(secs: i64) -> Option<DateTime<Utc>> {
@@ -210,7 +212,11 @@ impl BillingService {
             credits_used_this_cycle: sub.credits_used_this_cycle,
             service_state: state.as_str().to_owned(),
             suspended_reason: state.suspended_reason().map(str::to_owned),
-            usage: UsagePeriodView::new(sub.current_period_start, now + Duration::seconds(1), totals),
+            usage: UsagePeriodView::new(
+                sub.current_period_start,
+                now + Duration::seconds(1),
+                totals,
+            ),
             entitlements,
             subscription: SubscriptionView {
                 id: sub.id,
@@ -267,7 +273,10 @@ impl BillingService {
         let to = to.unwrap_or(now + Duration::seconds(1));
         let from = from.unwrap_or(to - Duration::days(30));
         if from >= to {
-            return Err(AppError::validation("INVALID_RANGE", "from must be before to"));
+            return Err(AppError::validation(
+                "INVALID_RANGE",
+                "from must be before to",
+            ));
         }
         let groups = self.store.usage_grouped(ws, from, to, by).await?;
         Ok(UsageReport {
@@ -303,7 +312,11 @@ impl BillingService {
 
     // ---------------------------------------------------------------- checkout / portal
 
-    async fn customer_for(&self, gw: &Arc<dyn PaymentGateway>, ws: WorkspaceId) -> AppResult<String> {
+    async fn customer_for(
+        &self,
+        gw: &Arc<dyn PaymentGateway>,
+        ws: WorkspaceId,
+    ) -> AppResult<String> {
         if let Some(c) = self.store.customer_id(ws).await? {
             return Ok(c);
         }
@@ -388,12 +401,11 @@ impl BillingService {
                     .and_then(Value::as_bool)
                     == Some(false)
                 {
-                    return Err(AppError::forbidden(
-                        "Credit top-ups need a paid plan",
-                    ));
+                    return Err(AppError::forbidden("Credit top-ups need a paid plan"));
                 }
                 // Stripe's minimum charge is 0.50 in most currencies.
-                let cents = ((credits as f64 * self.cfg.topup_price_per_credit * 100.0).ceil() as i64)
+                let cents = ((credits as f64 * self.cfg.topup_price_per_credit * 100.0).ceil()
+                    as i64)
                     .max(50);
                 metadata.push(("kind".into(), "top_up".into()));
                 metadata.push(("top_up_credits".into(), credits.to_string()));
@@ -497,10 +509,7 @@ impl BillingService {
         customer: Option<&str>,
         stripe_sub: Option<&str>,
     ) -> AppResult<Option<WorkspaceId>> {
-        let meta = |p: &str| {
-            str_at(obj, p)
-                .and_then(|s| s.parse::<WorkspaceId>().ok())
-        };
+        let meta = |p: &str| str_at(obj, p).and_then(|s| s.parse::<WorkspaceId>().ok());
         if let Some(w) = meta("/metadata/workspace_id").or_else(|| meta("/client_reference_id")) {
             return Ok(Some(w));
         }
@@ -594,7 +603,10 @@ impl BillingService {
                             ws,
                             credits: credits as i32,
                             session_id,
-                            amount_cents: o.pointer("/amount_total").and_then(Value::as_i64).unwrap_or(0),
+                            amount_cents: o
+                                .pointer("/amount_total")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0),
                             currency: str_at(o, "/currency").unwrap_or("usd").to_owned(),
                         })
                     }
@@ -628,10 +640,15 @@ impl BillingService {
                     grant_credits: matches!(reason, "subscription_create" | "subscription_cycle"),
                     apply_rollover: reason == "subscription_cycle",
                     period: period_of(
-                        o.pointer("/lines/data/0/period/start").and_then(Value::as_i64),
-                        o.pointer("/lines/data/0/period/end").and_then(Value::as_i64),
+                        o.pointer("/lines/data/0/period/start")
+                            .and_then(Value::as_i64),
+                        o.pointer("/lines/data/0/period/end")
+                            .and_then(Value::as_i64),
                     ),
-                    amount_cents: o.pointer("/amount_paid").and_then(Value::as_i64).unwrap_or(0),
+                    amount_cents: o
+                        .pointer("/amount_paid")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
                     currency: str_at(o, "/currency").unwrap_or("usd").to_owned(),
                     hosted_invoice_url: str_at(o, "/hosted_invoice_url").map(str::to_owned),
                     invoice_pdf_url: str_at(o, "/invoice_pdf").map(str::to_owned),
@@ -646,7 +663,10 @@ impl BillingService {
                 Ok(WebhookEffect::InvoiceFailed {
                     ws,
                     invoice_id: str_at(o, "/id").unwrap_or_default().to_owned(),
-                    amount_cents: o.pointer("/amount_due").and_then(Value::as_i64).unwrap_or(0),
+                    amount_cents: o
+                        .pointer("/amount_due")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
                     currency: str_at(o, "/currency").unwrap_or("usd").to_owned(),
                     reason: Some("payment failed".to_owned()),
                 })
@@ -656,7 +676,9 @@ impl BillingService {
                 else {
                     return ignore("unreadable subscription");
                 };
-                let Some(ws) = self.workspace_from(o, Some(&sub.customer), Some(&sub.id)).await?
+                let Some(ws) = self
+                    .workspace_from(o, Some(&sub.customer), Some(&sub.id))
+                    .await?
                 else {
                     return ignore("workspace unknown");
                 };
@@ -698,9 +720,8 @@ impl BillingService {
         }
         let mut inputs = Vec::with_capacity(edits.len());
         for e in edits {
-            let feature = Feature::parse(&e.charge_type).ok_or_else(|| {
-                AppError::validation("INVALID_RATE_CARD", "unknown chargeType")
-            })?;
+            let feature = Feature::parse(&e.charge_type)
+                .ok_or_else(|| AppError::validation("INVALID_RATE_CARD", "unknown chargeType"))?;
             let unit_ok = match feature {
                 Feature::Stt => e.unit == UNIT_AUDIO_SECOND,
                 _ => e.unit == UNIT_TOKENS_IN || e.unit == UNIT_TOKENS_OUT,

@@ -12,6 +12,7 @@ pub mod http;
 pub mod infrastructure;
 pub mod suggestion;
 pub mod summary;
+pub mod usage;
 
 use std::sync::Arc;
 

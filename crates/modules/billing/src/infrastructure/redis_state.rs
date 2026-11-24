@@ -24,7 +24,9 @@ impl ServiceStateSink for RedisStateSink {
     async fn publish(&self, ws: WorkspaceId, state: &ServiceState) {
         let mut c = self.conn.clone();
         let r: redis::RedisResult<()> = async {
-            let _: () = c.set(workspace_ai_service_state(ws), state.as_str()).await?;
+            let _: () = c
+                .set(workspace_ai_service_state(ws), state.as_str())
+                .await?;
             match state.suspended_reason() {
                 Some(reason) => {
                     let _: () = c.set(workspace_ai_service_suspended(ws), reason).await?;

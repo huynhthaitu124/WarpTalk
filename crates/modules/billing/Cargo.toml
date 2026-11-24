@@ -24,8 +24,7 @@ warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-bus = { workspace = true }
 warptalk-contracts = { workspace = true }
-# Not in [workspace.dependencies] (root Cargo.toml is off-limits): needs `warptalk-stripe = { path = "crates/providers/stripe" }` there, then switch to `{ workspace = true }`.
-warptalk-stripe = { path = "../../providers/stripe" }
+warptalk-stripe = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

@@ -27,7 +27,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/billing/plans", get(handlers::plans))
         .route("/workspaces/{id}/billing", get(handlers::overview))
-        .route("/workspaces/{id}/billing/checkout", post(handlers::checkout))
+        .route(
+            "/workspaces/{id}/billing/checkout",
+            post(handlers::checkout),
+        )
         .route("/workspaces/{id}/billing/portal", post(handlers::portal))
         .route("/workspaces/{id}/billing/usage", get(handlers::usage))
         .route(

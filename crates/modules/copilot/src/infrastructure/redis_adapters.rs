@@ -6,7 +6,9 @@ use warptalk_contracts::events::SttResult;
 use warptalk_contracts::streams::{self, STT_RESULTS};
 use warptalk_kernel::{AppError, AppResult};
 
-use crate::application::ports::{Published, RateLimiter, SegmentSink};
+use crate::application::ports::{
+    Published, RateLimiter, SegmentSink, USAGE_STREAM, UsageEvent, UsageSink,
+};
 
 /// Approximate bound of the `stt:results` streams (same as the pipeline).
 const STT_STREAM_MAXLEN: usize = 100_000;
@@ -94,5 +96,30 @@ impl RateLimiter for RedisRateLimiter {
             .await
             .map_err(bus_err)?;
         Ok(n <= i64::from(limit))
+    }
+}
+
+/// Approximate bound of `usage:events`.
+const USAGE_STREAM_MAXLEN: usize = 200_000;
+
+/// Publishes usage events to the `usage:events` stream.
+pub struct RedisUsageSink {
+    conn: ConnectionManager,
+}
+
+impl RedisUsageSink {
+    pub fn new(conn: ConnectionManager) -> Self {
+        Self { conn }
+    }
+}
+
+#[async_trait]
+impl UsageSink for RedisUsageSink {
+    async fn emit(&self, event: &UsageEvent) -> AppResult<()> {
+        let mut conn = self.conn.clone();
+        warptalk_bus::xadd_json(&mut conn, USAGE_STREAM, event, USAGE_STREAM_MAXLEN)
+            .await
+            .map(|_| ())
+            .map_err(bus_err)
     }
 }

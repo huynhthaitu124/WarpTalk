@@ -4,7 +4,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::StripeError;
-use crate::model::{BillingPortalSession, CheckoutRequest, CheckoutSession, Customer, Subscription};
+use crate::model::{
+    BillingPortalSession, CheckoutRequest, CheckoutSession, Customer, Subscription,
+};
 
 const DEFAULT_BASE_URL: &str = "https://api.stripe.com";
 
@@ -49,7 +51,9 @@ pub struct StripeClient {
 
 impl std::fmt::Debug for StripeClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StripeClient").field("cfg", &self.cfg).finish()
+        f.debug_struct("StripeClient")
+            .field("cfg", &self.cfg)
+            .finish()
     }
 }
 
@@ -143,8 +147,11 @@ impl StripeClient {
 
     /// `GET /v1/customers/{id}`.
     pub async fn retrieve_customer(&self, id: &str) -> Result<Customer, StripeError> {
-        self.send(self.http.get(self.url(&format!("/v1/customers/{}", enc(id)))))
-            .await
+        self.send(
+            self.http
+                .get(self.url(&format!("/v1/customers/{}", enc(id)))),
+        )
+        .await
     }
 
     /// `POST /v1/billing_portal/sessions`. UNVERIFIED: needs a portal configuration saved in the
@@ -225,7 +232,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(s.id, "cs_1");
-        assert_eq!(s.url.as_deref(), Some("https://checkout.stripe.test/c/cs_1"));
+        assert_eq!(
+            s.url.as_deref(),
+            Some("https://checkout.stripe.test/c/cs_1")
+        );
     }
 
     #[tokio::test]
@@ -238,7 +248,10 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let e = client(&server).retrieve_subscription("sub_x").await.unwrap_err();
+        let e = client(&server)
+            .retrieve_subscription("sub_x")
+            .await
+            .unwrap_err();
         match &e {
             StripeError::Api { status, code, .. } => {
                 assert_eq!(*status, 404);
@@ -293,9 +306,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cus.id, "cus_1");
-        assert_eq!(c.retrieve_customer("cus_1").await.unwrap().email.as_deref(), Some("a@b.c"));
         assert_eq!(
-            c.create_portal_session("cus_1", "https://a/back").await.unwrap().url,
+            c.retrieve_customer("cus_1").await.unwrap().email.as_deref(),
+            Some("a@b.c")
+        );
+        assert_eq!(
+            c.create_portal_session("cus_1", "https://a/back")
+                .await
+                .unwrap()
+                .url,
             "https://portal.stripe.test/p"
         );
         let sub = c.retrieve_subscription("sub_1").await.unwrap();

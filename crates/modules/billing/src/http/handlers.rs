@@ -12,8 +12,7 @@ use warptalk_web::{ApiResult, AuthUser, SystemAdmin};
 use super::AppState;
 use crate::application::service::{CheckoutTarget, RateCardEdit};
 use crate::application::views::{
-    AdjustResult, BillingOverview, CheckoutUrl, PlanView, TransactionView, UsageReport,
-    WebhookAck,
+    AdjustResult, BillingOverview, CheckoutUrl, PlanView, TransactionView, UsageReport, WebhookAck,
 };
 
 pub async fn plans(State(s): State<AppState>, _auth: AuthUser) -> ApiResult<Vec<PlanView>> {
@@ -51,7 +50,9 @@ pub async fn checkout(
             ));
         }
     };
-    Ok(axum::Json(s.service.checkout(ws, auth.user_id(), target).await?))
+    Ok(axum::Json(
+        s.service.checkout(ws, auth.user_id(), target).await?,
+    ))
 }
 
 pub async fn portal(

@@ -27,7 +27,7 @@ bytes = { workspace = true }
 warptalk-bus = { workspace = true }
 warptalk-contracts = { workspace = true }
 warptalk-storage = { workspace = true }
-warptalk-email = { path = "../../providers/email" }
+warptalk-email = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

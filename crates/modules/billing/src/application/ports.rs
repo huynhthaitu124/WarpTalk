@@ -103,14 +103,16 @@ pub struct SubscriptionRow {
 
 impl SubscriptionRow {
     pub fn overage_cap(&self, plan: &PlanRow) -> i32 {
-        self.overage_cap_override.unwrap_or(plan.overage_cap_credits)
+        self.overage_cap_override
+            .unwrap_or(plan.overage_cap_credits)
     }
     pub fn low_threshold(&self, plan: &PlanRow) -> i32 {
         self.low_balance_override
             .unwrap_or(plan.low_balance_threshold_credits)
     }
     pub fn credits_per_cycle(&self, plan: &PlanRow) -> i32 {
-        self.credits_per_cycle_override.unwrap_or(plan.credits_per_cycle)
+        self.credits_per_cycle_override
+            .unwrap_or(plan.credits_per_cycle)
     }
 }
 

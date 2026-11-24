@@ -14,9 +14,9 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use warptalk_config::JwtConfig;
 use warptalk_copilot::application::ports::{
-    CreatedRoom, MemorySegmentSink, NewSessionRoom, NoRateLimit, NoSttTokenIssuer, RateLimiter,
-    RoomState, SessionRooms, SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest,
-    WorkspaceMembers,
+    CreatedRoom, FixedCreditGate, MemorySegmentSink, MemoryUsageSink, Metering, NewSessionRoom,
+    NoRateLimit, NoSttTokenIssuer, RateLimiter, RoomState, SessionRooms, SttIssueError, SttToken,
+    SttTokenIssuer, SttTokenRequest, WorkspaceMembers,
 };
 use warptalk_copilot::{CopilotDeps, CopilotModule, MIGRATIONS};
 use warptalk_kernel::{AppResult, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole};
@@ -107,6 +107,14 @@ struct Ctx {
 }
 
 async fn ctx(issuer: Arc<dyn SttTokenIssuer>, limiter: Arc<dyn RateLimiter>) -> Option<Ctx> {
+    ctx_with(issuer, limiter, None).await
+}
+
+async fn ctx_with(
+    issuer: Arc<dyn SttTokenIssuer>,
+    limiter: Arc<dyn RateLimiter>,
+    metering: Option<Metering>,
+) -> Option<Ctx> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL not set; skipping");
         return None;
@@ -135,6 +143,10 @@ async fn ctx(issuer: Arc<dyn SttTokenIssuer>, limiter: Arc<dyn RateLimiter>) -> 
         stt_tokens: issuer,
         rate_limiter: limiter,
     });
+    let module = match metering {
+        Some(m) => module.with_metering(m),
+        None => module,
+    };
     Some(Ctx {
         app: module.router(),
         keys,
@@ -523,4 +535,101 @@ async fn stt_token_not_configured_and_issued() {
     }
     let (s, b) = c.call("POST", &uri, None, &host).await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{b}");
+}
+
+#[tokio::test]
+async fn metering_emits_usage_per_new_segment_and_gates_on_credits() {
+    let usage = Arc::new(MemoryUsageSink::default());
+    let gate = Arc::new(FixedCreditGate(Mutex::new(None)));
+    let Some(c) = ctx_with(
+        Arc::new(FakeIssuer),
+        Arc::new(NoRateLimit),
+        Some(Metering {
+            usage: usage.clone(),
+            gate: gate.clone(),
+            stt_model: "gpt-4o-transcribe".into(),
+        }),
+    )
+    .await
+    else {
+        return;
+    };
+    let (host_id, host) = c.user(Some(WorkspaceRole::Member));
+    let id = c.new_session(&host).await;
+    let uri = format!("/copilot/sessions/{id}/segments");
+
+    // 800 ms segment; the duplicate resend must not emit a second event
+    let (s, b) = c
+        .call(
+            "POST",
+            &uri,
+            Some(json!({"segments": [seg("a", "me"), seg("a", "me")]})),
+            &host,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(
+        (b["accepted"].as_u64(), b["duplicates"].as_u64()),
+        (Some(1), Some(1))
+    );
+    assert_eq!(b["insufficientCredits"], false);
+    let events = usage.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1, "{events:?}");
+    let e = &events[0];
+    assert_eq!(e["feature"], "stt");
+    assert_eq!(e["boundary"], "platform");
+    assert_eq!(e["audio_ms"], 800);
+    assert_eq!(e["model"], "gpt-4o-transcribe");
+    assert_eq!(e["workspace_id"], c.ws.to_string());
+    assert_eq!(e["room_id"], id);
+    assert_eq!(e["user_id"], host_id.to_string());
+    let seg_id = b["segments"][0]["segmentId"].as_str().unwrap();
+    assert_eq!(e["segment_id"], seg_id);
+    assert_eq!(
+        e["event_id"],
+        format!("stt:{seg_id}"),
+        "stable idempotency key"
+    );
+
+    // credits exhausted: stt-token is refused with 402, ingest still accepts and flags
+    *gate.0.lock().unwrap() = Some("insufficient_credits".into());
+    let (s, b) = c
+        .call(
+            "POST",
+            &format!("/copilot/sessions/{id}/stt-token"),
+            None,
+            &host,
+        )
+        .await;
+    assert_eq!(s, StatusCode::PAYMENT_REQUIRED, "{b}");
+    assert_eq!(b["code"], "INSUFFICIENT_CREDITS");
+    let (s, b) = c
+        .call(
+            "POST",
+            &uri,
+            Some(json!({"segments": [seg("b", "others")]})),
+            &host,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["accepted"], 1, "the transcript is not lost");
+    assert_eq!(b["insufficientCredits"], true);
+    assert_eq!(c.sink.results.lock().unwrap().len(), 2);
+    assert_eq!(
+        usage.events.lock().unwrap().len(),
+        2,
+        "usage is still metered"
+    );
+
+    // restored
+    *gate.0.lock().unwrap() = None;
+    let (s, _) = c
+        .call(
+            "POST",
+            &format!("/copilot/sessions/{id}/stt-token"),
+            None,
+            &host,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
 }

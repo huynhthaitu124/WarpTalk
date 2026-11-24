@@ -167,6 +167,9 @@ pub struct IngestResponse {
     pub accepted: usize,
     pub duplicates: usize,
     pub segments: Vec<IngestedSegment>,
+    /// `true` when the workspace has no AI credits left: the segments were accepted and kept, but
+    /// suggestions and STT tokens are suspended until credits are added.
+    pub insufficient_credits: bool,
 }
 
 impl From<IngestOutcome> for IngestResponse {
@@ -174,6 +177,7 @@ impl From<IngestOutcome> for IngestResponse {
         Self {
             accepted: o.accepted,
             duplicates: o.duplicates,
+            insufficient_credits: o.insufficient_credits,
             segments: o
                 .segments
                 .into_iter()

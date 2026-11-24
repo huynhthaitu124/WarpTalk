@@ -9,8 +9,9 @@ use warptalk_kernel::{
 };
 
 use super::ports::{
-    NewSessionRoom, Published, RateLimiter, RoomState, SegmentSink, SessionRecord, SessionRepo,
-    SessionRooms, SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest, WorkspaceMembers,
+    Metering, NewSessionRoom, Published, RateLimiter, RoomState, SegmentSink, SessionRecord,
+    SessionRepo, SessionRooms, SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest,
+    UsageEvent, WorkspaceMembers,
 };
 use crate::domain::{
     DEFAULT_NAME_ME, DEFAULT_NAME_OTHERS, DEFAULT_TITLE, MAX_SEGMENTS_PER_CALL, Platform, Segment,
@@ -50,6 +51,9 @@ pub struct IngestOutcome {
     pub duplicates: usize,
     /// Per input segment, in order: `(clientSegmentId, segmentId, duplicate)`.
     pub segments: Vec<(String, Uuid, bool)>,
+    /// Billing suspended AI usage for the workspace (no credits left). The segments were still
+    /// accepted (the transcript is never dropped); the app should tell the user.
+    pub insufficient_credits: bool,
 }
 
 pub struct CopilotService {
@@ -60,6 +64,7 @@ pub struct CopilotService {
     issuer: Arc<dyn SttTokenIssuer>,
     limiter: Arc<dyn RateLimiter>,
     clock: Arc<dyn Clock>,
+    metering: Option<Metering>,
 }
 
 fn not_found() -> AppError {
@@ -100,7 +105,13 @@ impl CopilotService {
             issuer,
             limiter,
             clock,
+            metering: None,
         }
+    }
+
+    /// Enable usage events and the credit gate (billing).
+    pub fn set_metering(&mut self, m: Metering) {
+        self.metering = Some(m);
     }
 
     fn view(record: SessionRecord, room: RoomState) -> SessionView {
@@ -309,6 +320,7 @@ impl CopilotService {
             accepted: 0,
             duplicates: 0,
             segments: Vec::with_capacity(segments.len()),
+            insufficient_credits: false,
         };
         for seg in &segments {
             let result = to_stt_result(&facts, seg, now, 0);
@@ -316,6 +328,8 @@ impl CopilotService {
             let duplicate = match self.sink.publish(&result, &dedup).await? {
                 Published::Written => {
                     out.accepted += 1;
+                    self.emit_stt_usage(&record.workspace_id, id, user, seg, now)
+                        .await;
                     false
                 }
                 Published::Duplicate => {
@@ -329,12 +343,58 @@ impl CopilotService {
                 duplicate,
             ));
         }
+        if let Some(m) = &self.metering {
+            out.insufficient_credits = m.gate.suspended(record.workspace_id).await.is_some();
+        }
         Ok(out)
+    }
+
+    /// One `usage:events` entry per newly accepted segment: audio = the segment's duration.
+    /// Never fails the ingest (the transcript matters more than the meter; failures are logged).
+    async fn emit_stt_usage(
+        &self,
+        ws: &WorkspaceId,
+        room: RoomId,
+        user: UserId,
+        seg: &Segment,
+        now: DateTime<Utc>,
+    ) {
+        let Some(m) = &self.metering else { return };
+        let audio_ms = (seg.end_ms - seg.start_ms).max(0);
+        if audio_ms == 0 {
+            return;
+        }
+        let segment_id = segment_uuid(room, &seg.client_segment_id);
+        let event = UsageEvent {
+            event_id: format!("stt:{segment_id}"),
+            workspace_id: ws.as_uuid(),
+            room_id: Some(room.as_uuid()),
+            user_id: Some(user.as_uuid()),
+            feature: "stt",
+            model: m.stt_model.clone(),
+            audio_ms: Some(audio_ms),
+            boundary: "platform",
+            occurred_at: now,
+            segment_id: Some(segment_id),
+        };
+        if let Err(e) = m.usage.emit(&event).await {
+            tracing::warn!(session = %room, error = %e, "could not publish usage event");
+        }
     }
 
     /// Mint a short-lived provider token for the host's app (rate limited per user).
     pub async fn stt_token(&self, id: RoomId, user: UserId) -> AppResult<SttToken> {
         let (record, _) = self.load_host_running(id, user).await?;
+        if let Some(m) = &self.metering
+            && let Some(reason) = m.gate.suspended(record.workspace_id).await
+        {
+            tracing::info!(session = %id, %reason, "stt token refused: AI usage suspended");
+            return Err(AppError::coded(
+                402,
+                "INSUFFICIENT_CREDITS",
+                "The workspace has no AI credits left; add credits or upgrade the plan",
+            ));
+        }
         if !self
             .limiter
             .allow(

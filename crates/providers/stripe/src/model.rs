@@ -214,7 +214,10 @@ mod tests {
         let f = r.form();
         assert!(f.contains(&("mode".into(), "subscription".into())));
         assert!(f.contains(&("line_items[0][price]".into(), "price_1".into())));
-        assert!(f.contains(&("subscription_data[metadata][workspace_id]".into(), "w1".into())));
+        assert!(f.contains(&(
+            "subscription_data[metadata][workspace_id]".into(),
+            "w1".into()
+        )));
         let r = CheckoutRequest {
             mode: CheckoutMode::Payment,
             line: CheckoutLine::Amount {
@@ -228,7 +231,13 @@ mod tests {
         };
         let f = r.form();
         assert!(f.contains(&("line_items[0][price_data][currency]".into(), "usd".into())));
-        assert!(f.contains(&("line_items[0][price_data][unit_amount]".into(), "500".into())));
-        assert!(f.contains(&("payment_intent_data[metadata][workspace_id]".into(), "w1".into())));
+        assert!(f.contains(&(
+            "line_items[0][price_data][unit_amount]".into(),
+            "500".into()
+        )));
+        assert!(f.contains(&(
+            "payment_intent_data[metadata][workspace_id]".into(),
+            "w1".into()
+        )));
     }
 }

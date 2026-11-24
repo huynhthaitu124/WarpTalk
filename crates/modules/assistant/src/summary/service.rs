@@ -22,6 +22,7 @@ use super::ports::{
 use super::prompt;
 use super::repo::{Enqueued, PgSummaryRepository};
 use crate::suggestion::{DataBoundary, LlmResolver, Purpose, ResolveError};
+use crate::usage::{SharedUsageSink, UsageEvent};
 
 const STAGE: &str = "meeting_summary";
 const TOKENS_METRIC: &str = "warptalk_summary_tokens_total";
@@ -91,11 +92,21 @@ struct Tally {
 
 pub struct SummaryService {
     pub(crate) d: SummaryDeps,
+    usage: Option<SharedUsageSink>,
 }
 
 impl SummaryService {
     pub fn new(deps: SummaryDeps) -> Self {
-        Self { d: deps }
+        Self {
+            d: deps,
+            usage: None,
+        }
+    }
+
+    /// Publish a `usage:events` entry per completed summary (billing metering).
+    pub fn with_usage(mut self, sink: SharedUsageSink) -> Self {
+        self.usage = Some(sink);
+        self
     }
 
     pub fn repo(&self) -> &PgSummaryRepository {
@@ -258,6 +269,21 @@ impl SummaryService {
                 record_stage_outcome(STAGE, Outcome::Ok);
                 metrics::counter!(TOKENS_METRIC, "kind" => "input").increment(g.tally.input);
                 metrics::counter!(TOKENS_METRIC, "kind" => "output").increment(g.tally.output);
+                if let (Some(sink), true) = (&self.usage, g.tally.calls > 0) {
+                    // One event per job: re-running a job never charges twice.
+                    sink.emit(UsageEvent::llm(
+                        format!("llm_summary:{}", job.id),
+                        "llm_summary",
+                        job.workspace_id.as_uuid(),
+                        job.room_id.as_uuid(),
+                        g.model.clone(),
+                        g.boundary,
+                        g.tally.input,
+                        g.tally.output,
+                        None,
+                    ))
+                    .await;
+                }
                 let saved = self
                     .d
                     .repo
@@ -452,6 +478,7 @@ impl SummaryService {
         Ok(Generated {
             content,
             model,
+            boundary: resolved.boundary,
             tally,
         })
     }
@@ -511,6 +538,7 @@ impl SummaryService {
 struct Generated {
     content: SummaryContent,
     model: String,
+    boundary: DataBoundary,
     tally: Tally,
 }
 

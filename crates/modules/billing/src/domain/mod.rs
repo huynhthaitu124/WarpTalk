@@ -142,7 +142,12 @@ impl RateCard {
             .iter()
             .filter(matches)
             .find(|e| e.model.as_deref() == Some(model))
-            .or_else(|| self.entries.iter().filter(matches).find(|e| e.model.is_none()))
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .filter(matches)
+                    .find(|e| e.model.is_none())
+            })
     }
 }
 
@@ -180,8 +185,14 @@ pub fn price_event(card: &RateCard, e: &UsageEvent) -> Priced {
     if e.feature == Feature::Stt {
         lines.push((UNIT_AUDIO_SECOND, e.audio_seconds()));
     } else {
-        lines.push((UNIT_TOKENS_IN, e.tokens_in.unwrap_or(0).max(0) as f64 / 1000.0));
-        lines.push((UNIT_TOKENS_OUT, e.tokens_out.unwrap_or(0).max(0) as f64 / 1000.0));
+        lines.push((
+            UNIT_TOKENS_IN,
+            e.tokens_in.unwrap_or(0).max(0) as f64 / 1000.0,
+        ));
+        lines.push((
+            UNIT_TOKENS_OUT,
+            e.tokens_out.unwrap_or(0).max(0) as f64 / 1000.0,
+        ));
     }
     for (unit, qty) in lines {
         if qty <= 0.0 {
@@ -403,9 +414,17 @@ mod tests {
         e.model = "cheap".into();
         assert_eq!(price_event(&card(), &e).credits, 7);
         e.audio_ms = Some(40);
-        assert_eq!(price_event(&card(), &e).credits, 1, "minimum 1 credit per event");
+        assert_eq!(
+            price_event(&card(), &e).credits,
+            1,
+            "minimum 1 credit per event"
+        );
         e.audio_ms = Some(0);
-        assert_eq!(price_event(&card(), &e).credits, 0, "nothing used, nothing charged");
+        assert_eq!(
+            price_event(&card(), &e).credits,
+            0,
+            "nothing used, nothing charged"
+        );
     }
 
     #[test]
@@ -484,7 +503,10 @@ mod tests {
         let mut t = facts(1000, 0);
         t.status = "trialing".into();
         t.trial_ends_at = Some(t.now - chrono::Duration::days(1));
-        assert_eq!(evaluate_state(&t), ServiceState::Suspended(REASON_TRIAL_ENDED));
+        assert_eq!(
+            evaluate_state(&t),
+            ServiceState::Suspended(REASON_TRIAL_ENDED)
+        );
         assert!(ServiceState::InOverage.allows_ai());
     }
 
@@ -500,7 +522,9 @@ mod tests {
         let mut e = ev(Feature::LlmSuggestion, "m");
         e.tokens_in = Some(10);
         let j = serde_json::to_string(&e).unwrap();
-        assert!(j.contains("\"feature\":\"llm_suggestion\"") && j.contains("\"boundary\":\"platform\""));
+        assert!(
+            j.contains("\"feature\":\"llm_suggestion\"") && j.contains("\"boundary\":\"platform\"")
+        );
         assert_eq!(serde_json::from_str::<UsageEvent>(&j).unwrap(), e);
     }
 

@@ -10,10 +10,11 @@ use std::time::Duration;
 
 use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
+use uuid::Uuid;
 use warptalk_bus::xadd;
 use warptalk_contracts::events::{SYSTEM_SPEAKER, SttResult};
 use warptalk_kernel::{Clock, RoomId, WorkspaceId};
-use warptalk_llm::{CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response};
+use warptalk_llm::{CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response, Usage};
 use warptalk_telemetry::{
     Outcome as Metric, STAGE_OUTCOME_METRIC, StageTimer, record_stage_outcome,
 };
@@ -35,6 +36,7 @@ use super::prompt;
 use super::slot::{SlotDenied, SlotParams, SuggestionState};
 use super::stage0::{self, Stage0};
 use super::window::{RollingWindow, estimate_tokens};
+use crate::usage::{SharedUsageSink, UsageEvent};
 
 const STAGE_DECIDE: &str = "suggestion_decide";
 const STAGE_GENERATE: &str = "suggestion_generate";
@@ -85,6 +87,7 @@ pub enum Admission {
 
 pub struct SuggestionEngine {
     deps: EngineDeps,
+    usage: Option<SharedUsageSink>,
     windows: Mutex<HashMap<RoomId, RollingWindow>>,
     inflight: Arc<Mutex<HashSet<RoomId>>>,
 }
@@ -176,9 +179,38 @@ impl SuggestionEngine {
     pub fn new(deps: EngineDeps) -> Self {
         Self {
             deps,
+            usage: None,
             windows: Mutex::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// Publish `usage:events` for every LLM call (billing metering).
+    pub fn with_usage(mut self, sink: SharedUsageSink) -> Self {
+        self.usage = Some(sink);
+        self
+    }
+
+    /// Fire-and-forget: metering must not add latency to the suggestion path or fail it.
+    /// One event per (segment, stage), so reprocessing a segment is never charged twice.
+    fn meter(&self, a: &Admitted, llm: &ResolvedLlm, model: &str, stage: &str, usage: &Usage) {
+        let Some(sink) = self.usage.clone() else {
+            return;
+        };
+        let (tin, tout) = UsageEvent::tokens_of(usage);
+        let segment = a.stt.segment_id.parse::<Uuid>().ok();
+        let event = UsageEvent::llm(
+            format!("llm_suggestion:{}:{}:{stage}", a.room, a.stt.segment_id),
+            "llm_suggestion",
+            a.workspace.as_uuid(),
+            a.room.as_uuid(),
+            model.to_owned(),
+            llm.boundary,
+            tin,
+            tout,
+            segment,
+        );
+        tokio::spawn(async move { sink.emit(event).await });
     }
 
     /// Drop a finished room's window and watchers.
@@ -603,6 +635,7 @@ impl SuggestionEngine {
             .await
             .map_err(|_| ())?;
         let tokens = resp.usage.total();
+        self.meter(a, llm, &req.model, STAGE_DECIDE, &resp.usage);
         let Some(v) = extract_json(&resp.text()) else {
             tracing::debug!(room = %a.room, "decide returned no JSON");
             return Err(());
@@ -854,6 +887,7 @@ impl SuggestionEngine {
             .await
             .map_err(|_| ())?;
         let tokens = resp.usage.total();
+        self.meter(a, llm, &req.model, STAGE_GENERATE, &resp.usage);
         let Some(v) = extract_json(&resp.text()) else {
             return Err(());
         };

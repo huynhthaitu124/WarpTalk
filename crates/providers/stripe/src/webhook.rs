@@ -53,7 +53,10 @@ pub fn verify_signature(
     let mut timestamp: Option<&str> = None;
     let mut sigs: Vec<&str> = Vec::new();
     for part in header.split(',') {
-        let (k, v) = part.trim().split_once('=').ok_or(SignatureError::Malformed)?;
+        let (k, v) = part
+            .trim()
+            .split_once('=')
+            .ok_or(SignatureError::Malformed)?;
         match k {
             "t" => timestamp = Some(v),
             "v1" => sigs.push(v),
@@ -133,7 +136,10 @@ mod tests {
     fn known_vector() {
         assert_eq!(sign(PAYLOAD.as_bytes(), T, SECRET), VECTOR);
         let h = format!("t={T},v1={VECTOR}");
-        assert_eq!(verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T + 10, 300), Ok(()));
+        assert_eq!(
+            verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T + 10, 300),
+            Ok(())
+        );
     }
 
     #[test]
@@ -170,7 +176,10 @@ mod tests {
             verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T - 301, 300),
             Err(SignatureError::Expired)
         );
-        assert_eq!(verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T + 300, 300), Ok(()));
+        assert_eq!(
+            verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T + 300, 300),
+            Ok(())
+        );
     }
 
     #[test]
@@ -191,7 +200,10 @@ mod tests {
     #[test]
     fn any_matching_v1_passes_and_v0_is_ignored() {
         let h = format!("t={T},v0=ff,v1={},v1={VECTOR}", "1".repeat(64));
-        assert_eq!(verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T, 300), Ok(()));
+        assert_eq!(
+            verify_signature(PAYLOAD.as_bytes(), &h, SECRET, T, 300),
+            Ok(())
+        );
     }
 
     #[test]

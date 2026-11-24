@@ -85,6 +85,9 @@ warptalk-meeting = { path = "crates/modules/meeting" }
 warptalk-transcript = { path = "crates/modules/transcript" }
 warptalk-assistant = { path = "crates/modules/assistant" }
 warptalk-billing = { path = "crates/modules/billing" }
+warptalk-email = { path = "crates/providers/email" }
+warptalk-google = { path = "crates/providers/google" }
+warptalk-stripe = { path = "crates/providers/stripe" }
 warptalk-notification = { path = "crates/modules/notification" }
 warptalk-copilot = { path = "crates/modules/copilot" }
 warptalk-copilot-core = { path = "crates/pipeline/copilot-core" }

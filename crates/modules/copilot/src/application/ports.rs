@@ -187,6 +187,99 @@ impl RateLimiter for NoRateLimit {
     }
 }
 
+// ---------------------------------------------------------------- usage metering + credit gate
+
+/// Redis stream of billable usage (`usage:events`, consumed by the billing metering worker).
+pub const USAGE_STREAM: &str = "usage:events";
+
+/// One entry of `usage:events` (JSON in the stream field `data`). `event_id` is the idempotency
+/// key: the same segment always yields the same id, so redelivery never double-charges. Wire
+/// contract shared with `warptalk-billing` (`domain::UsageEvent`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UsageEvent {
+    pub event_id: String,
+    pub workspace_id: Uuid,
+    pub room_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
+    /// `stt` here.
+    pub feature: &'static str,
+    pub model: String,
+    pub audio_ms: Option<i64>,
+    /// `platform` (the app streams with the platform's ephemeral token).
+    pub boundary: &'static str,
+    pub occurred_at: DateTime<Utc>,
+    pub segment_id: Option<Uuid>,
+}
+
+#[async_trait]
+pub trait UsageSink: Send + Sync {
+    async fn emit(&self, event: &UsageEvent) -> AppResult<()>;
+}
+
+/// Drops events (metering not wired).
+pub struct NoUsageSink;
+
+#[async_trait]
+impl UsageSink for NoUsageSink {
+    async fn emit(&self, _: &UsageEvent) -> AppResult<()> {
+        Ok(())
+    }
+}
+
+/// Is the workspace allowed to use paid AI right now (billing's AI service state)? `api` wires
+/// the billing adapter. Implementations fail OPEN: an unreadable state never blocks a meeting.
+#[async_trait]
+pub trait CreditGate: Send + Sync {
+    /// `Some(reason)` (e.g. `insufficient_credits`) when AI usage is suspended.
+    async fn suspended(&self, ws: WorkspaceId) -> Option<String>;
+}
+
+pub struct NoCreditGate;
+
+#[async_trait]
+impl CreditGate for NoCreditGate {
+    async fn suspended(&self, _: WorkspaceId) -> Option<String> {
+        None
+    }
+}
+
+/// Metering hooks of the service.
+#[derive(Clone)]
+pub struct Metering {
+    pub usage: std::sync::Arc<dyn UsageSink>,
+    pub gate: std::sync::Arc<dyn CreditGate>,
+    /// STT model name recorded on usage (the one the token issuer configures).
+    pub stt_model: String,
+}
+
+/// Records events in memory (tests).
+#[derive(Default)]
+pub struct MemoryUsageSink {
+    pub events: Mutex<Vec<serde_json::Value>>,
+}
+
+#[async_trait]
+impl UsageSink for MemoryUsageSink {
+    async fn emit(&self, event: &UsageEvent) -> AppResult<()> {
+        let v = serde_json::to_value(event).map_err(|e| AppError::internal(e.to_string()))?;
+        self.events
+            .lock()
+            .map_err(|_| AppError::internal("poisoned"))?
+            .push(v);
+        Ok(())
+    }
+}
+
+/// Gate that answers a fixed reason (tests).
+pub struct FixedCreditGate(pub Mutex<Option<String>>);
+
+#[async_trait]
+impl CreditGate for FixedCreditGate {
+    async fn suspended(&self, _: WorkspaceId) -> Option<String> {
+        self.0.lock().ok().and_then(|g| g.clone())
+    }
+}
+
 // ---------------------------------------------------------------- in-memory fakes (tests)
 
 /// In-memory sink: records results, dedups by key.

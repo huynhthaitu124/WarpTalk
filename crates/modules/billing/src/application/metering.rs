@@ -33,7 +33,10 @@ impl MeteringService {
                 "no rate-card entry: usage recorded with 0 credits"
             );
         }
-        let out = self.store.record_usage(e, &priced, self.clock.now()).await?;
+        let out = self
+            .store
+            .record_usage(e, &priced, self.clock.now())
+            .await?;
         // Usage can only worsen the state; recovery is published by grants and adjustments.
         if !out.duplicate && out.state != ServiceState::Healthy {
             self.sink

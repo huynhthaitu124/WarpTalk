@@ -72,6 +72,16 @@ impl CopilotModule {
         }
     }
 
+    /// Emit `usage:events` for accepted segments and gate `stt-token` on credits (billing).
+    /// Without this call metering is off.
+    pub fn with_metering(mut self, metering: application::ports::Metering) -> Self {
+        match Arc::get_mut(&mut self.service) {
+            Some(svc) => svc.set_metering(metering),
+            None => tracing::error!("copilot service already shared; metering not enabled"),
+        }
+        self
+    }
+
     /// Routes relative to the API prefix (`/api/v1`), state applied.
     pub fn router(&self) -> axum::Router {
         http::router(http::AppState {
