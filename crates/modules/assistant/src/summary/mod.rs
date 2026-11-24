@@ -23,12 +23,12 @@ pub use model::{
     ActionItem, ActionItemDraft, SUMMARY_GROUP, SummaryContent, SummaryJob, SummaryMeta,
     SummaryRequest, SummaryResultEvent, SummaryStatus,
 };
-pub use pg_access::PgRoomAccess;
+pub use pg_access::{PgExternalLlmGate, PgRoomAccess};
 pub use pg_sources::{PgRoomMetaSource, PgTranscriptSource};
 pub use ports::{
-    FollowUpSource, LiveFollowUp, NoBus, NoFollowUps, RoomAccess, RoomAccessInfo, RoomMeta,
-    RoomMetaSource, SummaryBus, TranscriptData, TranscriptSegment, TranscriptSource,
-    WorkspaceScope,
+    AllowAllExternalLlm, ExternalLlmGate, FollowUpSource, LiveFollowUp, NoBus, NoFollowUps,
+    RoomAccess, RoomAccessInfo, RoomMeta, RoomMetaSource, SummaryBus, TranscriptData,
+    TranscriptSegment, TranscriptSource, WorkspaceScope,
 };
 pub use redis_ports::{RedisFollowUpSource, RedisSummaryBus};
 pub use repo::PgSummaryRepository;

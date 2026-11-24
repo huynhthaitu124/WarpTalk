@@ -11,6 +11,10 @@ export interface MockOptions {
   startError?: { code: string; message: string };
   /** requestPermission() flips the kind to granted. */
   grantOnRequest?: boolean;
+  /** startCopilotSession rejects with this error until `mockSet.copilotStartError(page, null)`. */
+  copilotStartError?: { code: string; message: string };
+  /** Input devices returned by listInputDevices (the method is absent when omitted). */
+  inputDevices?: { uid: string; name: string }[];
 }
 
 export interface NativeCall { method: string; args: unknown[] }
@@ -30,6 +34,9 @@ export async function installNativeMock(page: Page, opts: MockOptions = {}) {
       apps: o.apps ?? [{ bundleId: 'com.google.Chrome', name: 'Google Chrome', pid: 101, producingAudio: true }],
       perms: { microphone: 'granted', screenRecording: 'granted', audioCapture: 'granted', ...(o.permissions ?? {}) } as Record<string, string>,
       startError: o.startError ?? null as { code: string; message: string } | null,
+      copilotStartError: o.copilotStartError ?? null as { code: string; message: string } | null,
+      // Copilot capture survives a reload like the real host (which keeps capturing while the WebView reloads).
+      copilot: (() => { try { return JSON.parse(sessionStorage.getItem('__mock_copilot') ?? 'null') as { sessionId: string } | null; } catch { return null; } })(),
       grantOnRequest: !!o.grantOnRequest,
       status: { state: 'idle', roomId: null, appBundleId: null, mode: null, backend: null, rmsDbfs: -120, audioFlowing: false, lastAudioAt: null, lastHeartbeatAt: null, dubTrack: null } as Record<string, unknown>,
     };
@@ -60,8 +67,22 @@ export async function installNativeMock(page: Page, opts: MockOptions = {}) {
       },
       captureStatus: () => rec('captureStatus', [], state.status),
       // Copilot capture (P1 in the real app): recorded only; the web UI turns "Start/Stop capture" on when these exist.
-      startCopilotSession: (o: unknown) => rec('startCopilotSession', [o], { ...state.status, state: 'running' }),
-      stopCopilotSession: () => rec('stopCopilotSession', [], { ...state.status, state: 'idle' }),
+      startCopilotSession: (a: { sessionId: string }) => {
+        calls.push({ method: 'startCopilotSession', args: [JSON.parse(JSON.stringify(a))] });
+        if (state.copilotStartError) return reject(state.copilotStartError.code, state.copilotStartError.message);
+        state.copilot = { sessionId: a.sessionId };
+        try { sessionStorage.setItem('__mock_copilot', JSON.stringify(state.copilot)); } catch { /* ignore */ }
+        return Promise.resolve({ ...state.status, state: 'running', sessionId: a.sessionId });
+      },
+      stopCopilotSession: () => {
+        state.copilot = null;
+        try { sessionStorage.removeItem('__mock_copilot'); } catch { /* ignore */ }
+        return rec('stopCopilotSession', [], { ...state.status, state: 'idle' });
+      },
+      copilotStatus: () => Promise.resolve(state.copilot ? { ...state.status, state: 'running', sessionId: state.copilot.sessionId } : { ...state.status, state: 'idle', sessionId: null }),
+      pushOverlaySuggestion: (x: unknown) => rec('pushOverlaySuggestion', [x], null),
+      clearOverlaySuggestion: (id: string) => rec('clearOverlaySuggestion', [id], null),
+      ...(o.inputDevices ? { listInputDevices: () => Promise.resolve(o.inputDevices) } : {}),
       updateAuth: (a: unknown) => rec('updateAuth', [a], { updated: true }),
       showOverlay: (v: boolean) => rec('showOverlay', [v], { visible: v }),
       pushOverlayCaption: (c: unknown) => rec('pushOverlayCaption', [c], null),
@@ -81,6 +102,7 @@ export async function installNativeMock(page: Page, opts: MockOptions = {}) {
       setApps: (a: unknown[]) => { state.apps = a as typeof state.apps; },
       setPerms: (p: Record<string, string>) => { Object.assign(state.perms, p); },
       setStartError: (e: { code: string; message: string } | null) => { state.startError = e; },
+      setCopilotStartError: (e: { code: string; message: string } | null) => { state.copilotStartError = e; },
     };
   }, opts);
 }
@@ -98,5 +120,6 @@ export const emitNative = (page: Page, detail: Record<string, unknown>) =>
 export const mockSet = {
   apps: (page: Page, apps: MockApp[]) => page.evaluate((a) => (window as unknown as { __nativeMock: { setApps(x: unknown): void } }).__nativeMock.setApps(a), apps),
   perms: (page: Page, p: Record<string, string>) => page.evaluate((a) => (window as unknown as { __nativeMock: { setPerms(x: unknown): void } }).__nativeMock.setPerms(a), p),
+  copilotStartError: (page: Page, e: { code: string; message: string } | null) => page.evaluate((a) => (window as unknown as { __nativeMock: { setCopilotStartError(x: unknown): void } }).__nativeMock.setCopilotStartError(a), e),
   startError: (page: Page, e: { code: string; message: string } | null) => page.evaluate((a) => (window as unknown as { __nativeMock: { setStartError(x: unknown): void } }).__nativeMock.setStartError(a), e),
 };

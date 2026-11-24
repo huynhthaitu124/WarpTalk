@@ -11,7 +11,7 @@ use uuid::Uuid;
 use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppResult, RoomId, UserId, WorkspaceId};
 
-use super::ports::{RoomAccess, RoomAccessInfo, WorkspaceScope};
+use super::ports::{ExternalLlmGate, RoomAccess, RoomAccessInfo, WorkspaceScope};
 use crate::application::ports::WorkspaceAccess;
 
 pub struct PgRoomAccess {
@@ -88,5 +88,35 @@ impl RoomAccess for PgRoomAccess {
             room_ids: rooms.into_iter().map(RoomId::from_uuid).collect(),
             names,
         }))
+    }
+}
+
+/// Reads `workspace.workspaces.settings ->> 'externalLlmAllowed'` (jsonb boolean; same key as
+/// the ai-plane `PgExternalLlmPolicy`, which this crate cannot depend on). Fail-closed.
+/// TEMPORARY cross-schema read, like the adapters above.
+pub struct PgExternalLlmGate {
+    pool: PgPool,
+}
+
+impl PgExternalLlmGate {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ExternalLlmGate for PgExternalLlmGate {
+    async fn external_llm_allowed(&self, workspace: WorkspaceId) -> bool {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT COALESCE(settings -> 'externalLlmAllowed' = 'true'::jsonb, false) \
+             FROM workspace.workspaces WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(workspace.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| tracing::warn!(error = %e, "external LLM policy lookup failed; denying"))
+        .ok()
+        .flatten()
+        .unwrap_or(false)
     }
 }

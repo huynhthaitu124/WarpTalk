@@ -15,6 +15,7 @@ pub mod codes {
     pub const LLM_UNAVAILABLE: &str = "LLM_UNAVAILABLE";
     pub const LLM_FAILED: &str = "LLM_FAILED";
     pub const LLM_BAD_OUTPUT: &str = "LLM_BAD_OUTPUT";
+    pub const EXTERNAL_LLM_NOT_ALLOWED: &str = "EXTERNAL_LLM_NOT_ALLOWED";
     pub const NO_TRANSCRIPT: &str = "NO_TRANSCRIPT";
     pub const ROOM_NOT_FOUND: &str = "ROOM_NOT_FOUND";
     pub const INTERNAL: &str = "INTERNAL";

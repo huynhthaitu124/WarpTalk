@@ -8,9 +8,8 @@ import {
   Tabs, TabsContent, TabsList, TabsTrigger, useToast,
 } from '@/ui';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
-import { apiBaseUrl } from '@/lib/env';
-import { session } from '@/lib/session';
-import { useNative } from '@/lib/native';
+import { useNative, type NativeError } from '@/lib/native';
+import { captureError, pendingSegments, startCopilotCapture, useCopilotLive, type LiveSegment } from '@/lib/copilotLive';
 import { useWorkspace } from '@/lib/workspace';
 import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
 import {
@@ -20,6 +19,7 @@ import {
 import { RoomDot, formatShortDate, formatWhen } from './common';
 import { SuggestionsTab } from './meeting/Suggestions';
 import { errMsg } from './errors';
+import { CaptureRecovery, LiveCapturePanel, PartialLines, useAudioApps, useOverlayMirror } from './SessionLive';
 
 const langOptions = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
 const mmss = (ms?: number) => (ms === undefined ? '' : `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`);
@@ -36,6 +36,9 @@ export function CaptureNotice({ className }: { className?: string }) {
   );
 }
 
+const NO_APP = 'none';
+const DEFAULT_MIC = 'default';
+
 export function StartSessionDialog({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const { current } = useWorkspace();
   const create = useCreateSession();
@@ -43,54 +46,107 @@ export function StartSessionDialog({ open, onOpenChange }: { open: boolean; onOp
   const toast = useToast();
   const nav = useNavigate();
   const canCapture = typeof native?.startCopilotSession === 'function';
+  const { apps, mics, refresh } = useAudioApps(canCapture && open ? native : undefined);
   const [title, setTitle] = useState('');
   const [platform, setPlatform] = useState<string>('google_meet');
   const [url, setUrl] = useState('');
   const [me, setMe] = useState('en');
   const [others, setOthers] = useState('en');
   const [tried, setTried] = useState(false);
+  const [app, setApp] = useState<string | null>(null);
+  const [mic, setMic] = useState(DEFAULT_MIC);
+  const [created, setCreated] = useState<CopilotSession | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startErr, setStartErr] = useState<NativeError | null>(null);
+  const appValue = app ?? (apps.find((a) => a.producingAudio) ?? apps[0])?.bundleId ?? NO_APP;
+  const appOptions = [
+    ...apps.map((a) => ({ value: a.bundleId, label: a.producingAudio ? `${a.name} (playing audio)` : a.name })),
+    { value: NO_APP, label: 'None: microphone only' },
+  ];
+
+  function reset() { setTitle(''); setUrl(''); setTried(false); setCreated(null); setStartErr(null); setApp(null); setMic(DEFAULT_MIC); }
+  function finish(s: CopilotSession, started: boolean) {
+    toast({ tone: 'success', title: started ? 'Session started' : 'Session created', description: s.title });
+    reset();
+    onOpenChange(false);
+    nav(`/sessions/${s.id}`);
+  }
+  async function begin(s: CopilotSession) {
+    if (!native) return;
+    setStarting(true);
+    setStartErr(null);
+    try {
+      await startCopilotCapture(native, {
+        sessionId: s.id,
+        ...(appValue !== NO_APP ? { appBundleId: appValue } : {}),
+        ...(mic !== DEFAULT_MIC ? { micDeviceUid: mic } : {}),
+        languages: { me, others },
+      });
+      finish(s, true);
+    } catch (err) {
+      setStartErr({ ...captureError(err), fatal: true, ts: new Date().toISOString() });
+    } finally { setStarting(false); }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setTried(true);
     if (!current || !title.trim()) return;
     try {
-      const s = await create.mutateAsync({ workspaceId: current.id, title: title.trim(), platform, meetingUrl: url.trim() || undefined, languages: { me, others } });
-      if (canCapture) {
-        try {
-          await native!.startCopilotSession!({ sessionId: s.id, accessToken: session.accessToken ?? '', apiBaseUrl: apiBaseUrl() || window.location.origin });
-        } catch (err) { toast({ tone: 'danger', title: 'Could not start capture', description: errMsg(err) }); }
+      let s = created;
+      if (!s) {
+        s = await create.mutateAsync({ workspaceId: current.id, title: title.trim(), platform, meetingUrl: url.trim() || undefined, languages: { me, others } });
+        setCreated(s);
       }
-      toast({ tone: 'success', title: canCapture ? 'Session started' : 'Session created', description: s.title });
-      setTitle(''); setUrl(''); setTried(false);
-      onOpenChange(false);
-      nav(`/sessions/${s.id}`);
+      if (canCapture) await begin(s);
+      else finish(s, false);
     } catch { /* inline */ }
   }
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) setTried(false); onOpenChange(v); }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent
         title="Start copilot session"
         description="Get a live transcript, suggestions and follow-ups for any meeting, then minutes when it ends."
         footer={
           <>
             <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button variant="primary" type="submit" form="start-session-form" loading={create.isPending}>{canCapture ? 'Start session' : 'Create session'}</Button>
+            <Button variant="primary" type="submit" form="start-session-form" loading={create.isPending || starting}>{created && startErr ? 'Try again' : canCapture ? 'Start session' : 'Create session'}</Button>
           </>
         }
       >
         <form id="start-session-form" onSubmit={submit} className="flex flex-col gap-4" noValidate>
           {!canCapture && <CaptureNotice />}
           <Field label="Title" required error={tried && !title.trim() ? 'Give the session a title.' : undefined}>
-            <Input maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus aria-required="true" placeholder="Weekly product sync" />
+            <Input maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus aria-required="true" placeholder="Weekly product sync" disabled={!!created} />
           </Field>
-          <Field label="Meeting app"><Select value={platform} onValueChange={setPlatform} options={PLATFORMS.map((p) => ({ value: p.value, label: p.label }))} /></Field>
-          <Field label="Meeting link (optional)"><Input type="url" inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://meet.google.com/..." /></Field>
+          <Field label="Meeting app"><Select value={platform} onValueChange={setPlatform} options={PLATFORMS.map((p) => ({ value: p.value, label: p.label }))} disabled={!!created} /></Field>
+          <Field label="Meeting link (optional)"><Input type="url" inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://meet.google.com/..." disabled={!!created} /></Field>
           <div className="grid grid-cols-2 gap-3 max-[420px]:grid-cols-1">
-            <Field label="I speak"><Select value={me} onValueChange={setMe} options={langOptions} /></Field>
-            <Field label="Others speak"><Select value={others} onValueChange={setOthers} options={langOptions} /></Field>
+            <Field label="I speak"><Select value={me} onValueChange={setMe} options={langOptions} disabled={!!created} /></Field>
+            <Field label="Others speak"><Select value={others} onValueChange={setOthers} options={langOptions} disabled={!!created} /></Field>
           </div>
+          {canCapture && (
+            <fieldset className="flex flex-col gap-4 border-0 p-0" data-testid="capture-sources">
+              <legend className="sr-only">Audio sources</legend>
+              <Field label="Capture audio from">
+                <div className="flex items-center gap-2">
+                  <Select className="min-w-0 flex-1" value={appValue} onValueChange={setApp} options={appOptions} aria-label="Capture audio from" testId="capture-app" />
+                  <Button type="button" size="sm" aria-label="Refresh apps" onClick={() => void refresh()}><ArrowsClockwise size={14} aria-hidden /></Button>
+                </div>
+              </Field>
+              <Field label="Microphone">
+                <Select value={mic} onValueChange={setMic} options={[{ value: DEFAULT_MIC, label: 'System default' }, ...mics.map((m) => ({ value: m.uid, label: m.name }))]} aria-label="Microphone" testId="capture-mic" />
+              </Field>
+            </fieldset>
+          )}
           {create.isError && <Alert tone="danger">{errMsg(create.error)}</Alert>}
+          {created && startErr && native && (
+            <div className="flex flex-col gap-2" data-testid="start-error">
+              <p className="text-body-sm text-ink-muted">The session was created, but capture did not start.</p>
+              <CaptureRecovery native={native} error={startErr} onDismiss={() => setStartErr(null)} onRetry={() => void begin(created)} onRefreshApps={() => void refresh()} />
+              <div><Button size="sm" variant="ghost" type="button" onClick={() => finish(created, false)}>Open the session without capture</Button></div>
+            </div>
+          )}
         </form>
       </DialogContent>
     </Dialog>
@@ -204,9 +260,12 @@ export function SessionsPage() {
   );
 }
 
-function TranscriptBand({ roomId, live }: { roomId: string; live: boolean }) {
+function TranscriptBand({ roomId, live, partials, local }: { roomId: string; live: boolean; partials?: Parameters<typeof PartialLines>[0]['partials']; local?: LiveSegment[] }) {
   const t = useTranscript(roomId, live);
-  const lines = t.data ?? [];
+  const polled = t.data ?? [];
+  // Segments the host sent that the poll has not returned yet; the poll is the source of truth and replaces them.
+  const pending = pendingSegments(roomId, polled, local ?? []);
+  const lines = [...polled, ...pending.map((p) => ({ id: p.clientSegmentId, speaker: p.channel === 'me' ? 'Me' : 'Others', text: p.text, atMs: p.startMs, final: true, mine: p.channel === 'me', pending: true }))];
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { if (live) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [live, lines.length]);
   return (
@@ -215,6 +274,7 @@ function TranscriptBand({ roomId, live }: { roomId: string; live: boolean }) {
         <h2 className="font-medium text-ink">Transcript</h2><span aria-hidden>·</span><span className="tabular-nums" data-testid="transcript-count">{lines.length}</span>
         {live && <Badge tone="success" size="sm" className="ml-auto" data-testid="transcript-live">Updating live</Badge>}
       </GroupHeader>
+      {partials && <PartialLines partials={partials} />}
       {t.isError ? (
         <PageBody><Alert tone="danger" title="Could not load the transcript">{errMsg(t.error)}</Alert></PageBody>
       ) : t.isLoading ? (
@@ -225,7 +285,7 @@ function TranscriptBand({ roomId, live }: { roomId: string; live: boolean }) {
         <div tabIndex={0} aria-label="Transcript lines" className="max-h-[480px] overflow-y-auto focus-ring">
           <ol>
             {lines.map((l) => (
-              <li key={l.id} data-testid="transcript-line" data-mine={l.mine} className="flex gap-3 border-b border-row px-4 py-2">
+              <li key={l.id} data-testid="transcript-line" data-mine={l.mine} data-pending={'pending' in l ? true : undefined} className="flex gap-3 border-b border-row px-4 py-2">
                 <span className="w-12 shrink-0 pt-0.5 text-caption tabular-nums text-ink-subtle">{mmss(l.atMs)}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-body-sm font-medium text-ink-muted">{l.speaker}</span>
@@ -344,9 +404,24 @@ export function SessionDetailPage() {
   const wasLive = useRef(false);
   useEffect(() => { if (wasLive.current && !live) setWaiting(true); wasLive.current = live; }, [live]);
 
+  const cap = useCopilotLive(native);
+  const capturing = cap.live.attached === sessionId;
+  const elsewhere = cap.live.attached && cap.live.attached !== sessionId ? cap.live.attached : null;
+  const { apps, refresh: refreshApps } = useAudioApps(native?.startCopilotSession && !ended ? native : undefined);
+  const [appPick, setAppPick] = useState<string | null>(null);
+  const appValue = appPick ?? (apps.find((a) => a.producingAudio) ?? apps[0])?.bundleId ?? NO_APP;
+
   const stream = useSuggestionStream(sessionId, undefined, live);
   const triage = useSuggestionTriage(stream.items);
   const followUps = useFollowUps(sessionId, !!s);
+  useOverlayMirror(native, capturing, triage.visible);
+
+  // The session ended (here or elsewhere) while the host is still capturing it: stop the host.
+  useEffect(() => {
+    if (!ended || !capturing) return;
+    void native?.stopCopilotSession?.().catch(() => undefined);
+    cap.markStopped();
+  }, [ended, capturing, native, cap]);
 
   if (sess.isLoading) return <PageBody className="flex flex-col gap-3"><Skeleton className="h-10 w-64" /><Skeleton className="h-40" /></PageBody>;
   if (sess.isError || !s) {
@@ -358,13 +433,31 @@ export function SessionDetailPage() {
     );
   }
   const canCapture = typeof native?.startCopilotSession === 'function';
-  async function capture(start: boolean) {
+  async function startCapture() {
+    if (!native) return;
     setBusy(true);
+    cap.dismissError('START_FAILED');
     try {
-      if (start) await native!.startCopilotSession!({ sessionId, accessToken: session.accessToken ?? '', apiBaseUrl: apiBaseUrl() || window.location.origin });
-      else await native!.stopCopilotSession?.();
-    } catch (e) { toast({ tone: 'danger', title: start ? 'Could not start capture' : 'Could not stop capture', description: errMsg(e) }); }
+      await startCopilotCapture(native, {
+        sessionId, ...(appValue !== NO_APP ? { appBundleId: appValue } : {}), ...(s?.languages?.me && s.languages.others ? { languages: { me: s.languages.me, others: s.languages.others } } : {}),
+      });
+      cap.markStarted(sessionId);
+    } catch (e) {
+      const c = captureError(e);
+      cap.pushError({ code: c.code === 'INTERNAL' ? 'START_FAILED' : c.code, message: c.message, fatal: true });
+    }
     setBusy(false);
+  }
+  async function stopCapture(): Promise<boolean> {
+    try { await native?.stopCopilotSession?.(); cap.markStopped(); return true; } catch (e) {
+      toast({ tone: 'danger', title: 'Could not stop capture', description: errMsg(e) });
+      return false;
+    }
+  }
+  async function endSession() {
+    // Stop the host first so no segment is posted to an ended session; end the session even if the host refuses.
+    if (capturing) await stopCapture();
+    end.mutate(undefined, { onSuccess: () => setWaiting(true), onError: (e) => toast({ tone: 'danger', title: 'Could not end the session', description: errMsg(e) }) });
   }
   return (
     <div className="flex min-h-full flex-col">
@@ -379,24 +472,32 @@ export function SessionDetailPage() {
             <a href={s.meetingUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-body-sm"><LinkIcon size={14} aria-hidden />Meeting link</a>
           )}
         </div>
+        {capturing && <LiveCapturePanel live={cap.live} />}
+        {native && cap.live.errors.map((e) => (
+          <CaptureRecovery key={e.code} native={native} error={e} onDismiss={() => cap.dismissError(e.code)} onRetry={ended ? undefined : () => void startCapture()} onRefreshApps={() => void refreshApps()} />
+        ))}
+        {elsewhere && !ended && (
+          <Alert tone="warning" title="The desktop app is capturing another session">
+            Stop that capture before starting this one. <Link to={`/sessions/${elsewhere}`} className="underline">Open the session being captured</Link>
+          </Alert>
+        )}
         {!ended && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="danger-soft" loading={end.isPending}
-              onClick={() => end.mutate(undefined, { onSuccess: () => setWaiting(true), onError: (e) => toast({ tone: 'danger', title: 'Could not end the session', description: errMsg(e) }) })}
-            >End session</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {canCapture && (capturing
+              ? <Button variant="danger-soft" loading={busy} onClick={() => { setBusy(true); void stopCapture().finally(() => setBusy(false)); }}><Stop size={14} weight="fill" aria-hidden />Stop capture</Button>
+              : (
+                <>
+                  <Button variant="primary" loading={busy} disabled={!!elsewhere} onClick={() => void startCapture()}><Play size={14} weight="fill" aria-hidden />Start capture</Button>
+                  {apps.length > 0 && <Select className="w-56" value={appValue} onValueChange={setAppPick} aria-label="Capture audio from" testId="capture-app" options={[...apps.map((a) => ({ value: a.bundleId, label: a.producingAudio ? `${a.name} (playing audio)` : a.name })), { value: NO_APP, label: 'None: microphone only' }]} />}
+                </>
+              ))}
+            <Button variant="danger-soft" loading={end.isPending} onClick={() => void endSession()}>End session</Button>
           </div>
         )}
-        {!ended && (canCapture ? (
-          <div className="flex flex-wrap gap-2">
-            {live
-              ? <Button variant="danger-soft" loading={busy} onClick={() => void capture(false)}><Stop size={14} weight="fill" aria-hidden />Stop capture</Button>
-              : <Button variant="primary" loading={busy} onClick={() => void capture(true)}><Play size={14} weight="fill" aria-hidden />Start capture</Button>}
-          </div>
-        ) : <CaptureNotice />)}
+        {!ended && !canCapture && <CaptureNotice />}
       </header>
       <div className="grid min-w-0 border-t border-row lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <TranscriptBand roomId={sessionId} live={live} />
+        <TranscriptBand roomId={sessionId} live={live} partials={capturing ? cap.live.partials : undefined} local={capturing ? cap.live.segments : undefined} />
         <section aria-label="Suggestions and follow-ups" className="min-w-0 border-row lg:border-l">
           <GroupHeader><h2 className="font-medium text-ink">Suggestions and follow-ups</h2></GroupHeader>
           <SuggestionsTab view={{ items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze }} />

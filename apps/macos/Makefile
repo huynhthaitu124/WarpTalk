@@ -6,7 +6,11 @@ APP     := $(BUILD)/Build/Products/Debug/WarpTalk.app
 WEB_DIR := ../web
 XCB     := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -destination 'platform=macOS' -derivedDataPath $(BUILD)
 
-.PHONY: gen build run test clean open web-export bundle run-bundled
+.PHONY: core gen build run test clean open web-export bundle run-bundled
+
+# Rust copilot-core -> CopilotCore/CopilotCore.xcframework + CopilotCore.swift (UniFFI). Run once before `make gen`/`build`, and after Rust changes.
+core:
+	../../crates/pipeline/copilot-core/scripts/build-xcframework.sh
 
 gen:
 	xcodegen generate

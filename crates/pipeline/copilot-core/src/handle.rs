@@ -19,6 +19,7 @@ use crate::types::{Channel, CopilotEvent, EngineStats, PushStatus};
 
 /// Flat record for `start`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct StartParams {
     /// Server base URL, e.g. `https://api.example.com` (no trailing path).
     pub base_url: String,
@@ -28,11 +29,13 @@ pub struct StartParams {
 }
 
 /// Pull-style event stream (UniFFI object). `next` blocks up to `timeout_ms`.
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct EventStream {
     rt: Arc<Runtime>,
     rx: Mutex<Option<mpsc::Receiver<CopilotEvent>>>,
 }
 
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl EventStream {
     pub fn next(&self, timeout_ms: u64) -> Option<CopilotEvent> {
         let mut g = self.rx.lock().unwrap_or_else(PoisonError::into_inner);
@@ -69,15 +72,20 @@ struct Running {
     refresher: Option<JoinHandle<()>>,
 }
 
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct CopilotHandle {
     rt: Arc<Runtime>,
+    listener: Arc<Mutex<Option<Arc<dyn CopilotEventListener>>>>,
+    pump_started: std::sync::atomic::AtomicBool,
     cfg: CopilotConfig,
     events: Arc<EventStream>,
     running: Mutex<Option<Running>>,
 }
 
+#[cfg_attr(feature = "ffi", uniffi::export)]
 impl CopilotHandle {
     /// `config_json`: partial JSON of [`CopilotConfig`] (`"{}"` = all defaults).
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(config_json: String) -> Result<Arc<Self>, CopilotError> {
         let cfg = CopilotConfig::from_json(&config_json)?;
         let rt = Arc::new(
@@ -95,6 +103,8 @@ impl CopilotHandle {
             }),
             rt,
             cfg,
+            listener: Arc::new(Mutex::new(None)),
+            pump_started: std::sync::atomic::AtomicBool::new(false),
             running: Mutex::new(None),
         }))
     }
@@ -240,4 +250,49 @@ impl CopilotHandle {
     pub fn events(&self) -> Arc<EventStream> {
         self.events.clone()
     }
+
+    /// Push-style delivery: `listener.on_event` is called for every event, on a dedicated
+    /// Rust thread (NOT the main thread: hop to the main actor before touching UI). Replaces
+    /// any previous listener. Do not combine with polling `events()` (they share one queue).
+    /// The listener must return quickly; it never runs on the audio thread.
+    pub fn set_listener(&self, listener: Arc<dyn CopilotEventListener>) {
+        *self.listener.lock().unwrap_or_else(PoisonError::into_inner) = Some(listener);
+        if self
+            .pump_started
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let events = Arc::downgrade(&self.events);
+        let slot = self.listener.clone();
+        // Best effort: if the thread cannot be spawned the app can still poll `events()`.
+        let _ = std::thread::Builder::new()
+            .name("copilot-listener".into())
+            .spawn(move || {
+                loop {
+                    // Hold the stream only for one poll so dropping the handle stops the pump.
+                    let Some(stream) = events.upgrade() else {
+                        break;
+                    };
+                    let ev = stream.next(100);
+                    drop(stream);
+                    match ev {
+                        Some(ev) => {
+                            let l = slot.lock().unwrap_or_else(PoisonError::into_inner).clone();
+                            if let Some(l) = l {
+                                l.on_event(ev);
+                            }
+                        }
+                        // No receiver yet (before `start`): `next` returns at once.
+                        None => std::thread::sleep(Duration::from_millis(20)),
+                    }
+                }
+            });
+    }
+}
+
+/// Foreign callback for [`CopilotHandle::set_listener`].
+#[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
+pub trait CopilotEventListener: Send + Sync {
+    fn on_event(&self, event: CopilotEvent);
 }

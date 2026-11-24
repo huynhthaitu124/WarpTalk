@@ -20,7 +20,7 @@
 //!   the channel was pushed; `start_offset_ms` shifts a channel that began later). Early
 //!   sentences get estimated sub-ranges of the utterance (the model returns no timestamps).
 //!
-//! # UniFFI surface (P1; not added yet, no `uniffi` dependency)
+//! # UniFFI surface (cargo feature `ffi`, default off)
 //!
 //! Proc-macro form (`#[uniffi::export]` etc.); every type below is owned, non-generic and
 //! lifetime-free already:
@@ -51,6 +51,9 @@
 //! polling if the app prefers push; `push_audio` should be called from the audio callback's
 //! own thread (it only takes a short mutex).
 
+#[cfg(feature = "ffi")]
+uniffi::setup_scaffolding!();
+
 mod channel;
 pub mod config;
 pub mod echo;
@@ -70,7 +73,7 @@ pub use config::{
 };
 pub use engine::{CopilotDeps, CopilotEngine};
 pub use error::CopilotError;
-pub use handle::{CopilotHandle, EventStream, StartParams};
+pub use handle::{CopilotEventListener, CopilotHandle, EventStream, StartParams};
 pub use sink::{HttpSegmentSink, MemorySink, SegmentSink};
 pub use stt::{EphemeralRealtimeStt, FakeStt};
 pub use token::{HttpSttTokenProvider, SttToken, SttTokenProvider, TokenManager};

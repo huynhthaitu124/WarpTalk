@@ -3,6 +3,8 @@
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
+#[cfg_attr(feature = "ffi", uniffi(flat_error))]
 pub enum CopilotError {
     #[error("invalid config: {0}")]
     Config(String),

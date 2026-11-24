@@ -9,6 +9,17 @@ workspace = true
 
 [lib]
 name = "warptalk_copilot_core"
+crate-type = ["lib", "staticlib"]
+
+[features]
+default = []
+# UniFFI bindings for the macOS app (Swift). See scripts/build-xcframework.sh.
+ffi = ["dep:uniffi"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["ffi"]
 
 [[bin]]
 name = "copilot-cli"
@@ -27,6 +38,7 @@ tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+uniffi = { workspace = true, optional = true }
 url = { workspace = true }
 uuid = { workspace = true }
 warptalk-audio = { workspace = true }

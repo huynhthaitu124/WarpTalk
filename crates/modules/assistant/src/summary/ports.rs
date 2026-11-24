@@ -145,3 +145,21 @@ pub trait RoomAccess: Send + Sync {
         user: UserId,
     ) -> AppResult<Option<WorkspaceScope>>;
 }
+
+/// Durable workspace consent for sending transcript text to a third-party LLM
+/// (`workspace.workspaces.settings.externalLlmAllowed`). Unlike the live Redis per-room key it
+/// is still there after the meeting ended. Fail-closed: `false` whenever the answer is unknown.
+#[async_trait]
+pub trait ExternalLlmGate: Send + Sync {
+    async fn external_llm_allowed(&self, workspace: WorkspaceId) -> bool;
+}
+
+/// Allows everything (tests, single-tenant deployments).
+pub struct AllowAllExternalLlm;
+
+#[async_trait]
+impl ExternalLlmGate for AllowAllExternalLlm {
+    async fn external_llm_allowed(&self, _: WorkspaceId) -> bool {
+        true
+    }
+}

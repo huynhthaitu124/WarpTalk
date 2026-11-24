@@ -155,7 +155,16 @@ impl LlmProvider for FakeLlm {
     }
 }
 
-struct FakeResolver(Mutex<Option<Arc<FakeLlm>>>);
+struct FakeResolver(Mutex<Option<Arc<FakeLlm>>>, Mutex<DataBoundary>);
+
+struct FakePolicy(std::sync::atomic::AtomicBool);
+
+#[async_trait]
+impl warptalk_assistant::summary::ExternalLlmGate for FakePolicy {
+    async fn external_llm_allowed(&self, _: WorkspaceId) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
 
 #[async_trait]
 impl LlmResolver for FakeResolver {
@@ -165,7 +174,7 @@ impl LlmResolver for FakeResolver {
             Some(l) => Ok(ResolvedLlm {
                 provider: l,
                 model: Some("fake-model".into()),
-                boundary: DataBoundary::External,
+                boundary: *self.1.lock().unwrap(),
             }),
             None => Err(ResolveError::NotConfigured),
         }
@@ -226,6 +235,7 @@ struct H {
     worker: Arc<SummaryWorker>,
     llm: Arc<FakeLlm>,
     resolver: Arc<FakeResolver>,
+    policy: Arc<FakePolicy>,
     tr: Arc<MemTranscripts>,
     access: Arc<FakeAccess>,
     store: SettingsStore,
@@ -288,7 +298,10 @@ async fn harness(n_segments: usize, seg_chars: usize, extra_cfg: &str) -> Option
         .await
         .unwrap();
     let llm = FakeLlm::new();
-    let resolver = Arc::new(FakeResolver(Mutex::new(Some(llm.clone()))));
+    let resolver = Arc::new(FakeResolver(
+        Mutex::new(Some(llm.clone())),
+        Mutex::new(DataBoundary::External),
+    ));
     let segs = segments(n_segments, seg_chars);
     let ids = segs.iter().map(|s| s.id).collect();
     let tr = Arc::new(MemTranscripts(Mutex::new(Some(TranscriptData {
@@ -298,6 +311,7 @@ async fn harness(n_segments: usize, seg_chars: usize, extra_cfg: &str) -> Option
         total_segments: n_segments as u32,
         segments: segs,
     }))));
+    let policy = Arc::new(FakePolicy(true.into()));
     let access = Arc::new(FakeAccess::default());
     let svc = Arc::new(SummaryService::new(SummaryDeps {
         repo: PgSummaryRepository::new(pool.clone()),
@@ -305,6 +319,7 @@ async fn harness(n_segments: usize, seg_chars: usize, extra_cfg: &str) -> Option
         rooms: Arc::new(MemRooms(ws)),
         followups: Arc::new(NoFollowUps),
         llm: resolver.clone(),
+        policy: policy.clone(),
         settings: store.clone(),
         bus: Arc::new(NoBus),
         clock: Arc::new(SystemClock),
@@ -322,6 +337,7 @@ async fn harness(n_segments: usize, seg_chars: usize, extra_cfg: &str) -> Option
         worker,
         llm,
         resolver,
+        policy,
         tr,
         access,
         store,
@@ -950,4 +966,59 @@ async fn one_hour_meeting_latency_with_a_fake_llm() {
     );
     assert_eq!(h.rows().await, vec![(1, "completed".into(), None)]);
     assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}");
+}
+
+fn set_policy(h: &H, allowed: bool) {
+    h.policy
+        .0
+        .store(allowed, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tokio::test]
+async fn disallowed_external_llm_fails_with_code_and_no_llm_call() {
+    let Some(h) = harness(4, 40, "").await else {
+        return;
+    };
+    set_policy(&h, false);
+    h.end_meeting().await;
+    assert_eq!(
+        h.rows().await,
+        vec![(1, "failed".into(), Some("EXTERNAL_LLM_NOT_ALLOWED".into()))]
+    );
+    assert_eq!(h.llm.total(), 0);
+    let host = UserId::new();
+    h.grant(host, true, true, None);
+    let path = format!("/meetings/{}/summary", h.room.as_uuid());
+    let (_, v) = h.call(host, "GET", &path, None).await;
+    assert_eq!(v["status"], "failed");
+    assert_eq!(v["latest"]["errorCode"], "EXTERNAL_LLM_NOT_ALLOWED");
+    // Regenerate is refused up front: 400, no new row, still no LLM call.
+    let (st, v) = h
+        .call(host, "POST", &format!("{path}/regenerate"), None)
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["code"], "EXTERNAL_LLM_NOT_ALLOWED");
+    assert_eq!(h.rows().await.len(), 1);
+    assert_eq!(h.llm.total(), 0);
+}
+
+#[tokio::test]
+async fn disallowed_but_workspace_controlled_llm_completes() {
+    let Some(h) = harness(4, 40, "").await else {
+        return;
+    };
+    set_policy(&h, false);
+    *h.resolver.1.lock().unwrap() = DataBoundary::WorkspaceControlled;
+    h.end_meeting().await;
+    assert_eq!(h.rows().await, vec![(1, "completed".into(), None)]);
+    assert!(h.llm.total() > 0);
+}
+
+#[tokio::test]
+async fn allowed_external_llm_completes() {
+    let Some(h) = harness(4, 40, "").await else {
+        return;
+    };
+    h.end_meeting().await;
+    assert_eq!(h.rows().await, vec![(1, "completed".into(), None)]);
 }

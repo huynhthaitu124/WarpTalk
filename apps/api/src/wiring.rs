@@ -817,6 +817,9 @@ pub async fn build(
             None => Arc::new(NoFollowUps),
         },
         llm: ai.clone(),
+        policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(
+            pool.clone(),
+        )),
         settings: settings.clone(),
         bus: match &summary_redis {
             Some(c) => Arc::new(RedisSummaryBus::new(c.clone())) as Arc<dyn SummaryBus>,

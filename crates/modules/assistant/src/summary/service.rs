@@ -16,12 +16,12 @@ use super::model::{
     SummaryStatus, Trigger, codes, output_schema,
 };
 use super::ports::{
-    FollowUpSource, LiveFollowUp, RoomMeta, RoomMetaSource, SummaryBus, TranscriptData,
-    TranscriptSource,
+    ExternalLlmGate, FollowUpSource, LiveFollowUp, RoomMeta, RoomMetaSource, SummaryBus,
+    TranscriptData, TranscriptSource,
 };
 use super::prompt;
 use super::repo::{Enqueued, PgSummaryRepository};
-use crate::suggestion::{LlmResolver, Purpose, ResolveError};
+use crate::suggestion::{DataBoundary, LlmResolver, Purpose, ResolveError};
 
 const STAGE: &str = "meeting_summary";
 const TOKENS_METRIC: &str = "warptalk_summary_tokens_total";
@@ -32,6 +32,8 @@ pub struct SummaryDeps {
     pub rooms: Arc<dyn RoomMetaSource>,
     pub followups: Arc<dyn FollowUpSource>,
     pub llm: Arc<dyn LlmResolver>,
+    /// Workspace `externalLlmAllowed` policy, applied to `External` providers.
+    pub policy: Arc<dyn ExternalLlmGate>,
     pub settings: SettingsStore,
     pub bus: Arc<dyn SummaryBus>,
     pub clock: Arc<dyn Clock>,
@@ -164,6 +166,18 @@ impl SummaryService {
             return Err(AppError::conflict(
                 "SUMMARY_IN_PROGRESS",
                 "a summary is already being generated for this meeting",
+            ));
+        }
+        // Same gate as the job, checked up front: no row is created for a request that cannot
+        // run (HTTP 400 `EXTERNAL_LLM_NOT_ALLOWED`). The job re-checks, so a policy change
+        // between request and run is honoured. Resolution trouble is left to the job.
+        if let Ok(r) = self.d.llm.for_purpose(ws, Purpose::Summary).await
+            && r.boundary == DataBoundary::External
+            && !self.d.policy.external_llm_allowed(ws).await
+        {
+            return Err(AppError::validation(
+                codes::EXTERNAL_LLM_NOT_ALLOWED,
+                "this workspace does not allow sending meeting data to external LLM providers",
             ));
         }
         let t = self
@@ -383,6 +397,16 @@ impl SummaryService {
                 return Err(JobError::transient(codes::LLM_UNAVAILABLE, m));
             }
         };
+        // Consent gate, before any transcript text leaves: an external provider needs the
+        // workspace's (durable) opt-in; workspace-controlled endpoints are exempt.
+        if resolved.boundary == DataBoundary::External
+            && !self.d.policy.external_llm_allowed(job.workspace_id).await
+        {
+            return Err(JobError::permanent(
+                codes::EXTERNAL_LLM_NOT_ALLOWED,
+                "this workspace does not allow sending meeting data to external LLM providers",
+            ));
+        }
         let model = resolved.model.clone().unwrap_or_else(|| cfg.model.clone());
         let language = if cfg.language.trim().is_empty() {
             meta.source_language.clone()

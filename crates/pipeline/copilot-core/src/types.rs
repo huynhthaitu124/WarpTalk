@@ -6,6 +6,7 @@ use uuid::Uuid;
 /// Audio channel. `Me` = microphone, `Others` = meeting-app audio (process tap).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Channel {
     Me,
     Others,
@@ -40,6 +41,7 @@ impl Channel {
 /// `utterance_seq` are local-only (never serialized).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SegmentRecord {
     /// uuid v7, assigned once when the segment is created: retries are idempotent.
     pub client_segment_id: String,
@@ -67,6 +69,7 @@ impl SegmentRecord {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum StatusKind {
     Started,
     Stopped,
@@ -82,6 +85,7 @@ pub enum StatusKind {
 
 /// Events for the overlay / UI.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CopilotEvent {
     /// Accumulated text of the utterance in progress (empty text = cleared).
     Partial { channel: Channel, text: String },
@@ -103,6 +107,7 @@ pub enum CopilotEvent {
 
 /// Result of `push_audio` (never an error: the audio path does not fail).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum PushStatus {
     Accepted,
     /// Accepted after evicting the oldest queued chunk (counted in stats).
@@ -114,6 +119,7 @@ pub enum PushStatus {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ChannelStats {
     pub chunks_pushed: u64,
     pub chunks_dropped: u64,
@@ -125,6 +131,7 @@ pub struct ChannelStats {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SinkStats {
     pub submitted: u64,
     pub delivered: u64,
@@ -136,6 +143,7 @@ pub struct SinkStats {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct EngineStats {
     pub me: ChannelStats,
     pub others: ChannelStats,

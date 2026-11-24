@@ -198,7 +198,8 @@ pub async fn build_summary(
     let service = SummaryService::new(SummaryDeps {
         repo: PgSummaryRepository::new(pool.clone()),
         transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
-        rooms: Arc::new(PgRoomMetaSource::new(pool)),
+        rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
+        policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(pool)),
         followups: Arc::new(RedisFollowUpSource::new(redis.clone())),
         llm,
         settings: settings.clone(),

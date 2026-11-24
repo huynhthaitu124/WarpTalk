@@ -20,12 +20,14 @@ export interface CopilotMock {
   calls: string[];
   /** Bodies of POST /copilot/sessions. */
   created: unknown[];
+  /** For each POST .../end: whether the native host had already received stopCopilotSession (stop-before-end ordering). */
+  stoppedBeforeEnd: boolean[];
 }
 
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
 export async function mockCopilot(page: Page, init: Partial<Pick<CopilotMock, 'sessions' | 'segments' | 'summary' | 'actionItems' | 'followups'>> = {}): Promise<CopilotMock> {
-  const m: CopilotMock = { sessions: [], segments: {}, summary: {}, actionItems: {}, followups: {}, calls: [], created: [], ...init };
+  const m: CopilotMock = { sessions: [], segments: {}, summary: {}, actionItems: {}, followups: {}, calls: [], created: [], stoppedBeforeEnd: [], ...init };
   await page.route(/\/api\/v1\/(copilot\/|transcripts\/|meetings\/[^/]+\/(summary|action-items|followups)|workspaces\/[^/]+\/action-items)/, async (route) => {
     const req = route.request();
     const u = new URL(req.url());
@@ -46,6 +48,7 @@ export async function mockCopilot(page: Page, init: Partial<Pick<CopilotMock, 's
     }
     if ((x = path.match(/^\/transcripts\/([^/]+)$/))) return route.fulfill(json({ status: 'ACTIVE', segments: m.segments[x[1]!] ?? [] }));
     if ((x = path.match(/^\/copilot\/sessions\/([^/]+)\/end$/)) && req.method() === 'POST') {
+      m.stoppedBeforeEnd.push(await page.evaluate(() => (window as unknown as { __nativeMock?: { calls: { method: string }[] } }).__nativeMock?.calls.some((c) => c.method === 'stopCopilotSession') ?? false));
       const s = m.sessions.find((v) => v.id === x![1]);
       if (s) s.status = 'ENDED';
       return route.fulfill(s ? json(s) : json({ code: 'NOT_FOUND', message: 'session not found' }, 404));
