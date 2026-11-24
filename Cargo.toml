@@ -20,6 +20,7 @@ license = "UNLICENSED"
 # Third-party versions are pinned here once and referenced with `{ workspace = true }`
 # from member crates. Added as each crate gets real code.
 [workspace.dependencies]
+uniffi = { version = "0.29", features = ["cli"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tower = "0.5"
