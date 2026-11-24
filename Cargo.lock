@@ -4220,6 +4220,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "warptalk-copilot"
+version = "0.1.0"
+
+[[package]]
+name = "warptalk-copilot-core"
+version = "0.1.0"
+
+[[package]]
 name = "warptalk-db"
 version = "0.1.0"
 dependencies = [
