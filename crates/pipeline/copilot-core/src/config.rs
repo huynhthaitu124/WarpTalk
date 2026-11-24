@@ -292,7 +292,8 @@ impl Default for EngineConfig {
             drain_timeout_ms: 8_000,
             status_interval_ms: 1_000,
             session_rotate_after_ms: 25 * 60 * 1000,
-            reconnect_backoff_ms: 2_000,
+            // >= 6 s keeps STT token refetches under the server limit (10/min per user).
+            reconnect_backoff_ms: 6_000,
             gap_tolerance_ms: 96,
         }
     }
