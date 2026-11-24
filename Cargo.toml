@@ -5,6 +5,7 @@ members = [
     "apps/migrator",
     "apps/pipeline",
     "apps/worker",
+    "apps/ai-eval",
     "crates/shared/*",
     "crates/modules/*",
     "crates/pipeline/*",
@@ -20,6 +21,10 @@ license = "UNLICENSED"
 # Third-party versions are pinned here once and referenced with `{ workspace = true }`
 # from member crates. Added as each crate gets real code.
 [workspace.dependencies]
+# document text extraction (knowledge)
+pdf-extract = "0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
 uniffi = { version = "0.29", features = ["cli"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws", "macros"] }

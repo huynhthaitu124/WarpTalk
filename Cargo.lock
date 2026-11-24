@@ -4357,6 +4357,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "warptalk-ai-eval"
+version = "0.1.0"
+
+[[package]]
 name = "warptalk-ai-plane"
 version = "0.1.0"
 dependencies = [
