@@ -128,6 +128,7 @@ enum CopilotEventMapper {
     /// Heuristic (VERIFY: exact codes emitted by the core for HTTP 401 from the segment sink / stt-token): such errors
     /// make the controller also emit `auth-required`.
     static func isAuthError(code: String, message: String) -> Bool {
+        if code == "auth_required" { return true }   // deterministic code emitted by copilot-core for HTTP 401
         let hay = (code + " " + message).lowercased()
         return hay.contains("401") || hay.contains("unauthor") || hay.contains("auth_expired") || hay.contains("token expired")
     }

@@ -6,16 +6,25 @@ import Foundation
 // `CopilotCore` module is available (`make core`). Generated names are taken from the facade docs in
 // crates/pipeline/copilot-core/src/lib.rs; anything not confirmed against the generated file is marked `// VERIFY:`.
 
-final class CopilotCoreEngine: CopilotEngineType, CopilotEventListener, @unchecked Sendable {
+/// The Rust handle keeps its listener strongly until the handle is dropped (copilot-core `set_listener`), so the
+/// engine registers this weak forwarder instead of itself: no retain cycle between `CopilotHandle` and the engine.
+private final class WeakCopilotListener: CopilotEventListener, @unchecked Sendable {
+    weak var target: CopilotCoreEngine?
+    init(_ target: CopilotCoreEngine) { self.target = target }
+    func onEvent(event: CopilotEvent) { target?.receive(event) }
+}
+
+final class CopilotCoreEngine: CopilotEngineType, @unchecked Sendable {
     private let handle: CopilotHandle
     private let lock = NSLock()
     private var handler: (@Sendable (CopilotEngineEvent) -> Void)?
 
     init(configJson: String) throws {
-        do { handle = try CopilotHandle(configJson: configJson) }          // VERIFY: initializer label `configJson:`
+        do { handle = try CopilotHandle(configJson: configJson) }          // verified: `CopilotHandle(configJson:)`
         catch { throw CopilotEngineError.failed("\(error)") }
-        // VERIFY: setListener(listener:) exists and holds the listener strongly (cycle broken in stop()).
-        handle.setListener(listener: self)
+        // Verified against bindings/swift snapshot: `setListener(listener:)`; events arrive on the Rust
+        // `copilot-listener` thread (callers hop to the main actor).
+        handle.setListener(listener: WeakCopilotListener(self))
     }
 
     func setEventHandler(_ handler: @escaping @Sendable (CopilotEngineEvent) -> Void) {
@@ -43,9 +52,9 @@ final class CopilotCoreEngine: CopilotEngineType, CopilotEventListener, @uncheck
         do { try handle.stop() } catch { throw CopilotEngineError.failed("\(error)") }
     }
 
-    // MARK: CopilotEventListener (called on a Rust thread)
+    // MARK: events (called on the Rust `copilot-listener` thread via WeakCopilotListener)
 
-    func onEvent(event: CopilotEvent) {
+    fileprivate func receive(_ event: CopilotEvent) {
         lock.lock(); let h = handler; lock.unlock()
         guard let h, let mapped = Self.map(event) else { return }
         h(mapped)
