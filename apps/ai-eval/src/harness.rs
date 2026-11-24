@@ -46,7 +46,7 @@ use crate::report::{
     SuggestionsReport, SummaryReport,
 };
 use crate::scoring::{
-    CategoryCounts, Counts, Published, SummaryCounts, SummaryOutput, OutAction, score_suggestions,
+    CategoryCounts, Counts, OutAction, Published, SummaryCounts, SummaryOutput, score_suggestions,
     score_summary,
 };
 use crate::textmatch;
@@ -197,7 +197,10 @@ impl Infra {
                 .map_err(|e| anyhow!("cannot reach Postgres (set DATABASE_URL): {e}"))?;
             warptalk_db::run_migrations(
                 &pool,
-                &[warptalk_settings::MIGRATIONS, warptalk_assistant::MIGRATIONS],
+                &[
+                    warptalk_settings::MIGRATIONS,
+                    warptalk_assistant::MIGRATIONS,
+                ],
             )
             .await
             .map_err(|e| anyhow!("migrations failed: {e}"))?;
@@ -622,7 +625,10 @@ async fn run_suggestions(
         }
         if let Some(j) = judge {
             for (line, r) in &run.results {
-                judged.push(j.suggestion(m, *line, &r.category, &published_text(r)).await);
+                judged.push(
+                    j.suggestion(m, *line, &r.category, &published_text(r))
+                        .await,
+                );
             }
         }
         records.extend(run.records);

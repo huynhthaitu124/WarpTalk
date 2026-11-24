@@ -1,0 +1,1166 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-11-24T17:41:28.568230111+00:00",
+  "suite": "all",
+  "provider": "fake",
+  "model": "fake-1",
+  "judge": null,
+  "line_tolerance": 1,
+  "latency_simulated": true,
+  "suggestions": {
+    "metrics": {
+      "expected": 49,
+      "published": 48,
+      "true_positives": 41,
+      "precision": 0.8541666666666666,
+      "recall": 0.8367346938775511,
+      "f1": 0.845360824742268,
+      "forbidden_total": 11,
+      "forbidden_hits": 5,
+      "forbidden_hit_rate": 0.45454545454545453,
+      "hallucination_hits": 2,
+      "hallucination_rate": 0.041666666666666664
+    },
+    "by_category": {
+      "action_item": {
+        "expected": 4,
+        "published": 7,
+        "true_positives": 3,
+        "precision": 0.42857142857142855,
+        "recall": 0.75
+      },
+      "action_item|follow_up": {
+        "expected": 1,
+        "published": 0,
+        "true_positives": 0,
+        "precision": 0.0,
+        "recall": 0.0
+      },
+      "answer": {
+        "expected": 4,
+        "published": 3,
+        "true_positives": 3,
+        "precision": 1.0,
+        "recall": 0.75
+      },
+      "answer|clarification": {
+        "expected": 3,
+        "published": 2,
+        "true_positives": 1,
+        "precision": 0.5,
+        "recall": 0.3333333333333333
+      },
+      "answer|term": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "clarification": {
+        "expected": 2,
+        "published": 2,
+        "true_positives": 2,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "correction": {
+        "expected": 3,
+        "published": 4,
+        "true_positives": 3,
+        "precision": 0.75,
+        "recall": 1.0
+      },
+      "correction|clarification": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "correction|fact": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "correction|fact|answer": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "fact": {
+        "expected": 3,
+        "published": 3,
+        "true_positives": 3,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "fact|answer": {
+        "expected": 3,
+        "published": 3,
+        "true_positives": 3,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "fact|answer|term": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "follow_up": {
+        "expected": 11,
+        "published": 9,
+        "true_positives": 8,
+        "precision": 0.8888888888888888,
+        "recall": 0.7272727272727273
+      },
+      "follow_up|action_item": {
+        "expected": 1,
+        "published": 1,
+        "true_positives": 1,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "term": {
+        "expected": 9,
+        "published": 9,
+        "true_positives": 9,
+        "precision": 1.0,
+        "recall": 1.0
+      }
+    },
+    "latency": {
+      "suggestion_decide": {
+        "calls": 93,
+        "failed": 0,
+        "mean_ms": 59.935483870967744,
+        "p50_ms": 60.0,
+        "p95_ms": 62.0,
+        "max_ms": 62.0
+      },
+      "suggestion_generate": {
+        "calls": 48,
+        "failed": 0,
+        "mean_ms": 98.70833333333333,
+        "p50_ms": 96.0,
+        "p95_ms": 120.0,
+        "max_ms": 128.0
+      }
+    },
+    "usage": {
+      "calls": 141,
+      "input_tokens": 189951,
+      "output_tokens": 3746,
+      "cost_usd": null
+    },
+    "judge": null,
+    "outcomes": {
+      "decide_declined": 45,
+      "published": 48
+    },
+    "meetings": [
+      {
+        "id": "en-pipeline-review",
+        "metrics": {
+          "expected": 9,
+          "published": 8,
+          "true_positives": 8,
+          "precision": 1.0,
+          "recall": 0.8888888888888888,
+          "f1": 0.9411764705882353,
+          "forbidden_total": 2,
+          "forbidden_hits": 0,
+          "forbidden_hit_rate": 0.0,
+          "hallucination_hits": 0,
+          "hallucination_rate": 0.0
+        },
+        "expected": [
+          {
+            "at_line": 2,
+            "category": "correction",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 4,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 4
+          },
+          {
+            "at_line": 5,
+            "category": "fact",
+            "status": "hit",
+            "matched_line": 5
+          },
+          {
+            "at_line": 6,
+            "category": "answer|term",
+            "status": "hit",
+            "matched_line": 6
+          },
+          {
+            "at_line": 8,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 8
+          },
+          {
+            "at_line": 9,
+            "category": "action_item",
+            "status": "hit",
+            "matched_line": 9
+          },
+          {
+            "at_line": 10,
+            "category": "correction|fact",
+            "status": "hit",
+            "matched_line": 10
+          },
+          {
+            "at_line": 11,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 11
+          },
+          {
+            "at_line": 13,
+            "category": "answer",
+            "status": "missed",
+            "matched_line": null
+          }
+        ],
+        "published": [
+          {
+            "line": 2,
+            "category": "correction",
+            "text": "Kafka only guarantees ordering within a partition, not across partitions.\nKey by account id to keep per-account order."
+          },
+          {
+            "line": 4,
+            "category": "term",
+            "text": "Exactly-once: each event takes effect once even if delivered more than once, achieved here via idempotent writes.\n"
+          },
+          {
+            "line": 5,
+            "category": "fact",
+            "text": "ADR-7: raw topic retention is 7 days; lag alert fires at 10,000 messages.\n"
+          },
+          {
+            "line": 6,
+            "category": "term",
+            "text": "Backpressure: slowing producers or consumers when downstream cannot keep up.\n"
+          },
+          {
+            "line": 8,
+            "category": "term",
+            "text": "Dead-letter queue: holds events that failed processing so they can be inspected and replayed.\n"
+          },
+          {
+            "line": 9,
+            "category": "action",
+            "text": "Write the replay procedure for the dead-letter queue before launch; no owner assigned.\n\nWrite the replay procedure for the dead-letter queue  "
+          },
+          {
+            "line": 10,
+            "category": "fact",
+            "text": "ADR-7 sets the p95 end-to-end latency target at 2 seconds, not five.\n"
+          },
+          {
+            "line": 11,
+            "category": "follow_up",
+            "text": "Sam will confirm the latency target in the ADR by end of day.\n\nConfirm the latency target in the ADR Sam end of day"
+          }
+        ],
+        "hallucinations": [],
+        "forbidden_hits": [],
+        "outcomes": {
+          "decide_declined": 8,
+          "published": 8
+        }
+      },
+      {
+        "id": "en-roadmap-sync",
+        "metrics": {
+          "expected": 8,
+          "published": 8,
+          "true_positives": 7,
+          "precision": 0.875,
+          "recall": 0.875,
+          "f1": 0.875,
+          "forbidden_total": 2,
+          "forbidden_hits": 1,
+          "forbidden_hit_rate": 0.5,
+          "hallucination_hits": 0,
+          "hallucination_rate": 0.0
+        },
+        "expected": [
+          {
+            "at_line": 2,
+            "category": "fact",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 3,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 3
+          },
+          {
+            "at_line": 4,
+            "category": "correction|fact|answer",
+            "status": "hit",
+            "matched_line": 4
+          },
+          {
+            "at_line": 5,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 5
+          },
+          {
+            "at_line": 8,
+            "category": "clarification",
+            "status": "hit",
+            "matched_line": 8
+          },
+          {
+            "at_line": 9,
+            "category": "action_item",
+            "status": "hit",
+            "matched_line": 9
+          },
+          {
+            "at_line": 14,
+            "category": "answer",
+            "status": "hit",
+            "matched_line": 14
+          },
+          {
+            "at_line": 15,
+            "category": "follow_up",
+            "status": "missed",
+            "matched_line": null
+          }
+        ],
+        "published": [
+          {
+            "line": 2,
+            "category": "fact",
+            "text": "Q3 target for activation rate is 38%, currently 31%.\nFrom the Q3 targets document."
+          },
+          {
+            "line": 3,
+            "category": "term",
+            "text": "Holdout group: users kept out of the new experience to measure its true effect.\n"
+          },
+          {
+            "line": 4,
+            "category": "correction",
+            "text": "Marcus said about 6% monthly churn, but the Q3 targets document gives 4.2%.\n"
+          },
+          {
+            "line": 5,
+            "category": "follow_up",
+            "text": "Priya will confirm the churn number with Tom and post it.\n\nConfirm the churn number with Tom and post it Priya "
+          },
+          {
+            "line": 8,
+            "category": "clarification",
+            "text": "Who owns the API rate limiting work?\nElena asked; nobody has claimed it."
+          },
+          {
+            "line": 9,
+            "category": "action",
+            "text": "Assign an owner for API rate limiting before the sprint starts.\nNo owner or date yet.\nAssign an owner for API rate limiting  "
+          },
+          {
+            "line": 11,
+            "category": "action",
+            "text": "Elena to share the usability test plan by next Monday.\n\nShare the usability test plan Elena next Monday"
+          },
+          {
+            "line": 14,
+            "category": "answer",
+            "text": "Marcus asks who presents the roadmap at the all-hands on the twelfth.\n"
+          }
+        ],
+        "hallucinations": [],
+        "forbidden_hits": [
+          [
+            11,
+            "action_item"
+          ]
+        ],
+        "outcomes": {
+          "decide_declined": 8,
+          "published": 8
+        }
+      },
+      {
+        "id": "vi-incident-review",
+        "metrics": {
+          "expected": 7,
+          "published": 7,
+          "true_positives": 6,
+          "precision": 0.8571428571428571,
+          "recall": 0.8571428571428571,
+          "f1": 0.8571428571428571,
+          "forbidden_total": 2,
+          "forbidden_hits": 1,
+          "forbidden_hit_rate": 0.5,
+          "hallucination_hits": 1,
+          "hallucination_rate": 0.14285714285714285
+        },
+        "expected": [
+          {
+            "at_line": 2,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 5,
+            "category": "correction|clarification",
+            "status": "hit",
+            "matched_line": 5
+          },
+          {
+            "at_line": 7,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 7
+          },
+          {
+            "at_line": 9,
+            "category": "action_item",
+            "status": "hit",
+            "matched_line": 9
+          },
+          {
+            "at_line": 12,
+            "category": "answer",
+            "status": "hit",
+            "matched_line": 12
+          },
+          {
+            "at_line": 13,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 13
+          },
+          {
+            "at_line": 14,
+            "category": "action_item|follow_up",
+            "status": "missed",
+            "matched_line": null
+          }
+        ],
+        "published": [
+          {
+            "line": 2,
+            "category": "term",
+            "text": "Connection pool: nhóm kết nối cơ sở dữ liệu dùng lại thay vì mở mới mỗi lần.\nHết pool nghĩa là yêu cầu mới phải chờ."
+          },
+          {
+            "line": 5,
+            "category": "correction",
+            "text": "Timeline: alert 14 giờ 05, rollback 15 giờ 10, tức khoảng 65 phút chứ không phải hai tiếng rưỡi.\n"
+          },
+          {
+            "line": 7,
+            "category": "term",
+            "text": "Circuit breaker: ngắt lời gọi tới dịch vụ lỗi để tránh lỗi lan rộng.\n"
+          },
+          {
+            "line": 9,
+            "category": "action",
+            "text": "Cần template thông báo sự cố cho khách; chưa rõ ai làm và khi nào.\nThiếu owner và hạn.\nSoạn template thông báo sự cố cho khách  "
+          },
+          {
+            "line": 10,
+            "category": "action",
+            "text": "Khoa thêm circuit breaker trước thứ Sáu, Hà tách alert trong sprint này.\n\nThêm circuit breaker Khoa thứ Sáu"
+          },
+          {
+            "line": 12,
+            "category": "answer",
+            "text": "Vy hỏi support có tham gia diễn tập sự cố lần sau không.\nDũng trả lời có."
+          },
+          {
+            "line": 13,
+            "category": "follow_up",
+            "text": "Dũng sẽ gửi lịch diễn tập cho Vy sau khi chốt với Hà.\n\nGửi lịch diễn tập cho Vy Dũng "
+          }
+        ],
+        "hallucinations": [
+          [
+            10,
+            "thứ Sáu"
+          ]
+        ],
+        "forbidden_hits": [
+          [
+            10,
+            "action_item"
+          ]
+        ],
+        "outcomes": {
+          "decide_declined": 8,
+          "published": 7
+        }
+      },
+      {
+        "id": "vi-one-on-one",
+        "metrics": {
+          "expected": 7,
+          "published": 7,
+          "true_positives": 6,
+          "precision": 0.8571428571428571,
+          "recall": 0.8571428571428571,
+          "f1": 0.8571428571428571,
+          "forbidden_total": 2,
+          "forbidden_hits": 1,
+          "forbidden_hit_rate": 0.5,
+          "hallucination_hits": 0,
+          "hallucination_rate": 0.0
+        },
+        "expected": [
+          {
+            "at_line": 2,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 4,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 4
+          },
+          {
+            "at_line": 6,
+            "category": "answer",
+            "status": "hit",
+            "matched_line": 6
+          },
+          {
+            "at_line": 8,
+            "category": "follow_up|action_item",
+            "status": "hit",
+            "matched_line": 8
+          },
+          {
+            "at_line": 9,
+            "category": "answer|clarification",
+            "status": "missed",
+            "matched_line": null
+          },
+          {
+            "at_line": 13,
+            "category": "correction",
+            "status": "hit",
+            "matched_line": 13
+          },
+          {
+            "at_line": 14,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 14
+          }
+        ],
+        "published": [
+          {
+            "line": 2,
+            "category": "term",
+            "text": "OKR (Objectives and Key Results): khung mục tiêu và kết quả then chốt.\n"
+          },
+          {
+            "line": 4,
+            "category": "follow_up",
+            "text": "Thảo sẽ gửi hai ví dụ OKR mẫu trong tuần này.\n\nGửi hai ví dụ OKR mẫu Thảo trong tuần này"
+          },
+          {
+            "line": 6,
+            "category": "answer",
+            "text": "Thảo hỏi Phương muốn chuyển sang data platform hay ở lại payments; Phương chưa nói rõ.\n"
+          },
+          {
+            "line": 8,
+            "category": "follow_up",
+            "text": "Thảo sẽ báo HR về lộ trình thăng cấp của Phương.\n\nBáo HR về lộ trình thăng cấp Thảo "
+          },
+          {
+            "line": 11,
+            "category": "action",
+            "text": "Thảo thử giới hạn planning còn 45 phút từ sprint sau.\n\nGiới hạn planning 45 phút Thảo sprint sau"
+          },
+          {
+            "line": 13,
+            "category": "correction",
+            "text": "Thảo nói còn mười hai ngày phép, Phương nói còn tám ngày.\n"
+          },
+          {
+            "line": 14,
+            "category": "follow_up",
+            "text": "Thảo nhờ HR kiểm tra lại số ngày phép của Phương.\n\nNhờ HR kiểm tra số ngày phép Thảo "
+          }
+        ],
+        "hallucinations": [],
+        "forbidden_hits": [
+          [
+            11,
+            "action_item"
+          ]
+        ],
+        "outcomes": {
+          "decide_declined": 8,
+          "published": 7
+        }
+      },
+      {
+        "id": "vi-sales-call",
+        "metrics": {
+          "expected": 9,
+          "published": 9,
+          "true_positives": 7,
+          "precision": 0.7777777777777778,
+          "recall": 0.7777777777777778,
+          "f1": 0.7777777777777778,
+          "forbidden_total": 1,
+          "forbidden_hits": 1,
+          "forbidden_hit_rate": 1.0,
+          "hallucination_hits": 1,
+          "hallucination_rate": 0.1111111111111111
+        },
+        "expected": [
+          {
+            "at_line": 1,
+            "category": "fact|answer",
+            "status": "hit",
+            "matched_line": 1
+          },
+          {
+            "at_line": 2,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 3,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 3
+          },
+          {
+            "at_line": 4,
+            "category": "answer|clarification",
+            "status": "wrong_content",
+            "matched_line": 4
+          },
+          {
+            "at_line": 5,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 5
+          },
+          {
+            "at_line": 6,
+            "category": "fact|answer",
+            "status": "hit",
+            "matched_line": 6
+          },
+          {
+            "at_line": 8,
+            "category": "fact|answer",
+            "status": "hit",
+            "matched_line": 8
+          },
+          {
+            "at_line": 9,
+            "category": "follow_up",
+            "status": "missed",
+            "matched_line": null
+          },
+          {
+            "at_line": 10,
+            "category": "fact|answer|term",
+            "status": "hit",
+            "matched_line": 10
+          }
+        ],
+        "published": [
+          {
+            "line": 1,
+            "category": "fact",
+            "text": "Gói Business: 450.000 đồng mỗi người dùng mỗi tháng, tối thiểu 10 người dùng.\nThanh toán theo năm."
+          },
+          {
+            "line": 2,
+            "category": "follow_up",
+            "text": "Trang hứa gửi bảng giá chi tiết qua email trong hôm nay.\n\nGửi bảng giá chi tiết qua email Trang hôm nay"
+          },
+          {
+            "line": 3,
+            "category": "term",
+            "text": "WMS (Warehouse Management System): hệ thống quản lý kho.\n"
+          },
+          {
+            "line": 4,
+            "category": "answer",
+            "text": "Zentro đã đạt ISO 27001 nên đáp ứng yêu cầu của hội đồng quản trị.\n"
+          },
+          {
+            "line": 5,
+            "category": "follow_up",
+            "text": "Trang sẽ kiểm tra lại với bộ phận bảo mật rồi trả lời sau.\n\nKiểm tra ISO 27001 với bộ phận bảo mật Trang "
+          },
+          {
+            "line": 6,
+            "category": "fact",
+            "text": "Triển khai tiêu chuẩn từ 4 đến 6 tuần; phí triển khai tính riêng theo báo giá.\n"
+          },
+          {
+            "line": 8,
+            "category": "fact",
+            "text": "Chiết khấu chỉ áp dụng khi ký từ hai năm trở lên và cần quản lý phê duyệt.\n"
+          },
+          {
+            "line": 10,
+            "category": "fact",
+            "text": "Zentro hỗ trợ SSO qua SAML 2.0 và OIDC.\n"
+          },
+          {
+            "line": 12,
+            "category": "correction",
+            "text": "Trang nói thứ Ba tuần sau nhưng trước đó chưa hẹn ngày.\n"
+          }
+        ],
+        "hallucinations": [
+          [
+            4,
+            "đã đạt ISO"
+          ]
+        ],
+        "forbidden_hits": [
+          [
+            12,
+            "correction"
+          ]
+        ],
+        "outcomes": {
+          "decide_declined": 5,
+          "published": 9
+        }
+      },
+      {
+        "id": "vi-sprint-planning",
+        "metrics": {
+          "expected": 9,
+          "published": 9,
+          "true_positives": 7,
+          "precision": 0.7777777777777778,
+          "recall": 0.7777777777777778,
+          "f1": 0.7777777777777778,
+          "forbidden_total": 2,
+          "forbidden_hits": 1,
+          "forbidden_hit_rate": 0.5,
+          "hallucination_hits": 0,
+          "hallucination_rate": 0.0
+        },
+        "expected": [
+          {
+            "at_line": 2,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 2
+          },
+          {
+            "at_line": 5,
+            "category": "correction",
+            "status": "hit",
+            "matched_line": 5
+          },
+          {
+            "at_line": 7,
+            "category": "answer|clarification",
+            "status": "hit",
+            "matched_line": 7
+          },
+          {
+            "at_line": 8,
+            "category": "follow_up",
+            "status": "hit",
+            "matched_line": 8
+          },
+          {
+            "at_line": 9,
+            "category": "term",
+            "status": "hit",
+            "matched_line": 9
+          },
+          {
+            "at_line": 11,
+            "category": "action_item",
+            "status": "missed",
+            "matched_line": null
+          },
+          {
+            "at_line": 12,
+            "category": "fact",
+            "status": "hit",
+            "matched_line": 12
+          },
+          {
+            "at_line": 13,
+            "category": "follow_up",
+            "status": "missed",
+            "matched_line": null
+          },
+          {
+            "at_line": 15,
+            "category": "clarification",
+            "status": "hit",
+            "matched_line": 15
+          }
+        ],
+        "published": [
+          {
+            "line": 2,
+            "category": "term",
+            "text": "Idempotency key: khóa định danh giúp gọi lại API nhiều lần mà chỉ tạo một giao dịch.\nLan dùng để tránh trừ tiền hai lần khi retry."
+          },
+          {
+            "line": 5,
+            "category": "correction",
+            "text": "Velocity sprint trước được nói là 42 point, nhưng Lan vừa nói 52 point.\nHùng nêu 42 point trước đó."
+          },
+          {
+            "line": 7,
+            "category": "answer",
+            "text": "Quân hỏi tỷ lệ rollout đợt đầu; chưa có con số nào được chốt trong cuộc họp.\nCó thể hẹn kiểm tra số liệu rồi trả lời sau."
+          },
+          {
+            "line": 8,
+            "category": "follow_up",
+            "text": "Minh hẹn xem lại số liệu rollout rồi báo lại Quân.\n\nXem lại số liệu rollout và báo lại cho Quân Minh "
+          },
+          {
+            "line": 9,
+            "category": "term",
+            "text": "Canary release: triển khai thử cho một nhóm nhỏ trước khi mở rộng.\n"
+          },
+          {
+            "line": 10,
+            "category": "action",
+            "text": "Lan lo API giao dịch trước thứ Sáu.\n\nAPI giao dịch Lan thứ Sáu"
+          },
+          {
+            "line": 12,
+            "category": "fact",
+            "text": "Hợp đồng cam kết uptime hằng tháng 99,5% và p95 API dưới 800 ms.\nĐiều 7 hợp đồng đối tác."
+          },
+          {
+            "line": 15,
+            "category": "clarification",
+            "text": "Chưa rõ ai là owner của môi trường staging.\nQuân hỏi nhưng chưa có người nhận."
+          },
+          {
+            "line": 16,
+            "category": "follow_up",
+            "text": "Minh sẽ hỏi DevOps về owner staging.\n\nHỏi DevOps về owner của staging Minh "
+          }
+        ],
+        "hallucinations": [],
+        "forbidden_hits": [
+          [
+            10,
+            "action_item"
+          ]
+        ],
+        "outcomes": {
+          "decide_declined": 8,
+          "published": 9
+        }
+      }
+    ]
+  },
+  "summary": {
+    "metrics": {
+      "decision_recall": 1.0,
+      "action_recall": 0.8461538461538461,
+      "action_precision": 1.0,
+      "owner_accuracy": 0.9090909090909091,
+      "deadline_accuracy": 1.0,
+      "trap_hit_rate": 0.1,
+      "counts": {
+        "decisions_expected": 13,
+        "decisions_hit": 13,
+        "actions_expected": 26,
+        "actions_hit": 22,
+        "actions_produced": 22,
+        "owner_checked": 22,
+        "owner_correct": 20,
+        "owner_invented": 2,
+        "deadline_checked": 22,
+        "deadline_correct": 22,
+        "deadline_invented": 0,
+        "traps_total": 30,
+        "trap_hits": 3,
+        "failed": 0,
+        "meetings": 6
+      }
+    },
+    "latency": {
+      "calls": 6,
+      "failed": 0,
+      "mean_ms": 494.3333333333333,
+      "p50_ms": 480.0,
+      "p95_ms": 574.0,
+      "max_ms": 574.0
+    },
+    "usage": {
+      "calls": 6,
+      "input_tokens": 4194,
+      "output_tokens": 1423,
+      "cost_usd": null
+    },
+    "judge": null,
+    "meetings": [
+      {
+        "id": "en-pipeline-review",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 0.75,
+          "action_precision": 1.0,
+          "owner_accuracy": 1.0,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.0,
+          "counts": {
+            "decisions_expected": 3,
+            "decisions_hit": 3,
+            "actions_expected": 4,
+            "actions_hit": 3,
+            "actions_produced": 3,
+            "owner_checked": 3,
+            "owner_correct": 3,
+            "owner_invented": 0,
+            "deadline_checked": 3,
+            "deadline_correct": 3,
+            "deadline_invented": 0,
+            "traps_total": 5,
+            "trap_hits": 0,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [
+          "replay dead-letter"
+        ],
+        "wrong_owner": [],
+        "wrong_deadline": [],
+        "traps_hit": [],
+        "judge_score": null
+      },
+      {
+        "id": "en-roadmap-sync",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 1.0,
+          "action_precision": 1.0,
+          "owner_accuracy": 0.8,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.0,
+          "counts": {
+            "decisions_expected": 3,
+            "decisions_hit": 3,
+            "actions_expected": 5,
+            "actions_hit": 5,
+            "actions_produced": 5,
+            "owner_checked": 5,
+            "owner_correct": 4,
+            "owner_invented": 1,
+            "deadline_checked": 5,
+            "deadline_correct": 5,
+            "deadline_invented": 0,
+            "traps_total": 6,
+            "trap_hits": 0,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [],
+        "wrong_owner": [
+          "Assign an owner for API rate limiting: expected None, got Some(\"Marcus\")"
+        ],
+        "wrong_deadline": [],
+        "traps_hit": [],
+        "judge_score": null
+      },
+      {
+        "id": "vi-incident-review",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 0.75,
+          "action_precision": 1.0,
+          "owner_accuracy": 1.0,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.5,
+          "counts": {
+            "decisions_expected": 2,
+            "decisions_hit": 2,
+            "actions_expected": 4,
+            "actions_hit": 3,
+            "actions_produced": 3,
+            "owner_checked": 3,
+            "owner_correct": 3,
+            "owner_invented": 0,
+            "deadline_checked": 3,
+            "deadline_correct": 3,
+            "deadline_invented": 0,
+            "traps_total": 4,
+            "trap_hits": 2,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [
+          "lịch diễn tập Vy"
+        ],
+        "wrong_owner": [],
+        "wrong_deadline": [],
+        "traps_hit": [
+          "kéo dài hai tiếng",
+          "hai tiếng rưỡi"
+        ],
+        "judge_score": null
+      },
+      {
+        "id": "vi-one-on-one",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 0.75,
+          "action_precision": 1.0,
+          "owner_accuracy": 1.0,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.0,
+          "counts": {
+            "decisions_expected": 2,
+            "decisions_hit": 2,
+            "actions_expected": 4,
+            "actions_hit": 3,
+            "actions_produced": 3,
+            "owner_checked": 3,
+            "owner_correct": 3,
+            "owner_invented": 0,
+            "deadline_checked": 3,
+            "deadline_correct": 3,
+            "deadline_invented": 0,
+            "traps_total": 5,
+            "trap_hits": 0,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [
+          "HR ngày phép"
+        ],
+        "wrong_owner": [],
+        "wrong_deadline": [],
+        "traps_hit": [],
+        "judge_score": null
+      },
+      {
+        "id": "vi-sales-call",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 1.0,
+          "action_precision": 1.0,
+          "owner_accuracy": 1.0,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.2,
+          "counts": {
+            "decisions_expected": 1,
+            "decisions_hit": 1,
+            "actions_expected": 4,
+            "actions_hit": 4,
+            "actions_produced": 4,
+            "owner_checked": 4,
+            "owner_correct": 4,
+            "owner_invented": 0,
+            "deadline_checked": 4,
+            "deadline_correct": 4,
+            "deadline_invented": 0,
+            "traps_total": 5,
+            "trap_hits": 1,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [],
+        "wrong_owner": [],
+        "wrong_deadline": [],
+        "traps_hit": [
+          "đã đạt ISO"
+        ],
+        "judge_score": null
+      },
+      {
+        "id": "vi-sprint-planning",
+        "metrics": {
+          "decision_recall": 1.0,
+          "action_recall": 0.8,
+          "action_precision": 1.0,
+          "owner_accuracy": 0.75,
+          "deadline_accuracy": 1.0,
+          "trap_hit_rate": 0.0,
+          "counts": {
+            "decisions_expected": 2,
+            "decisions_hit": 2,
+            "actions_expected": 5,
+            "actions_hit": 4,
+            "actions_produced": 4,
+            "owner_checked": 4,
+            "owner_correct": 3,
+            "owner_invented": 1,
+            "deadline_checked": 4,
+            "deadline_correct": 4,
+            "deadline_invented": 0,
+            "traps_total": 5,
+            "trap_hits": 0,
+            "failed": 0,
+            "meetings": 1
+          }
+        },
+        "error": null,
+        "missed_decisions": [],
+        "missed_actions": [
+          "hợp đồng Lan"
+        ],
+        "wrong_owner": [
+          "Test hồi quy màn hình thanh toán: expected None, got Some(\"Quân\")"
+        ],
+        "wrong_deadline": [],
+        "traps_hit": [],
+        "judge_score": null
+      }
+    ]
+  }
+}

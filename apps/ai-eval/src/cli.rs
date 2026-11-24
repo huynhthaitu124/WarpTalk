@@ -9,9 +9,7 @@ use serde_json::Value;
 
 use crate::cost::Price;
 use crate::dataset;
-use crate::harness::{
-    DEFAULT_DATABASE_URL, DEFAULT_REDIS_URL, JudgeSetup, RunOptions, Suite, run,
-};
+use crate::harness::{DEFAULT_DATABASE_URL, DEFAULT_REDIS_URL, JudgeSetup, RunOptions, Suite, run};
 use crate::providers;
 use crate::report::{Report, compare, misses, to_markdown};
 
@@ -77,7 +75,10 @@ impl Flags {
 
     fn number<T: std::str::FromStr>(&self, k: &str) -> Result<Option<T>> {
         self.get(k)
-            .map(|s| s.parse::<T>().map_err(|_| anyhow::anyhow!("--{k}: bad number `{s}`")))
+            .map(|s| {
+                s.parse::<T>()
+                    .map_err(|_| anyhow::anyhow!("--{k}: bad number `{s}`"))
+            })
             .transpose()
     }
 
@@ -126,10 +127,7 @@ fn check_baseline(current: &Report, flags: &Flags) -> Result<ExitCode> {
     }
     eprintln!("REGRESSION against {path} (threshold {threshold}):");
     for r in &regressions {
-        eprintln!(
-            "  {}: {:.3} -> {:.3}",
-            r.metric, r.baseline, r.current
-        );
+        eprintln!("  {}: {:.3} -> {:.3}", r.metric, r.baseline, r.current);
     }
     Ok(ExitCode::from(1))
 }
@@ -210,7 +208,10 @@ async fn cmd_run(flags: &Flags) -> Result<ExitCode> {
     print!("{}", to_markdown(&report, baseline.as_ref()));
     let missed = misses(&report);
     if !missed.is_empty() {
-        println!("\n<details><summary>{} expectations not met</summary>\n", missed.len());
+        println!(
+            "\n<details><summary>{} expectations not met</summary>\n",
+            missed.len()
+        );
         for l in missed {
             println!("- {l}");
         }

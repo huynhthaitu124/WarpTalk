@@ -92,7 +92,7 @@ impl FakeProvider {
                 let hit = self
                     .latest_line(req)
                     .and_then(|i| self.script.suggestions.iter().find(|s| s.at_line == i))
-                    .filter(|s| offered.is_empty() || offered.iter().any(|c| *c == s.category));
+                    .filter(|s| offered.is_empty() || offered.contains(&s.category));
                 Ok(match hit {
                     Some(s) => json!({"should_suggest": true, "category": s.category,
                         "confidence": s.confidence, "reason": "scripted"}),
@@ -163,7 +163,9 @@ impl LlmProvider for FakeProvider {
         &self,
         _: &Request,
     ) -> Result<BoxStream<'static, Result<StreamEvent, LlmError>>, LlmError> {
-        Err(LlmError::InvalidRequest("fake provider does not stream".into()))
+        Err(LlmError::InvalidRequest(
+            "fake provider does not stream".into(),
+        ))
     }
 
     async fn validate(&self) -> Result<(), LlmError> {

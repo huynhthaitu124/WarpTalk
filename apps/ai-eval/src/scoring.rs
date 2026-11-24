@@ -8,13 +8,21 @@ use crate::dataset::{Meeting, SummaryExpect};
 use crate::textmatch;
 
 pub fn ratio(n: u64, d: u64, when_empty: f64) -> f64 {
-    if d == 0 { when_empty } else { n as f64 / d as f64 }
+    if d == 0 {
+        when_empty
+    } else {
+        n as f64 / d as f64
+    }
 }
 
 /// Wire categories use `action` for `action_item`.
 pub fn canon_category(c: &str) -> String {
     let c = c.trim().to_lowercase();
-    if c == "action" { "action_item".into() } else { c }
+    if c == "action" {
+        "action_item".into()
+    } else {
+        c
+    }
 }
 
 /// `spec` may list alternatives (`fact|answer`) or be `*`.
@@ -220,12 +228,7 @@ pub fn score_suggestions(
             .iter()
             .filter(|e| p.line >= e.at_line && p.line <= e.at_line + tolerance)
             .flat_map(|e| e.must_not_include.iter());
-        let traps: Vec<String> = spec
-            .must_not_include
-            .iter()
-            .chain(local)
-            .cloned()
-            .collect();
+        let traps: Vec<String> = spec.must_not_include.iter().chain(local).cloned().collect();
         if let Some(hit) = textmatch::first_hit(&p.text, &traps) {
             score.hallucinations.push((p.line, hit.to_owned()));
         }
@@ -238,7 +241,9 @@ pub fn score_suggestions(
             .find(|p| p.line == f.at_line && category_matches(&f.category, &p.category))
         {
             score.counts.forbidden_hits += 1;
-            score.forbidden_hits.push((p.line, canon_category(&p.category)));
+            score
+                .forbidden_hits
+                .push((p.line, canon_category(&p.category)));
         }
     }
 
@@ -382,7 +387,11 @@ pub fn score_summary(spec: &SummaryExpect, out: Option<&SummaryOutput>) -> Summa
     s.counts.traps_total = spec.must_not_include.len() as u64;
     let Some(out) = out else {
         s.counts.failed = 1;
-        s.missed_decisions = spec.decisions.iter().map(|d| d.keywords.join(" ")).collect();
+        s.missed_decisions = spec
+            .decisions
+            .iter()
+            .map(|d| d.keywords.join(" "))
+            .collect();
         s.missed_actions = spec
             .action_items
             .iter()
@@ -476,7 +485,7 @@ pub fn score_summary(spec: &SummaryExpect, out: Option<&SummaryOutput>) -> Summa
 mod tests {
     use super::*;
     use crate::dataset::{
-        ActionExpect, DecisionExpect, ExpectedSuggestion, ForbiddenSuggestion, Line, Channel,
+        ActionExpect, Channel, DecisionExpect, ExpectedSuggestion, ForbiddenSuggestion, Line,
     };
 
     fn meeting() -> Meeting {
@@ -532,10 +541,10 @@ mod tests {
     fn suggestion_scoring_known_outcome() {
         let m = meeting();
         let published = vec![
-            p(1, "term", "Alpha means first"),            // hit
-            p(4, "answer", "uptime is 99,9%"),            // right slot (within tolerance), trap -> wrong content
-            p(6, "correction", "that is wrong"),          // forbidden hit, unmatched
-            p(7, "action", "someone will do it"),         // too late for line 5 (tolerance 1)
+            p(1, "term", "Alpha means first"),    // hit
+            p(4, "answer", "uptime is 99,9%"), // right slot (within tolerance), trap -> wrong content
+            p(6, "correction", "that is wrong"), // forbidden hit, unmatched
+            p(7, "action", "someone will do it"), // too late for line 5 (tolerance 1)
         ];
         let s = score_suggestions(&m, &published, 1);
         assert_eq!(s.counts.expected, 3);
@@ -627,8 +636,14 @@ mod tests {
         let s = score_summary(&spec(), Some(&out));
         let c = &s.counts;
         assert_eq!((c.decisions_expected, c.decisions_hit), (2, 1));
-        assert_eq!((c.actions_expected, c.actions_hit, c.actions_produced), (3, 2, 2));
-        assert_eq!((c.owner_checked, c.owner_correct, c.owner_invented), (2, 1, 1));
+        assert_eq!(
+            (c.actions_expected, c.actions_hit, c.actions_produced),
+            (3, 2, 2)
+        );
+        assert_eq!(
+            (c.owner_checked, c.owner_correct, c.owner_invented),
+            (2, 1, 1)
+        );
         assert_eq!((c.deadline_checked, c.deadline_correct), (2, 2));
         assert_eq!((c.traps_total, c.trap_hits), (2, 1));
         let m = c.metrics();

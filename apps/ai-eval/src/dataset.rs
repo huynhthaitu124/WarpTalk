@@ -201,7 +201,10 @@ impl Meeting {
             }
             prev = l.t_ms;
             if !texts.insert(l.text.as_str()) {
-                bail!("{}: line {i} repeats an earlier text (texts must be unique)", self.id);
+                bail!(
+                    "{}: line {i} repeats an earlier text (texts must be unique)",
+                    self.id
+                );
             }
         }
         let sug = &self.expectations.suggestions;
@@ -259,7 +262,11 @@ mod tests {
         assert_eq!(vi, 4);
         for m in &all {
             assert!(m.lines.iter().any(|l| l.channel == Channel::Me), "{}", m.id);
-            assert!(m.lines.iter().any(|l| l.channel == Channel::Others), "{}", m.id);
+            assert!(
+                m.lines.iter().any(|l| l.channel == Channel::Others),
+                "{}",
+                m.id
+            );
         }
     }
 

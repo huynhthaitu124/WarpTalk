@@ -138,10 +138,22 @@ pub fn quality_metrics(r: &Report) -> Vec<(String, f64, Direction)> {
         v.push(("suggestions.precision".into(), m.precision, Up));
         v.push(("suggestions.recall".into(), m.recall, Up));
         v.push(("suggestions.f1".into(), m.f1, Up));
-        v.push(("suggestions.forbidden_hit_rate".into(), m.forbidden_hit_rate, Down));
-        v.push(("suggestions.hallucination_rate".into(), m.hallucination_rate, Down));
+        v.push((
+            "suggestions.forbidden_hit_rate".into(),
+            m.forbidden_hit_rate,
+            Down,
+        ));
+        v.push((
+            "suggestions.hallucination_rate".into(),
+            m.hallucination_rate,
+            Down,
+        ));
         if let Some(j) = s.judge.as_ref().filter(|j| j.judged > 0) {
-            v.push(("suggestions.faithfulness".into(), j.faithfulness_mean / 5.0, Up));
+            v.push((
+                "suggestions.faithfulness".into(),
+                j.faithfulness_mean / 5.0,
+                Up,
+            ));
         }
     }
     if let Some(s) = &r.summary {
@@ -223,7 +235,9 @@ fn latency_row(out: &mut String, name: &str, l: &LatencyStats) {
 fn usage_line(out: &mut String, u: &UsageTotals) {
     let cost = u
         .cost_usd
-        .map_or("n/a (unknown model price)".to_string(), |c| format!("${c:.4}"));
+        .map_or("n/a (unknown model price)".to_string(), |c| {
+            format!("${c:.4}")
+        });
     let _ = writeln!(
         out,
         "\nTokens: {} in / {} out over {} calls. Estimated cost: {cost}.",
@@ -241,9 +255,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
         r.suite,
         r.provider,
         r.model,
-        r.judge
-            .as_ref()
-            .map_or("none".to_string(), |j| format!("`{}` / `{}`", j.provider, j.model)),
+        r.judge.as_ref().map_or("none".to_string(), |j| format!(
+            "`{}` / `{}`",
+            j.provider, j.model
+        )),
         r.created_at,
         r.line_tolerance
     );
@@ -264,12 +279,25 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
     if let Some(s) = &r.suggestions {
         let m = &s.metrics;
         let _ = writeln!(o, "\n## Suggestions\n");
-        let _ = writeln!(o, "| metric | value | baseline | delta |\n|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "| metric | value | baseline | delta |\n|---|---|---|---|"
+        );
         row(&mut o, "precision", "suggestions.precision", m.precision);
         row(&mut o, "recall", "suggestions.recall", m.recall);
         row(&mut o, "F1", "suggestions.f1", m.f1);
-        row(&mut o, "forbidden-hit rate (lower is better)", "suggestions.forbidden_hit_rate", m.forbidden_hit_rate);
-        row(&mut o, "hallucination rate (lower is better)", "suggestions.hallucination_rate", m.hallucination_rate);
+        row(
+            &mut o,
+            "forbidden-hit rate (lower is better)",
+            "suggestions.forbidden_hit_rate",
+            m.forbidden_hit_rate,
+        );
+        row(
+            &mut o,
+            "hallucination rate (lower is better)",
+            "suggestions.hallucination_rate",
+            m.hallucination_rate,
+        );
         if let Some(j) = s.judge.as_ref().filter(|j| j.judged > 0) {
             let _ = writeln!(
                 o,
@@ -287,7 +315,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
             m.forbidden_total,
             m.hallucination_hits
         );
-        let _ = writeln!(o, "\n| category | expected | published | correct | precision | recall |\n|---|---|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "\n| category | expected | published | correct | precision | recall |\n|---|---|---|---|---|---|"
+        );
         for (k, c) in &s.by_category {
             let _ = writeln!(
                 o,
@@ -299,7 +330,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
                 pct(c.recall)
             );
         }
-        let _ = writeln!(o, "\n| meeting | expected | published | correct | precision | recall | forbidden | traps |\n|---|---|---|---|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "\n| meeting | expected | published | correct | precision | recall | forbidden | traps |\n|---|---|---|---|---|---|---|---|"
+        );
         for mt in &s.meetings {
             let x = &mt.metrics;
             let _ = writeln!(
@@ -316,7 +350,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
                 x.hallucination_hits
             );
         }
-        let _ = writeln!(o, "\n| call | n | mean ms | p50 ms | p95 ms | failed |\n|---|---|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "\n| call | n | mean ms | p50 ms | p95 ms | failed |\n|---|---|---|---|---|---|"
+        );
         for (k, l) in &s.latency {
             latency_row(&mut o, k, l);
         }
@@ -329,13 +366,46 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
     if let Some(s) = &r.summary {
         let m = &s.metrics;
         let _ = writeln!(o, "\n## Summary\n");
-        let _ = writeln!(o, "| metric | value | baseline | delta |\n|---|---|---|---|");
-        row(&mut o, "decision recall", "summary.decision_recall", m.decision_recall);
-        row(&mut o, "action item recall", "summary.action_recall", m.action_recall);
-        row(&mut o, "action item precision", "summary.action_precision", m.action_precision);
-        row(&mut o, "owner accuracy", "summary.owner_accuracy", m.owner_accuracy);
-        row(&mut o, "deadline accuracy", "summary.deadline_accuracy", m.deadline_accuracy);
-        row(&mut o, "trap-hit rate (lower is better)", "summary.trap_hit_rate", m.trap_hit_rate);
+        let _ = writeln!(
+            o,
+            "| metric | value | baseline | delta |\n|---|---|---|---|"
+        );
+        row(
+            &mut o,
+            "decision recall",
+            "summary.decision_recall",
+            m.decision_recall,
+        );
+        row(
+            &mut o,
+            "action item recall",
+            "summary.action_recall",
+            m.action_recall,
+        );
+        row(
+            &mut o,
+            "action item precision",
+            "summary.action_precision",
+            m.action_precision,
+        );
+        row(
+            &mut o,
+            "owner accuracy",
+            "summary.owner_accuracy",
+            m.owner_accuracy,
+        );
+        row(
+            &mut o,
+            "deadline accuracy",
+            "summary.deadline_accuracy",
+            m.deadline_accuracy,
+        );
+        row(
+            &mut o,
+            "trap-hit rate (lower is better)",
+            "summary.trap_hit_rate",
+            m.trap_hit_rate,
+        );
         if let Some(j) = s.judge.as_ref().filter(|j| j.judged > 0) {
             let _ = writeln!(
                 o,
@@ -358,7 +428,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
             c.traps_total,
             c.failed
         );
-        let _ = writeln!(o, "\n| meeting | decisions | actions | owner | deadline | traps | judge |\n|---|---|---|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "\n| meeting | decisions | actions | owner | deadline | traps | judge |\n|---|---|---|---|---|---|---|"
+        );
         for mt in &s.meetings {
             let c = &mt.metrics.counts;
             let _ = writeln!(
@@ -381,7 +454,10 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
                     .unwrap_or_else(|| "-".into())
             );
         }
-        let _ = writeln!(o, "\n| call | n | mean ms | p50 ms | p95 ms | failed |\n|---|---|---|---|---|---|");
+        let _ = writeln!(
+            o,
+            "\n| call | n | mean ms | p50 ms | p95 ms | failed |\n|---|---|---|---|---|---|"
+        );
         latency_row(&mut o, "summary", &s.latency);
         usage_line(&mut o, &s.usage);
     }
