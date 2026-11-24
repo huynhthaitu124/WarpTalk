@@ -91,6 +91,7 @@ impl SttTokenProvider for Tokens {
             token: format!("ephemeral-{n}"),
             expires_at: Utc::now() + chrono::Duration::milliseconds(self.ttl_ms),
             websocket_url: Some(self.ws_url.clone()),
+            session_config: None,
         })
     }
 }

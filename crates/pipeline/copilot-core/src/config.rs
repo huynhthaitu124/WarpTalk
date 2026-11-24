@@ -213,6 +213,7 @@ impl SttConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SinkConfig {
+    /// 1..=50 (server limit per call).
     pub batch_max: usize,
     /// Wait this long after the first pending segment for more to batch with it.
     pub batch_window_ms: u64,
@@ -243,8 +244,10 @@ impl Default for SinkConfig {
 
 impl SinkConfig {
     fn validate(&self) -> Result<(), CopilotError> {
-        if self.batch_max == 0 || self.max_buffered_segments == 0 {
-            return Err(bad("sink.batch_max and max_buffered_segments must be >= 1"));
+        if self.batch_max == 0 || self.batch_max > 50 || self.max_buffered_segments == 0 {
+            return Err(bad(
+                "sink.batch_max must be in 1..=50 (server limit) and max_buffered_segments >= 1",
+            ));
         }
         if self.retry_initial_ms == 0 || self.retry_max_ms < self.retry_initial_ms {
             return Err(bad("sink retry: 0 < retry_initial_ms <= retry_max_ms"));

@@ -6,7 +6,11 @@
 //!   the same ids, so the server can de-duplicate.
 //! - **Batching**: up to `batch_max` segments, or whatever accumulated within `batch_window_ms`.
 //! - **Retry with backoff** (exponential, jittered) on network errors, 401/403/408/425/429 and
-//!   5xx. 409 counts as delivered (duplicate). Other 4xx reject the batch (dropped, counted).
+//!   5xx. Every other 4xx (400 INVALID_SEGMENT(S), 403, 404, 409 SESSION_NOT_IN_PROGRESS...)
+//!   stops retrying: the batch is dropped and counted as rejected.
+//! - **Server limits** enforced in `submit`: 1..=50 per call (`batch_max` is validated <= 50),
+//!   text trimmed to 1..=2000 chars (empty text is skipped), times clamped to 0..=2147483647 with
+//!   start <= end, confidence clamped to 0..=1. Only final segments are sent.
 //! - **Offline buffer**: while the server is unreachable segments stay in a bounded buffer
 //!   (`max_buffered_segments`, oldest dropped first and counted) and are flushed, in order, as
 //!   soon as a request succeeds again. `submit` never blocks or fails.
@@ -88,6 +92,28 @@ impl SegmentSink for MemorySink {
     }
 }
 
+const MAX_TEXT_CHARS: usize = 2000;
+const MAX_MS: u64 = 2_147_483_647;
+
+/// Makes a segment satisfy the server's validation; `None` if it cannot (empty / non-final).
+fn sanitize(mut s: SegmentRecord) -> Option<SegmentRecord> {
+    let text = s.text.trim();
+    if text.is_empty() || !s.is_final {
+        return None;
+    }
+    s.text = text.chars().take(MAX_TEXT_CHARS).collect();
+    s.start_ms = s.start_ms.min(MAX_MS);
+    s.end_ms = s.end_ms.clamp(s.start_ms, MAX_MS);
+    s.confidence = s.confidence.map(|c| {
+        if c.is_finite() {
+            c.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    });
+    Some(s)
+}
+
 #[derive(Serialize)]
 struct Batch<'a> {
     segments: &'a [SegmentRecord],
@@ -154,10 +180,8 @@ impl Inner {
             Ok(r) => {
                 let code = r.status().as_u16();
                 match code {
-                    200..=299 | 409 => PostOutcome::Delivered,
-                    401 | 403 | 408 | 425 | 429 | 500..=599 => {
-                        PostOutcome::Retry(format!("http {code}"))
-                    }
+                    200..=299 => PostOutcome::Delivered,
+                    401 | 408 | 425 | 429 | 500..=599 => PostOutcome::Retry(format!("http {code}")),
                     _ => PostOutcome::Rejected(code),
                 }
             }
@@ -299,6 +323,10 @@ async fn run(inner: Arc<Inner>) {
 #[async_trait]
 impl SegmentSink for HttpSegmentSink {
     async fn submit(&self, segment: SegmentRecord) {
+        let Some(segment) = sanitize(segment) else {
+            self.inner.rejected.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
         {
             let mut b = self.inner.buf();
             if b.len() >= self.inner.cfg.max_buffered_segments {

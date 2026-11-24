@@ -328,7 +328,7 @@ fn config_defaults_json_and_validation() {
     assert_eq!(c.echo.action, EchoAction::Drop);
     assert_eq!(c.me.endpointer.vad_threshold, 0.5);
     assert_eq!(c.others.endpointer.vad_threshold, 0.35);
-    assert!(CopilotConfig::from_json(r#"{"sink":{"batch_max":0}}"#).is_err());
+    assert!(CopilotConfig::from_json(r#"{"sink":{"batch_max":51}}"#).is_err());
     assert!(CopilotConfig::from_json(r#"{"me":{"endpointer":{"chunk_duration_ms":1}}}"#).is_err());
     assert!(CopilotConfig::from_json("not json").is_err());
 }

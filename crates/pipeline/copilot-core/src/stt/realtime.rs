@@ -129,13 +129,16 @@ impl SpeechToText for EphemeralRealtimeStt {
         let ws = self.connect(&url, &tok.token).await?;
         let (mut writer, reader_half) = ws.split();
         let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
-        send_event(
-            &mut writer,
-            &ClientEvent::SessionUpdate {
-                session: self.session_config(&tok.model, lang.as_deref()),
-            },
-        )
-        .await?;
+        // A server-issued token already carries the transcription config.
+        if tok.session_config.is_none() {
+            send_event(
+                &mut writer,
+                &ClientEvent::SessionUpdate {
+                    session: self.session_config(&tok.model, lang.as_deref()),
+                },
+            )
+            .await?;
+        }
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dead = Arc::new(AtomicBool::new(false));
         let event_timeout = Duration::from_millis(self.cfg.event_timeout_ms);

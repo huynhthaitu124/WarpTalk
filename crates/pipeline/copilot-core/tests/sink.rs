@@ -18,6 +18,7 @@ struct Server {
     fail_next: AtomicU64,
     down: AtomicBool,
     reject: AtomicBool,
+    reject_code: AtomicU64,
     requests: Mutex<Vec<(String, String, Value)>>, // (session, auth, body)
     accepted: Mutex<Vec<String>>,                  // client ids accepted (2xx), dedup-able
 }
@@ -38,7 +39,8 @@ async fn segments(
         return StatusCode::SERVICE_UNAVAILABLE;
     }
     if s.reject.load(Ordering::SeqCst) {
-        return StatusCode::UNPROCESSABLE_ENTITY;
+        let c = s.reject_code.load(Ordering::SeqCst) as u16;
+        return StatusCode::from_u16(if c == 0 { 422 } else { c }).unwrap();
     }
     if s.fail_next
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
@@ -240,4 +242,49 @@ async fn unreachable_server_buffers_then_recovers_after_bearer_update() {
     assert!(sink.stats().offline);
     assert_eq!(sink.stats().buffered, 1);
     sink.set_bearer("rotated");
+}
+
+#[tokio::test]
+async fn stops_retrying_on_409_403_404_and_sanitizes_to_server_limits() {
+    for code in [409u64, 403, 404] {
+        let (srv, base) = serve().await;
+        srv.reject.store(true, Ordering::SeqCst);
+        srv.reject_code.store(code, Ordering::SeqCst);
+        let sink = HttpSegmentSink::spawn(cfg(), &base, "s", "t").unwrap();
+        sink.submit(seg(0)).await;
+        sink.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            srv.requests.lock().unwrap().len(),
+            1,
+            "code {code} must not be retried"
+        );
+        assert_eq!(sink.stats().rejected, 1);
+        sink.close().await;
+    }
+    let (srv, base) = serve().await;
+    let sink = HttpSegmentSink::spawn(cfg(), &base, "s", "t").unwrap();
+    let mut long = seg(1);
+    long.text = "x".repeat(5000);
+    long.start_ms = u64::MAX;
+    long.end_ms = 5;
+    long.confidence = Some(7.0);
+    let mut empty = seg(2);
+    empty.text = "   ".into();
+    let mut interim = seg(3);
+    interim.is_final = false;
+    for s in [long, empty, interim] {
+        sink.submit(s).await;
+    }
+    sink.flush().await.unwrap();
+    let reqs = srv.requests.lock().unwrap().clone();
+    assert_eq!(reqs.len(), 1);
+    let segs = reqs[0].2["segments"].as_array().unwrap();
+    assert_eq!(segs.len(), 1);
+    assert_eq!(segs[0]["text"].as_str().unwrap().len(), 2000);
+    assert_eq!(segs[0]["startMs"], 2_147_483_647u64);
+    assert_eq!(segs[0]["endMs"], 2_147_483_647u64);
+    assert_eq!(segs[0]["confidence"], 1.0);
+    assert_eq!(sink.stats().rejected, 2);
+    sink.close().await;
 }

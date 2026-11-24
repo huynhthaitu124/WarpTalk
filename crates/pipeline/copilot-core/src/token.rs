@@ -23,6 +23,10 @@ pub struct SttToken {
     pub expires_at: DateTime<Utc>,
     #[serde(default)]
     pub websocket_url: Option<String>,
+    /// Present when the server already baked the transcription config into the token: the
+    /// client then connects straight to `websocket_url` and sends no `session.update`.
+    #[serde(default)]
+    pub session_config: Option<serde_json::Value>,
 }
 
 impl std::fmt::Debug for SttToken {
@@ -213,6 +217,7 @@ mod tests {
                 token: format!("tok-{n}"),
                 expires_at: (self.now)() + chrono::Duration::seconds(self.ttl_s),
                 websocket_url: None,
+                session_config: None,
             })
         }
     }
