@@ -15,7 +15,7 @@ import { useWorkspace } from '@/lib/workspace';
 import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
 import {
   PLATFORMS, platformLabel, sessionIsLive, useActionItems, useCreateSession, useMyActionItems, useRegenerateSummary, useSession, useSessions, useSetActionItemDone,
-  useSetMyActionItemDone, useSummary, useTranscript, type ActionItem, type CopilotSession,
+  useSetMyActionItemDone, useSummary, summaryBusy, useEndSession, useTranscript, type ActionItem, type CopilotSession,
 } from '@/lib/copilot';
 import { RoomDot, formatShortDate, formatWhen } from './common';
 import { SuggestionsTab } from './meeting/Suggestions';
@@ -144,7 +144,7 @@ function ActionItemsTab() {
       {items.map((a) => (
         <ActionItemRow
           key={a.id} item={a} to={a.roomId ? `/sessions/${a.roomId}` : undefined} busy={set.isPending && set.variables?.id === a.id}
-          onToggle={(done) => set.mutate({ id: a.id, done }, { onError: (e) => toast({ tone: 'danger', title: 'Could not update the action item', description: errMsg(e) }) })}
+          onToggle={(done) => set.mutate({ id: a.id, roomId: a.roomId, done }, { onError: (e) => toast({ tone: 'danger', title: 'Could not update the action item', description: errMsg(e) }) })}
         />
       ))}
     </ul>
@@ -241,6 +241,12 @@ function TranscriptBand({ roomId, live }: { roomId: string; live: boolean }) {
   );
 }
 
+function failureText(code?: string) {
+  if (code === 'LLM_NOT_CONFIGURED') return 'No AI provider is configured for this workspace. Add one in Settings, then regenerate.';
+  if (code === 'NO_TRANSCRIPT') return 'There was no transcript to summarise.';
+  return code ? `Error: ${code}. Try regenerating.` : 'Try regenerating.';
+}
+
 function SummaryBand({ roomId, ended, waiting, onRequested }: { roomId: string; ended: boolean; waiting: boolean; onRequested(): void }) {
   const summary = useSummary(roomId, true, waiting);
   const regen = useRegenerateSummary(roomId);
@@ -258,25 +264,35 @@ function SummaryBand({ roomId, ended, waiting, onRequested }: { roomId: string; 
               onError: (e) => toast({ tone: 'danger', title: 'Could not regenerate the summary', description: errMsg(e) }),
             })}
           >
-            <ArrowsClockwise size={14} aria-hidden />{s ? 'Regenerate summary' : 'Generate summary'}
+            <ArrowsClockwise size={14} aria-hidden />{s && (s.short || s.detailed) ? 'Regenerate summary' : 'Generate summary'}
           </Button>
         )}
       </GroupHeader>
       <div className="px-4 py-3">
-        {summary.isLoading ? <Skeleton className="h-16" /> : summary.isError ? <Alert tone="danger" title="Could not load the summary">{errMsg(summary.error)}</Alert> : s ? (
+        {summary.isLoading ? <Skeleton className="h-16" /> : summary.isError ? <Alert tone="danger" title="Could not load the summary">{errMsg(summary.error)}</Alert> : s && (s.short || s.detailed) ? (
           <div className="flex flex-col gap-3" data-testid="summary">
-            <p className="whitespace-pre-wrap break-words text-body text-ink">{s.text}</p>
+            {s.short && <p className="whitespace-pre-wrap break-words text-body font-medium text-ink">{s.short}</p>}
+            {s.detailed && <p className="whitespace-pre-wrap break-words text-body text-ink">{s.detailed}</p>}
             {s.decisions.length > 0 && (
               <div>
                 <h3 className="text-body-sm font-semibold text-ink">Decisions</h3>
                 <ul className="mt-1 list-disc pl-5 text-body text-ink">{s.decisions.map((d, i) => <li key={i}>{d}</li>)}</ul>
               </div>
             )}
+            {s.openQuestions.length > 0 && (
+              <div>
+                <h3 className="text-body-sm font-semibold text-ink">Open questions</h3>
+                <ul className="mt-1 list-disc pl-5 text-body text-ink">{s.openQuestions.map((d, i) => <li key={i}>{d}</li>)}</ul>
+              </div>
+            )}
+            {summaryBusy(s) && <p className="text-caption text-ink-subtle">Updating the summary…</p>}
             {s.generatedAt && <p className="text-caption text-ink-subtle">Generated {formatWhen(s.generatedAt)}</p>}
           </div>
+        ) : s?.status === 'failed' ? (
+          <Alert tone="warning" title="The summary could not be generated">{failureText(s.errorCode)}</Alert>
         ) : (
           <p className="text-body-sm text-ink-muted" data-testid="summary-empty">
-            {!ended ? 'The summary and minutes are generated when the session ends.' : waiting ? 'Generating the summary. This page updates when it is ready.' : 'No summary yet.'}
+            {!ended ? 'The summary and minutes are generated when the session ends.' : waiting || summaryBusy(s) ? 'Generating the summary. This page updates when it is ready.' : 'No summary yet.'}
           </p>
         )}
       </div>
@@ -323,6 +339,7 @@ export function SessionDetailPage() {
   const native = useNative();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const end = useEndSession(sessionId);
   const [waiting, setWaiting] = useState(false);
   const wasLive = useRef(false);
   useEffect(() => { if (wasLive.current && !live) setWaiting(true); wasLive.current = live; }, [live]);
@@ -362,6 +379,14 @@ export function SessionDetailPage() {
             <a href={s.meetingUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-body-sm"><LinkIcon size={14} aria-hidden />Meeting link</a>
           )}
         </div>
+        {!ended && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="danger-soft" loading={end.isPending}
+              onClick={() => end.mutate(undefined, { onSuccess: () => setWaiting(true), onError: (e) => toast({ tone: 'danger', title: 'Could not end the session', description: errMsg(e) }) })}
+            >End session</Button>
+          </div>
+        )}
         {!ended && (canCapture ? (
           <div className="flex flex-wrap gap-2">
             {live

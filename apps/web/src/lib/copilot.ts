@@ -4,10 +4,12 @@
 //   GET  /copilot/sessions/{id}                    -> CopilotSession   (falls back to GET /translation-rooms/{id})
 //   POST /copilot/sessions {workspaceId,title,platform,meetingUrl,languages{me,others}} -> CopilotSession
 //   GET  /transcripts/{roomId}                     -> { status, segments: [{ id, speakerName, originalText, startTimeMs, sequenceOrder, isFinal }] }
-//   GET  /meetings/{roomId}/summary                -> { summary, decisions?, status?, generatedAt? }
-//   POST /meetings/{roomId}/summary/regenerate     -> 202/200
-//   GET  /meetings/{roomId}/action-items           -> ActionItem[] | { items }
-//   PUT  /action-items/{id}/status {status:'DONE'|'OPEN'}   (spec 09 §action items)
+//   POST /copilot/sessions/{id}/end                -> session (status ENDED, idempotent)
+//   GET  /meetings/{roomId}/summary                -> { status: none|pending|running|completed|failed, latest, lastCompleted, content{summaryShort,summaryDetailed,decisions,openQuestions,...}, errorCode }
+//   POST /meetings/{roomId}/summary/regenerate     -> 202 (409 SUMMARY_IN_PROGRESS)
+//   GET  /meetings/{roomId}/action-items           -> { items: [{ id, task, owner, due, status: open|done }] }
+//   PATCH /meetings/{roomId}/action-items/{id} {status:'open'|'done'}
+//   GET  /workspaces/{id}/action-items?status=open&mine=true
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { api, ApiError } from './api';
@@ -154,23 +156,50 @@ export function useTranscript(roomId: string | undefined, live: boolean) {
 }
 
 // ---- summary and action items
-export interface MeetingSummary { text: string; decisions: string[]; status?: string; generatedAt?: string }
+export interface MeetingSummary {
+  /** `none` | `pending` | `running` | `completed` | `failed` (backend job state). */
+  status: string;
+  short: string;
+  detailed: string;
+  decisions: string[];
+  openQuestions: string[];
+  errorCode?: string;
+  generatedAt?: string;
+}
 
+const strList = (v: unknown) => listOf(v).flatMap((d) => {
+  const t = typeof d === 'string' ? d : str(obj(d)?.text) ?? str(obj(d)?.decision);
+  return t ? [t] : [];
+});
+
+/**
+ * `GET /meetings/{id}/summary` -> `{ status, latest, lastCompleted }`; the text lives in `content`
+ * (`summaryShort`, `summaryDetailed`, `decisions[]`, `openQuestions[]`). Older flat shapes (`summary`) are accepted too.
+ */
 export function parseSummary(json: unknown): MeetingSummary | null {
   const o = obj(json);
   if (!o) return null;
-  const text = str(o.summary) ?? str(o.content) ?? str(o.minutes) ?? str(o.text);
-  if (!text) return null;
-  const decisions = listOf(o.decisions ?? o.keyDecisions).flatMap((d) => (typeof d === 'string' ? [d] : str(obj(d)?.text) ? [str(obj(d)?.text)!] : []));
-  return { text, decisions, status: str(o.status), generatedAt: str(o.generatedAt) ?? str(o.createdAt) };
+  const content = obj(o.content) ?? obj(obj(o.lastCompleted)?.content) ?? obj(obj(o.latest)?.content) ?? o;
+  const short = str(content.summaryShort) ?? str(content.summary) ?? str(content.text) ?? '';
+  const detailed = str(content.summaryDetailed) ?? str(content.minutes) ?? '';
+  const status = (str(o.status) ?? (short || detailed ? 'completed' : 'none')).toLowerCase();
+  const latest = obj(o.latest);
+  const errorCode = str(o.errorCode) ?? str(latest?.errorCode);
+  if (!short && !detailed && status === 'none') return null;
+  return {
+    status, short, detailed, decisions: strList(content.decisions ?? content.keyDecisions), openQuestions: strList(content.openQuestions), errorCode,
+    generatedAt: str(o.generatedAt) ?? str(latest?.completedAt) ?? str(obj(o.lastCompleted)?.completedAt) ?? str(o.createdAt),
+  };
 }
+
+export const summaryBusy = (s?: MeetingSummary | null) => s?.status === 'pending' || s?.status === 'running';
 
 export function useSummary(roomId: string | undefined, enabled: boolean, poll: boolean) {
   return useQuery({
     queryKey: ['summary', roomId],
     enabled: !!roomId && enabled,
     retry: false,
-    refetchInterval: (q) => (poll && !q.state.data ? 5_000 : false),
+    refetchInterval: (q) => (summaryBusy(q.state.data) || (poll && !q.state.data) ? 4_000 : false),
     queryFn: async () => {
       try { return parseSummary(await api(`/meetings/${roomId}/summary`, { schema: z.unknown() })); } catch (e) { if (gone(e)) return null; throw e; }
     },
@@ -179,8 +208,22 @@ export function useSummary(roomId: string | undefined, enabled: boolean, poll: b
 export function useRegenerateSummary(roomId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api(`/meetings/${roomId}/summary/regenerate`, { method: 'POST' }),
+    mutationFn: async () => {
+      try { await api(`/meetings/${roomId}/summary/regenerate`, { method: 'POST' }); } catch (e) {
+        if (e instanceof ApiError && e.code === 'SUMMARY_IN_PROGRESS') return; // already running: just keep polling
+        throw e;
+      }
+    },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['summary', roomId] }); void qc.invalidateQueries({ queryKey: ['action-items', roomId] }); },
+  });
+}
+
+/** `POST /copilot/sessions/{id}/end` (idempotent): ends the session; the backend then writes the summary. */
+export function useEndSession(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api(`/copilot/sessions/${id}/end`, { method: 'POST', schema: z.unknown() }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['copilot-session', id] }); void qc.invalidateQueries({ queryKey: ['copilot-sessions'] }); },
   });
 }
 
@@ -216,8 +259,8 @@ export function useActionItems(roomId: string | undefined, enabled = true) {
 export function useSetActionItemDone(roomId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; done: boolean }) => api(`/action-items/${v.id}/status`, { method: 'PUT', body: { status: v.done ? 'DONE' : 'OPEN' } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['action-items', roomId] }),
+    mutationFn: (v: { id: string; done: boolean }) => api(`/meetings/${roomId}/action-items/${v.id}`, { method: 'PATCH', body: { status: v.done ? 'done' : 'open' } }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['action-items', roomId] }); void qc.invalidateQueries({ queryKey: ['action-items', 'mine'] }); },
   });
 }
 
@@ -229,7 +272,7 @@ export function useMyActionItems(wsId: string | undefined) {
     retry: false,
     queryFn: async () => {
       try {
-        const json = await api(`/workspaces/${wsId}/action-items/mine`, { schema: z.unknown() });
+        const json = await api(`/workspaces/${wsId}/action-items`, { query: { status: 'open', mine: true }, schema: z.unknown() });
         return listOf(json, 'actionItems').flatMap((e) => {
           const o = obj(e);
           const roomId = str(o?.roomId) ?? str(o?.translationRoomId) ?? str(o?.sessionId);
@@ -242,7 +285,10 @@ export function useMyActionItems(wsId: string | undefined) {
 export function useSetMyActionItemDone(wsId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; done: boolean }) => api(`/action-items/${v.id}/status`, { method: 'PUT', body: { status: v.done ? 'DONE' : 'OPEN' } }),
+    mutationFn: (v: { id: string; roomId?: string; done: boolean }) => {
+      if (!v.roomId) throw new Error('This action item has no session to update.');
+      return api(`/meetings/${v.roomId}/action-items/${v.id}`, { method: 'PATCH', body: { status: v.done ? 'done' : 'open' } });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['action-items', 'mine', wsId] }),
   });
 }

@@ -1,5 +1,5 @@
+import { test as raw } from '../fixtures';
 import { createWorkspace, expect, rnd, test } from '../fixtures';
-import { test as raw } from '@playwright/test';
 
 raw.describe('Keyboard', () => {
   raw('KBD-02 focus ring visible while tabbing the login form', async ({ page }) => {
@@ -102,6 +102,8 @@ test.describe('Keyboard (signed in)', () => {
   test('KBD-07 advertised shortcuts work: G then M/H/S, C, J (FN-01)', async ({ app, workspace }) => {
     await app.goto(`/${workspace.slug}/home`);
     await expect(app.getByTestId('current-workspace')).toHaveText(workspace.name);
+    // shortcuts follow the feature flags: wait until they have loaded
+    await expect(app.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Meetings' })).toBeVisible();
     await app.keyboard.press('g');
     await app.keyboard.press('m');
     await expect(app).toHaveURL(new RegExp(`/${workspace.slug}/meetings`));

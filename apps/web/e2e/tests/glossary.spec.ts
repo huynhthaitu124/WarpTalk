@@ -1,11 +1,11 @@
 // Glossary: workspace glossaries (CRUD, inline terms, CSV import/export, RBAC), the system-admin global glossary,
 // a11y and visual snapshots (dark/light, 1280 and 390). Real backend throughout.
+import { test as raw } from '../fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import {
   call, createRoom, createUser, createWorkspace, expect, inviteAndAccept, login, makeSystemAdmin, ok, rnd, seedSession, signedInContext, test, type Tokens,
 } from '../fixtures';
-import { test as raw } from '@playwright/test';
 
 interface G { id: string; name: string; termCount: number; sourceLanguage: string; targetLanguage: string }
 interface T { id: string; sourceTerm: string; targetTerm: string; caseSensitive: boolean; notes: string | null }

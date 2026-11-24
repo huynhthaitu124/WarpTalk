@@ -1,7 +1,7 @@
 // Workspace documents: upload (picker + drag and drop), validation, RBAC, edit, archive, download, a11y, visual (real backend, local object store).
+import { test as raw } from '../fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { test as raw } from '@playwright/test';
 import {
   call, createUser, createWorkspace, expect, inviteAndAccept, listDocuments, login, ok, postDocument, rnd, seedSession, signedInContext, test, uploadDocument, verifyEmail,
 } from '../fixtures';
