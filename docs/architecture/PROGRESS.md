@@ -54,6 +54,14 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [ ] macOS app: build thật trên Mac + sửa VERIFY; pipeline `livekit-rtc` build thật (cần clang ≥ 21)
 - [ ] Còn thiếu backend: documents upload, voice profile/consent, billing, notification, WarpBot chat, forgot-password, calendar
 
+## P0 copilot (ADR 0001) — xong 2026-11-24
+
+- Rust 737 pass / 0 fail, clippy -D warnings sạch; Playwright 339 pass / 0 fail / 12 skip.
+- Backend: feature flags (`GET /features`), phiên copilot (`COPILOT_SESSION`), `POST .../segments` → `stt:results`, `POST .../stt-token` (ephemeral, UNVERIFIED endpoint OpenAI), tóm tắt/biên bản/action item sau phiên.
+- `copilot-core`: engine 2 kênh (Tôi/Người khác), STT ephemeral token, echo guard, sink HTTP có buffer offline, facade sẵn UniFFI, `copilot-cli`.
+- Web: dịch họp ẩn mặc định; trang Sessions/Session detail/Action items; compose mặc định không LiveKit.
+- P1 tiếp theo: UniFFI binding + màn Phiên copilot + overlay trên macOS; quyết định: tóm tắt có tôn trọng `externalLlmAllowed` không.
+
 ## Trạng thái cuối 2026-11-22
 
 - Rust: 677 test pass toàn workspace, clippy -D warnings sạch.
