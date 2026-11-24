@@ -4,6 +4,7 @@ import {
   Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, FieldRow, Input, PageHeader, SectionLabel, SettingsGroup, SettingsRow, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
 } from '@/ui';
 import { cn } from '@/lib/cn';
+import { AccountSecurity } from './AccountSecurity';
 import { AiSettings } from './AiSettings';
 import { GlobalGlossaryAdmin } from './GlobalGlossary';
 import { VoiceSection } from './VoiceProfile';
@@ -253,6 +254,7 @@ function AccountTab() {
           </div>
         </SettingsGroup>
       </section>
+      <AccountSecurity />
       <section aria-label="Appearance">
         <SectionLabel>Appearance</SectionLabel>
         <SettingsGroup>

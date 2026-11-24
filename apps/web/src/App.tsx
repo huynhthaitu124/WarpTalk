@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { useWorkspace, WorkspaceProvider } from '@/lib/workspace';
 import { Padded, Skeleton } from '@/ui';
 import { Shell, SkipLink } from '@/features/Shell';
-import { LoginPage, RegisterPage, VerifyEmailPage } from '@/features/Auth';
+import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage, VerifyEmailPage } from '@/features/Auth';
 import { RoomDetailPage } from '@/features/RoomDetail';
 import { JoinByCodePage } from '@/features/Join';
 import { MeetingsPage } from '@/features/Meetings';
@@ -57,6 +57,8 @@ export function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/design" element={<Suspense fallback={null}><DesignPage /></Suspense>} />
         <Route element={<Protected />}>

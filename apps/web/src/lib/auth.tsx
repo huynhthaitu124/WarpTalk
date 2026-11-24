@@ -11,6 +11,7 @@ interface AuthCtx {
   userId: string | null;
   email: string | null;
   login(email: string, password: string): Promise<void>;
+  loginWithGoogle(idToken: string): Promise<void>;
   register(input: { email: string; password: string; fullName: string }): Promise<string>;
   verifyEmail(token: string): Promise<void>;
   logout(): Promise<void>;
@@ -48,6 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await api('/auth/login', { method: 'POST', body: { email, password }, schema: authResponse, auth: false });
     session.set(r);
   }, []);
+  const loginWithGoogle = useCallback(async (idToken: string) => {
+    const r = await api('/auth/google', { method: 'POST', body: { idToken }, schema: authResponse, auth: false });
+    session.set(r);
+  }, []);
   const register = useCallback(async (input: { email: string; password: string; fullName: string }) => {
     const r = await api('/auth/register', { method: 'POST', body: input, schema: registerResponse, auth: false });
     return r.userId;
@@ -64,8 +69,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const status: Status = !booted ? 'loading' : sInfo ? 'authed' : 'anon';
   const value = useMemo<AuthCtx>(
-    () => ({ status, userId: sInfo?.userId ?? null, email: sInfo?.email ?? null, login, register, verifyEmail, logout }),
-    [status, sInfo, login, register, verifyEmail, logout],
+    () => ({ status, userId: sInfo?.userId ?? null, email: sInfo?.email ?? null, login, loginWithGoogle, register, verifyEmail, logout }),
+    [status, sInfo, login, loginWithGoogle, register, verifyEmail, logout],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

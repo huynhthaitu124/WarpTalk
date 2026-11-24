@@ -25,6 +25,9 @@ export const profile = z.object({
   timezone: z.string().nullable().optional(),
   emailVerified: z.boolean().optional(),
   systemAdmin: z.boolean().optional(),
+  /** False for accounts created through Google (no local password yet). */
+  hasPassword: z.boolean().optional(),
+  googleLinked: z.boolean().optional(),
 });
 export type Profile = z.infer<typeof profile>;
 

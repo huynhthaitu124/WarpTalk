@@ -29,9 +29,9 @@ const REDIS = process.env.E2E_REDIS ?? 'redis://localhost:6379';
 
 /**
  * Raw token the API "emailed": the test backend (DEV_MAIL_CAPTURE=1) stores it in Redis under
- * `dev:mail:{verify|workspace-invite}:{email}` for an hour. TEST BACKEND ONLY.
+ * `dev:mail:{verify|workspace-invite|reset}:{email}` for an hour. TEST BACKEND ONLY.
  */
-export async function devMail(kind: 'verify' | 'workspace-invite', email: string): Promise<string> {
+export async function devMail(kind: 'verify' | 'workspace-invite' | 'reset', email: string): Promise<string> {
   const key = `dev:mail:${kind}:${email.toLowerCase()}`;
   for (let i = 0; i < 20; i++) {
     const v = execFileSync('redis-cli', ['-u', REDIS, '--no-raw', 'GET', key], { encoding: 'utf8' }).trim();

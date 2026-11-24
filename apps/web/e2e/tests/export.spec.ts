@@ -18,4 +18,15 @@ test.describe('Static export (macOS bundle)', () => {
     await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
     expect((await request.get('/_next/static/missing.js')).status()).toBe(404);
   });
+
+  test('EXP-03 no NEXT_PUBLIC_GOOGLE_CLIENT_ID in the build: no Google button, GIS script never requested', async ({ page }) => {
+    const requested: string[] = [];
+    page.on('request', (r) => { if (r.url().includes('accounts.google.com')) requested.push(r.url()); });
+    await page.goto('/login');
+    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+    await page.goto('/register');
+    await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
+    await expect(page.getByTestId('google-signin')).toHaveCount(0);
+    expect(requested).toEqual([]);
+  });
 });

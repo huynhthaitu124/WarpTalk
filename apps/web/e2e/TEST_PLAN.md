@@ -434,3 +434,26 @@ The host is the scriptable mock `fixtures/native-mock.ts`, extended with `copilo
 | VR-22/23 | P1 | Screenshots: live detail 1280 and 390 dark + light; native start dialog 1280 + 390 | match | auto |
 
 Notes: dedupe never relies on a text match alone when ids are available; the polled transcript stays the source of truth. `copilot.levels.rms` negative = dBFS, otherwise linear 0..1 (the host contract does not fix the unit; both are accepted).
+
+## 15. Password recovery, change password, Google sign-in (PWR) - `e2e/tests/auth-recovery.spec.ts` (chromium) + EXP-03
+
+Reset tokens are read from Redis `dev:mail:reset:{email}` (`devMail('reset', email)`, DEV_MAIL_CAPTURE=1; a new forgot request replaces the key). Google Identity Services is replaced by a route-mocked `https://accounts.google.com/gsi/client` that renders a plain button; the client id is injected per test through `window.__E2E_GOOGLE_CLIENT_ID__` (only honoured in the e2e harness build, so every other spec keeps a Google-free login page). UI copy is English like the rest of the app.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| PWR-01 | P0 | Login -> Forgot password? -> submit -> read token -> `/reset-password?token=` -> new password + confirm | Neutral "If an account exists" message; success lands on `/login?reset=1` with "Password updated"; new password signs in, old one is 401; re-using the link shows "Reset link not valid" with "Request a new link" -> `/forgot-password` | auto |
+| PWR-02 | P0 | Forgot password with an unknown email | Same neutral message (no account enumeration) | auto |
+| PWR-03 | P1 | Empty/malformed email; short password; mismatch; bogus token; no token | Field errors; INVALID_TOKEN and missing token show the invalid state | auto |
+| PWR-04 | P0 | axe on forgot, reset form, reset invalid state, dark + light | no serious/critical | auto |
+| PWR-05 | P1 | Screenshots forgot + reset at 1280 and 390, dark + light | match | auto |
+| PWR-10 | P0 | Unverified login -> "Resend verification email" | `POST /auth/resend-verification` 202, neutral confirmation; mailed token verifies | auto |
+| PWR-11 | P1 | `/verify-email?token=bad` | Error + resend (asks for the email when the URL has none, validates it) | auto |
+| PWR-20 | P0 | Settings -> Account: wrong current password, mismatch, success | Inline "current password is incorrect" (invalid + focus); success toast, form cleared; old password 401, new 200 | auto |
+| PWR-21 | P1 | `/me` says `hasPassword:false, googleLinked:true` | "Set a password" hint pointing to Forgot password (no form); Unlink Google disabled with the reason | auto |
+| PWR-22 | P1 | Link then unlink Google in settings (GIS + `/me/google/link` mocked) | Body `{idToken}`; section toggles Linked/Link | auto |
+| PWR-30 | P0 | `/design` (GIS not requested) -> `/register` + `/login` show the button; click it | `POST /auth/google {idToken}`, session set, lands on `/workspaces` | auto |
+| PWR-31 | P1 | `/auth/google` fails with INVALID_GOOGLE_TOKEN / GOOGLE_UNAVAILABLE / GOOGLE_LINK_REQUIRES_VERIFIED_EMAIL / GOOGLE_ACCOUNT_MISMATCH / ACCOUNT_LOCKED | Mapped explanatory message, stays on `/login` | auto |
+| PWR-32 | P1 | macOS host bridge without a google sign-in method | Button hidden (TODO: native method when the host adds one) | auto |
+| PWR-33 | P1 | axe on login with the Google button | no serious/critical | auto |
+| PWR-35 | P0 | No client id | No button, GIS script never requested (login + register) | auto |
+| EXP-03 | P1 | Static export built without `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No button, no request to accounts.google.com | auto |
