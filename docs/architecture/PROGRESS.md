@@ -100,3 +100,11 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - Billing: Stripe checkout/portal/webhook (chữ ký, idempotent), gói + ví credit + rate card, metering `usage:events` (copilot STT, suggestion, summary; BYO cost 0), stt-token 402 `INSUFFICIENT_CREDITS`. Trang Billing + banner trạng thái trên web.
 - Deploy: `deploy/docker/Dockerfile.{rust,web}`, `docker-compose.prod.yml` + Caddy TLS, `.github/workflows/{ci,docker,macos}.yml`, `docs/DEPLOY.md`. Chưa build image thật (không có Docker daemon).
 - Còn mở: entitlement (số phiên đồng thời, phút/tháng) chưa enforce; boundary BYO cần cờ trên `ResolvedLlm`; email theo ngôn ngữ user; rate limit theo IP; native bridge `googleSignIn`/`openExternal`; UI copy tiếng Anh (chưa i18n); `usage:events` contract nên chuyển vào `shared/contracts`.
+
+## Lõi AI — 2026-11-24
+
+- Rust 835 pass / 0 fail (trừ ai-eval: 13 pass riêng), clippy -D warnings sạch.
+- Suggestion theo vai người nói (`SttResult.channel` me/others → Role), category `answer` (chỉ `other`, bỏ cooldown, giữ dedupe), heuristic câu hỏi vi/en, few-shot tiếng Việt.
+- Knowledge: trích PDF (theo trang)/DOCX (heading, bảng)/HTML trong worker; scanned → OCR (chưa có engine → skipped).
+- `apps/ai-eval`: 6 meeting tổng hợp (4 vi, 2 en), metric suggestion/summary, judge tuỳ chọn, baseline fake + `--compare`. Chưa chạy với model thật.
+- Còn: hỏi AI trong họp + tóm tắt cuốn chiếu (WarpBot), STT dự phòng phía server, trí nhớ giữa các cuộc họp, OCR, reindex hàng loạt.
