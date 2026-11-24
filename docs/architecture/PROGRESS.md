@@ -91,3 +91,12 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - `room`: chưa có capacity limit, credit check khi resume, voice-clone toggle endpoint, các trạng thái route degrade
 - Outbox chưa có lease khi claim (consumer phải idempotent)
 - Voice consent đang là Noop
+
+## Thương mại hoá — 2026-11-24
+
+- Rust 815 pass / 0 fail, clippy -D warnings sạch; Playwright 400 pass / 0 fail / 12 skip.
+- P1 web: chế độ phiên copilot live qua native bridge (start dialog, partial, overlay, resume).
+- Auth: email Resend (UNVERIFIED với API thật) + template vi/en, quên/đặt lại/đổi mật khẩu, gửi lại xác minh, đăng nhập/liên kết Google (ID token, JWKS cache). UI web đầy đủ.
+- Billing: Stripe checkout/portal/webhook (chữ ký, idempotent), gói + ví credit + rate card, metering `usage:events` (copilot STT, suggestion, summary; BYO cost 0), stt-token 402 `INSUFFICIENT_CREDITS`. Trang Billing + banner trạng thái trên web.
+- Deploy: `deploy/docker/Dockerfile.{rust,web}`, `docker-compose.prod.yml` + Caddy TLS, `.github/workflows/{ci,docker,macos}.yml`, `docs/DEPLOY.md`. Chưa build image thật (không có Docker daemon).
+- Còn mở: entitlement (số phiên đồng thời, phút/tháng) chưa enforce; boundary BYO cần cờ trên `ResolvedLlm`; email theo ngôn ngữ user; rate limit theo IP; native bridge `googleSignIn`/`openExternal`; UI copy tiếng Anh (chưa i18n); `usage:events` contract nên chuyển vào `shared/contracts`.

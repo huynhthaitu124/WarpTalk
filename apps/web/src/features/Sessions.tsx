@@ -18,7 +18,8 @@ import {
 } from '@/lib/copilot';
 import { RoomDot, formatShortDate, formatWhen } from './common';
 import { SuggestionsTab } from './meeting/Suggestions';
-import { errMsg } from './errors';
+import { errCode, errMsg } from './errors';
+import { InsufficientCreditsAlert } from './Billing';
 import { CaptureRecovery, LiveCapturePanel, PartialLines, useAudioApps, useOverlayMirror } from './SessionLive';
 
 const langOptions = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
@@ -139,7 +140,7 @@ export function StartSessionDialog({ open, onOpenChange }: { open: boolean; onOp
               </Field>
             </fieldset>
           )}
-          {create.isError && <Alert tone="danger">{errMsg(create.error)}</Alert>}
+          {create.isError && (errCode(create.error) === 'INSUFFICIENT_CREDITS' ? <InsufficientCreditsAlert /> : <Alert tone="danger">{errMsg(create.error)}</Alert>)}
           {created && startErr && native && (
             <div className="flex flex-col gap-2" data-testid="start-error">
               <p className="text-body-sm text-ink-muted">The session was created, but capture did not start.</p>

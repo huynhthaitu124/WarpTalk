@@ -15,6 +15,7 @@ import { KnowledgePage } from '@/features/Knowledge';
 import { DocumentsPage } from '@/features/Documents';
 import { MeetingPage } from '@/features/Meeting';
 import { ExternalPage } from '@/features/External';
+import { BillingPage } from '@/features/Billing';
 import { SettingsPage } from '@/features/Settings';
 import { WorkspacesPage } from '@/features/Workspaces';
 import { SessionDetailPage, SessionsPage } from '@/features/Sessions';
@@ -73,6 +74,7 @@ export function App() {
             <Route path="/:workspaceSlug/glossary/:glossaryId" element={<GlossaryDetailPage />} />
             <Route path="/:workspaceSlug/knowledge" element={<KnowledgePage />} />
             <Route path="/:workspaceSlug/documents" element={<DocumentsPage />} />
+            <Route path="/:workspaceSlug/billing" element={<BillingPage />} />
             <Route path="/:workspaceSlug/settings" element={<SettingsPage />} />
             <Route path="/:workspaceSlug/settings/:section" element={<SettingsPage />} />
             {/* Id-addressed pages, valid for people who are not in the room's workspace. */}

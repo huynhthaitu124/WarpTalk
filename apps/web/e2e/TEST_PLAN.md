@@ -457,3 +457,23 @@ Reset tokens are read from Redis `dev:mail:reset:{email}` (`devMail('reset', ema
 | PWR-33 | P1 | axe on login with the Google button | no serious/critical | auto |
 | PWR-35 | P0 | No client id | No button, GIS script never requested (login + register) | auto |
 | EXP-03 | P1 | Static export built without `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No button, no request to accounts.google.com | auto |
+
+## 16. Billing (BILL) - `e2e/tests/billing.spec.ts` (chromium project)
+
+Workspace billing at `/:workspaceSlug/billing` (sidebar "Billing"). BILL-01/02 use the real backend (Stripe is not configured in e2e, so checkout answers 503 STRIPE_NOT_CONFIGURED); the other cases route-mock the billing endpoints for deterministic data (`mockBilling`), the checkout/portal URL (a same-origin dummy page) and the service state. UI copy is English like the rest of the app.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| BILL-01 | P0 | Owner opens Billing (real backend) | Plan card, balance region, plans grid; Buy credits without Stripe -> "payments are not set up" | auto |
+| BILL-02 | P0 | Member (invited, real backend) opens Billing | Plans visible, "Only the workspace owner can change the plan" explanation; no Upgrade / Buy credits / portal buttons | auto |
+| BILL-03 | P0 | Owner clicks Upgrade (checkout mocked) and Buy credits | `POST /billing/checkout` `{planId}` / `{topUpCredits}`; browser navigates to the returned URL; current and non-purchasable plans have disabled buttons | auto |
+| BILL-04 | P1 | Checkout answers 503 STRIPE_NOT_CONFIGURED / 403; top-up of 0 | Explained messages; client-side "whole number of credits" error | auto |
+| BILL-05 | P1 | Manage in billing portal | `POST /billing/portal`, navigates to returned URL | auto |
+| BILL-06 | P1 | `?checkout=success` / `?checkout=cancel` | "Payment received" / "Checkout cancelled" notices | auto |
+| BILL-07 | P1 | Usage grouped by day / feature / member | Table per grouping (aria-pressed toggle) | auto |
+| BILL-08 | P1 | 25 transactions, page size 10 | Page 1 of 3 -> 3 of 3; Previous/Next disabled at the ends; 10/10/5 rows | auto |
+| BILL-09 | P0 | serviceState suspended / low_balance / in_overage / healthy | Shell banner with "Open billing" link (none when healthy); Billing shows the service badge | auto |
+| BILL-10 | P2 | Sidebar Billing link | Navigates to `/:slug/billing` | auto |
+| BILL-11 | P0 | Create session answers 402 INSUFFICIENT_CREDITS | "Not enough credits" alert with Open billing link (native capture errors with that code get an Open billing action in CaptureRecovery) | auto |
+| BILL-20 | P0 | axe: billing page with banner and success notice, dark + light | no serious/critical | auto |
+| BILL-21 | P1 | Screenshots billing at 1280 and 390, dark + light | match | auto |

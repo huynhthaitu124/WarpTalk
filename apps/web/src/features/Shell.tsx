@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
-  ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
+  ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, CreditCard, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
   SquaresFour, Sparkle, Sun, Users, X,
 } from '@phosphor-icons/react';
 import {
@@ -18,6 +18,7 @@ import { useFeatures } from '@/lib/features';
 import { useSession } from '@/lib/copilot';
 import { cn } from '@/lib/cn';
 import { visibleSettingsSections } from './settingsNav';
+import { BillingBanner } from './Billing';
 
 const SHOW_DESIGN = IS_DEV;
 
@@ -187,6 +188,7 @@ function Sidebar() {
                   <SidebarLink to={wsPath('/knowledge')} icon={ico(Brain)}>Knowledge</SidebarLink>
                   <SidebarLink to={wsPath('/documents')} icon={ico(FileText)}>Documents</SidebarLink>
                   <SidebarLink to={wsPath('/glossary')} icon={ico(BookBookmark)}>Glossary</SidebarLink>
+                  <SidebarLink to={wsPath('/billing')} icon={ico(CreditCard)}>Billing</SidebarLink>
                   <SidebarLink to={wsPath('/settings')} icon={ico(GearSix)}>Settings</SidebarLink>
                 </SidebarNav>
               </>
@@ -235,7 +237,7 @@ function Breadcrumb() {
     items.push({ label: 'Settings', to: rest[1] ? wsPath('/settings') : undefined });
     if (rest[1]) items.push({ label: SETTINGS_LABEL[rest[1]] ?? rest[1] });
   } else {
-    const label = { home: 'Home', sessions: 'Sessions', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
+    const label = { home: 'Home', sessions: 'Sessions', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', billing: 'Billing', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
     items.push({ label });
   }
   const pageTitle = items.map((i) => (typeof i.label === 'string' ? i.label : '')).filter(Boolean).at(-1)
@@ -373,6 +375,7 @@ export function Shell() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel md:mr-1.5 md:mt-1.5 md:rounded-xl md:border md:border-hairline md:shadow-panel">
             <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
             <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none overflow-y-auto overflow-x-hidden">
+              <BillingBanner />
               <Outlet />
             </main>
           </div>

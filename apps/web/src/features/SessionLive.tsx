@@ -2,7 +2,9 @@
 // recovery for capture errors and the suggestion mirror to the overlay. Native contract: src/lib/native.ts.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh } from '@phosphor-icons/react';
+import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/ui';
+import { useWorkspaceOptional } from '@/lib/workspace';
 import { session } from '@/lib/session';
 import type { Suggestion } from '@/lib/suggestions';
 import { nativeErrorCode, nativeErrorMessage, type AudioApp, type NativeError, type PermissionKind, type Permissions, type WarptalkNative } from '@/lib/native';
@@ -80,6 +82,8 @@ export function useAudioApps(native: WarptalkNative | undefined) {
 export function CaptureRecovery({
   native, error, onRetry, onDismiss, onRefreshApps,
 }: { native: WarptalkNative; error: NativeError; onRetry?(): void; onDismiss(): void; onRefreshApps?(): void }) {
+  const nav = useNavigate();
+  const ws = useWorkspaceOptional();
   const [perms, setPerms] = useState<Permissions | null>(null);
   const [note, setNote] = useState('');
   const denied = error.code === 'PERMISSION_DENIED';
@@ -110,6 +114,12 @@ export function CaptureRecovery({
       };
       break;
     }
+    case 'INSUFFICIENT_CREDITS':
+      recovery = {
+        hint: 'This workspace has run out of credits, so live transcription is paused. Top up or upgrade, then try again.',
+        actions: [act('billing', 'Open billing', () => nav(ws ? ws.wsPath('/billing') : '/')), ...retry],
+      };
+      break;
     case 'NO_AUDIO_PROCESS':
       recovery = { hint: 'The meeting app is not playing sound yet. Join the call, make sure someone is audible, then try again.', actions: retry };
       break;
