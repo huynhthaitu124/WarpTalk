@@ -25,7 +25,7 @@ use super::config::{
 use super::config_source::ConfigSource;
 use super::hygiene;
 use super::model::{
-    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, SourceRef,
+    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, Role, SourceRef,
     SuggestionResult, Turn,
 };
 use super::ports::{
@@ -77,7 +77,16 @@ pub struct Admitted {
     stt: SttResult,
     turn: Turn,
     context: Vec<Turn>,
+    /// Another participant asks for a reply and the `answer` fast path may apply.
+    answer_candidate: bool,
     _guard: InflightGuard,
+}
+
+impl Admitted {
+    /// Role of the speaker of the admitted segment.
+    pub fn role(&self) -> Role {
+        self.turn.role
+    }
 }
 
 pub enum Admission {
@@ -280,6 +289,7 @@ impl SuggestionEngine {
             text,
             language: stt.language.clone(),
             at_ms: now_ms,
+            role: Role::from_channel(stt.channel.as_deref()),
         };
         let context = {
             let mut windows = match self.windows.lock() {
@@ -296,6 +306,8 @@ impl SuggestionEngine {
         {
             return Admission::Rejected(fin(Outcome::Stage0Rejected(why)));
         }
+        let answer_candidate = turn.role == Role::Other
+            && stage0::asks_for_response(&turn.text, &cfg.heuristics_for(&stt.language));
         // Gate 6: cap zero disables.
         if cfg.max_per_meeting == 0 {
             return Admission::Rejected(fin(Outcome::CapZero));
@@ -315,6 +327,7 @@ impl SuggestionEngine {
             stt: stt.clone(),
             turn,
             context,
+            answer_candidate,
             _guard: InflightGuard {
                 set: self.inflight.clone(),
                 room,
@@ -322,8 +335,10 @@ impl SuggestionEngine {
         }))
     }
 
-    fn slot_params(a: &Admitted) -> SlotParams {
+    /// `bypass_cooldown`: the hint about to be claimed is latency-critical.
+    fn slot_params(a: &Admitted, bypass_cooldown: bool) -> SlotParams {
         SlotParams {
+            bypass_cooldown,
             room: a.room,
             workspace: a.workspace,
             cooldown_seconds: a.cfg.cooldown_seconds,
@@ -371,7 +386,19 @@ impl SuggestionEngine {
         }
 
         // Gate 8: cooldown / budget probe (read-only, so a doomed attempt spends no tokens).
-        match self.deps.state.probe(&Self::slot_params(&a)).await {
+        // A segment that asks the user something may be an `answer`, which skips the cooldown.
+        let categories: Vec<ResolvedCategory> = cfg
+            .enabled_categories()
+            .into_iter()
+            .filter(|c| c.allows_role(a.turn.role))
+            .collect();
+        let may_bypass = a.answer_candidate && categories.iter().any(|c| c.skip_cooldown);
+        match self
+            .deps
+            .state
+            .probe(&Self::slot_params(&a, may_bypass))
+            .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(d)) => return fin(Self::denied(d)),
             Err(e) => {
@@ -381,7 +408,6 @@ impl SuggestionEngine {
         }
 
         // Stage 1: decide.
-        let categories = cfg.enabled_categories();
         if categories.is_empty() {
             return fin(Outcome::CategoryDisabled);
         }
@@ -404,6 +430,19 @@ impl SuggestionEngine {
         };
         if !category.enabled {
             return fin(Outcome::CategoryDisabled);
+        }
+        if !category.allows_role(a.turn.role) {
+            return fin(Outcome::RoleNotAllowed);
+        }
+        // The probe may have skipped the cooldown for a possible `answer`; any other category
+        // must still respect it (checked before spending the generate call).
+        let bypass = category.skip_cooldown && a.answer_candidate;
+        if may_bypass && !bypass {
+            match self.deps.state.probe(&Self::slot_params(&a, false)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(d)) => return fin(Self::denied(d)),
+                Err(_) => return fin(Outcome::SlotDenied),
+            }
         }
         if decision.confidence < cfg.confidence_floor(&category) {
             return fin(Outcome::BelowConfidence);
@@ -437,7 +476,7 @@ impl SuggestionEngine {
         }
 
         // Atomic claim (cooldown + budgets).
-        match self.deps.state.claim(&Self::slot_params(&a)).await {
+        match self.deps.state.claim(&Self::slot_params(&a, bypass)).await {
             Ok(Ok(())) => {}
             Ok(Err(d)) => return fin(Self::denied(d)),
             Err(e) => {
@@ -497,12 +536,27 @@ impl SuggestionEngine {
         }
     }
 
+    /// The perspective rule, only when the window carries speaker roles (copilot sessions).
+    fn perspective(a: &Admitted) -> String {
+        let has_roles = a
+            .context
+            .iter()
+            .chain(std::iter::once(&a.turn))
+            .any(|t| t.role != Role::Unknown);
+        if has_roles {
+            prompt::resolve(&a.cfg, "perspective_rule").text
+        } else {
+            String::new()
+        }
+    }
+
     fn render_transcript(a: &Admitted, with_ids: bool) -> String {
         let line = |t: &Turn, latest: bool| {
+            let name = t.role.label().unwrap_or(t.speaker_id.as_str());
             let who = if with_ids {
-                format!("#{} {}", t.segment_id, t.speaker_id)
+                format!("#{} {}", t.segment_id, name)
             } else {
-                t.speaker_id.clone()
+                name.to_string()
             };
             let text = Self::scrub(&a.cfg, &t.text)
                 .replace("</transcript>", "")
@@ -574,6 +628,15 @@ impl SuggestionEngine {
         let user_t = prompt::resolve(cfg, "decide_user");
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
         vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert("perspective_rule", Self::perspective(a));
+        vars.insert(
+            "answer_examples",
+            if !Self::perspective(a).is_empty() && categories.iter().any(|c| c.id == "answer") {
+                prompt::resolve(cfg, "decide_answer_examples").text
+            } else {
+                String::new()
+            },
+        );
         vars.insert(
             "category_descriptions",
             categories
@@ -741,6 +804,15 @@ impl SuggestionEngine {
         };
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
         vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert("perspective_rule", Self::perspective(a));
+        vars.insert(
+            "answer_examples",
+            if category.id == "answer" {
+                prompt::resolve(cfg, "generate_answer_examples").text
+            } else {
+                String::new()
+            },
+        );
         vars.insert("contract", category.contract.clone());
         vars.insert("category", category.id.clone());
         vars.insert("max_chars", cfg.max_suggestion_chars.to_string());

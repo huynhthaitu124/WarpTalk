@@ -30,6 +30,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
+pdf-extract = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
 
 [dev-dependencies]
 warptalk-config = { workspace = true }

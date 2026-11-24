@@ -136,6 +136,7 @@ fn stt(room: RoomId, seg: Uuid, text: &str, is_final: bool) -> SttResult {
         far_speaker_name: None,
         far_speaker_source: None,
         far_speaker_confidence: None,
+            channel: None,
     }
 }
 

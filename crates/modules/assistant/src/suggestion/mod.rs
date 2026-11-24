@@ -22,8 +22,8 @@ pub use config::{SuggestionConfig, register as register_config};
 pub use config_source::{ConfigSource, SettingsConfigSource, StaticConfig};
 pub use engine::{EngineDeps, SuggestionEngine};
 pub use model::{
-    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, SUGGESTION_GROUP,
-    SuggestionResult,
+    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, Role,
+    SUGGESTION_GROUP, SuggestionResult,
 };
 pub use ports::{
     AllowAllConsent, ConsentPolicy, DataBoundary, GroundedSnippet, KnowledgeQuery,

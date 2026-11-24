@@ -1,0 +1,413 @@
+{
+  "id": "vi-sprint-planning",
+  "language": "vi",
+  "title": "Sprint planning sprint 14 – thanh toán QR",
+  "participants": [
+    "Hùng",
+    "Minh",
+    "Lan",
+    "Quân"
+  ],
+  "lines": [
+    {
+      "t_ms": 9995,
+      "channel": "others",
+      "speaker": "Hùng",
+      "text": "Chào cả nhóm, hôm nay mình planning cho sprint 14, mục tiêu chính là ra bản beta của tính năng thanh toán QR."
+    },
+    {
+      "t_ms": 18340,
+      "channel": "me",
+      "speaker": "Minh",
+      "text": "Ok, mình đã xem backlog rồi, có khoảng hai mươi ticket đang ở trạng thái ready."
+    },
+    {
+      "t_ms": 28335,
+      "channel": "others",
+      "speaker": "Lan",
+      "text": "Phần backend em sẽ dùng idempotency key cho API tạo giao dịch, để tránh bị trừ tiền hai lần khi client retry."
+    },
+    {
+      "t_ms": 37340,
+      "channel": "others",
+      "speaker": "Quân",
+      "text": "Bên QA cần staging ổn định, tuần trước staging bị flaky test chiếm gần một nửa số lần fail."
+    },
+    {
+      "t_ms": 46565,
+      "channel": "others",
+      "speaker": "Hùng",
+      "text": "Velocity của sprint trước là 42 point, nên sprint này mình chỉ nên commit khoảng 40 point thôi."
+    },
+    {
+      "t_ms": 55405,
+      "channel": "others",
+      "speaker": "Lan",
+      "text": "Em nhớ sprint trước velocity của mình là 52 point mà, nên commit 50 point là ổn chứ anh."
+    },
+    {
+      "t_ms": 64025,
+      "channel": "me",
+      "speaker": "Minh",
+      "text": "Không, theo báo cáo sprint thì là 42 point, mình chốt commit 40 point cho sprint 14."
+    },
+    {
+      "t_ms": 73140,
+      "channel": "others",
+      "speaker": "Quân",
+      "text": "Anh Minh ơi, anh định rollout tính năng này cho bao nhiêu phần trăm người dùng ở đợt đầu vậy?"
+    },
+    {
+      "t_ms": 80495,
+      "channel": "me",
+      "speaker": "Minh",
+      "text": "Để mình xem lại số liệu rollout rồi báo lại cho Quân sau nhé."
+    },
+    {
+      "t_ms": 88895,
+      "channel": "others",
+      "speaker": "Lan",
+      "text": "Về deploy thì em sẽ dùng canary release, bắt đầu từ một cụm nhỏ rồi mở rộng dần."
+    },
+    {
+      "t_ms": 96470,
+      "channel": "others",
+      "speaker": "Hùng",
+      "text": "Vậy Lan phụ trách API giao dịch, xong trước thứ Sáu tuần này nhé."
+    },
+    {
+      "t_ms": 105365,
+      "channel": "others",
+      "speaker": "Hùng",
+      "text": "Phần test hồi quy cho màn hình thanh toán thì cần có người lo, chắc mình sẽ làm sớm thôi."
+    },
+    {
+      "t_ms": 113985,
+      "channel": "others",
+      "speaker": "Lan",
+      "text": "Em chưa rõ SLA của cổng thanh toán đối tác là bao nhiêu, anh có số chính thức không?"
+    },
+    {
+      "t_ms": 121670,
+      "channel": "me",
+      "speaker": "Minh",
+      "text": "Số trong hợp đồng thì mình sẽ gửi lại cho Lan trong buổi chiều nay."
+    },
+    {
+      "t_ms": 131115,
+      "channel": "others",
+      "speaker": "Hùng",
+      "text": "Okay, chốt lại: commit 40 point, Lan lo API giao dịch trước thứ Sáu, demo beta vào thứ Tư tuần sau."
+    },
+    {
+      "t_ms": 139680,
+      "channel": "others",
+      "speaker": "Quân",
+      "text": "Mình cũng cần chốt môi trường staging, ai là người owner của staging vậy mọi người?"
+    },
+    {
+      "t_ms": 146815,
+      "channel": "me",
+      "speaker": "Minh",
+      "text": "Chưa ai nhận cả, để mình hỏi bên DevOps rồi phản hồi sau."
+    }
+  ],
+  "snippets": [
+    {
+      "title": "Hợp đồng đối tác cổng thanh toán",
+      "kind": "document",
+      "text": "Điều 7. Cam kết dịch vụ (SLA) của cổng thanh toán: thời gian phản hồi API p95 dưới 800 ms; thời gian hoạt động hằng tháng đạt 99,5%. Đền bù theo điều 9 khi không đạt."
+    }
+  ],
+  "expectations": {
+    "suggestions": {
+      "expected": [
+        {
+          "at_line": 2,
+          "category": "term",
+          "must_include": [
+            "idempotency"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 5,
+          "category": "correction",
+          "must_include": [
+            "42",
+            "52"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 7,
+          "category": "answer|clarification",
+          "must_include": [
+            "rollout"
+          ],
+          "must_not_include": [
+            "10%",
+            "20%",
+            "5%",
+            "50%"
+          ]
+        },
+        {
+          "at_line": 8,
+          "category": "follow_up",
+          "must_include": [
+            "rollout"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 9,
+          "category": "term",
+          "must_include": [
+            "canary"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 11,
+          "category": "action_item",
+          "must_include": [
+            "test"
+          ],
+          "must_not_include": [
+            "thứ Sáu",
+            "thứ Hai",
+            "ngày mai"
+          ]
+        },
+        {
+          "at_line": 12,
+          "category": "fact",
+          "must_include": [
+            "99,5"
+          ],
+          "must_not_include": [
+            "99,9",
+            "99,99"
+          ]
+        },
+        {
+          "at_line": 13,
+          "category": "follow_up",
+          "must_include": [
+            "hợp đồng"
+          ],
+          "must_not_include": [
+            "ngày mai"
+          ]
+        },
+        {
+          "at_line": 15,
+          "category": "clarification",
+          "must_include": [
+            "staging"
+          ],
+          "must_not_include": []
+        }
+      ],
+      "forbidden": [
+        {
+          "at_line": 6,
+          "category": "correction"
+        },
+        {
+          "at_line": 10,
+          "category": "action_item"
+        }
+      ],
+      "must_not_include": [
+        "99,9%"
+      ]
+    },
+    "summary": {
+      "decisions": [
+        {
+          "keywords": [
+            "40",
+            "point"
+          ]
+        },
+        {
+          "keywords": [
+            "demo",
+            "beta",
+            "thứ Tư"
+          ]
+        }
+      ],
+      "action_items": [
+        {
+          "owner": "Lan",
+          "task_keywords": [
+            "API",
+            "giao dịch"
+          ],
+          "deadline": "thứ Sáu"
+        },
+        {
+          "owner": "Minh",
+          "task_keywords": [
+            "hợp đồng",
+            "Lan"
+          ],
+          "deadline": "chiều nay"
+        },
+        {
+          "owner": "Minh",
+          "task_keywords": [
+            "DevOps",
+            "staging"
+          ]
+        },
+        {
+          "task_keywords": [
+            "test",
+            "hồi quy"
+          ]
+        },
+        {
+          "owner": "Minh",
+          "task_keywords": [
+            "rollout",
+            "Quân"
+          ]
+        }
+      ],
+      "must_not_include": [
+        "99,9",
+        "52 point",
+        "rollout 10%",
+        "rollout 20%",
+        "60 point"
+      ]
+    }
+  },
+  "fake": {
+    "suggestions": [
+      {
+        "at_line": 2,
+        "category": "term",
+        "content": "Idempotency key: khóa định danh giúp gọi lại API nhiều lần mà chỉ tạo một giao dịch.",
+        "detail": "Lan dùng để tránh trừ tiền hai lần khi retry.",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 5,
+        "category": "correction",
+        "content": "Velocity sprint trước được nói là 42 point, nhưng Lan vừa nói 52 point.",
+        "detail": "Hùng nêu 42 point trước đó.",
+        "source": ""
+      },
+      {
+        "at_line": 7,
+        "category": "answer",
+        "content": "Quân hỏi tỷ lệ rollout đợt đầu; chưa có con số nào được chốt trong cuộc họp.",
+        "detail": "Có thể hẹn kiểm tra số liệu rồi trả lời sau.",
+        "source": ""
+      },
+      {
+        "at_line": 8,
+        "category": "follow_up",
+        "content": "Minh hẹn xem lại số liệu rollout rồi báo lại Quân.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Minh",
+          "task": "Xem lại số liệu rollout và báo lại cho Quân"
+        }
+      },
+      {
+        "at_line": 9,
+        "category": "term",
+        "content": "Canary release: triển khai thử cho một nhóm nhỏ trước khi mở rộng.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 12,
+        "category": "fact",
+        "content": "Hợp đồng cam kết uptime hằng tháng 99,5% và p95 API dưới 800 ms.",
+        "detail": "Điều 7 hợp đồng đối tác.",
+        "source": "S1"
+      },
+      {
+        "at_line": 10,
+        "category": "action_item",
+        "content": "Lan lo API giao dịch trước thứ Sáu.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Lan",
+          "task": "API giao dịch",
+          "due": "thứ Sáu"
+        }
+      },
+      {
+        "at_line": 15,
+        "category": "clarification",
+        "content": "Chưa rõ ai là owner của môi trường staging.",
+        "detail": "Quân hỏi nhưng chưa có người nhận.",
+        "source": ""
+      },
+      {
+        "at_line": 16,
+        "category": "follow_up",
+        "content": "Minh sẽ hỏi DevOps về owner staging.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Minh",
+          "task": "Hỏi DevOps về owner của staging"
+        }
+      }
+    ],
+    "summary": {
+      "summary_short": "Planning sprint 14: chốt commit 40 point, Lan lo API giao dịch, demo beta thứ Tư tuần sau.",
+      "summary_detailed": "Nhóm planning sprint 14 hướng tới bản beta thanh toán QR. Velocity sprint trước là 42 point nên commit 40 point. Lan dùng idempotency key và canary release. Còn mở: owner của staging.",
+      "decisions": [
+        "Commit 40 point cho sprint 14",
+        "Demo beta vào thứ Tư tuần sau"
+      ],
+      "action_items": [
+        {
+          "task": "Làm API giao dịch",
+          "owner": "Lan",
+          "due": "thứ Sáu",
+          "source_segments": []
+        },
+        {
+          "task": "Hỏi DevOps về owner của staging",
+          "owner": "Minh",
+          "due": null,
+          "source_segments": []
+        },
+        {
+          "task": "Test hồi quy màn hình thanh toán",
+          "owner": "Quân",
+          "due": null,
+          "source_segments": []
+        },
+        {
+          "task": "Xem lại số liệu rollout và báo lại Quân",
+          "owner": "Minh",
+          "due": null,
+          "source_segments": []
+        }
+      ],
+      "open_questions": [
+        "Ai là owner của staging?",
+        "Rollout đợt đầu bao nhiêu phần trăm người dùng?"
+      ],
+      "topics": [
+        "sprint planning",
+        "thanh toán QR",
+        "staging"
+      ]
+    }
+  }
+}

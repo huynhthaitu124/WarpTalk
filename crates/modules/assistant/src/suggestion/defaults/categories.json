@@ -1,5 +1,20 @@
 [
   {
+    "id": "answer",
+    "description": "answer: another participant (\"Người khác\") directly asks the user (\"Tôi\") a question, or requests information, a decision or a commitment from the user, and the transcript does not show the user answering it yet. It counts whether or not it ends in a question mark. Never fires on the user's own speech.",
+    "contract": "Give the user a concise suggested answer, or the key points to cover, in the language of the question, grounded ONLY in the transcript and the supplied reference sources. If the fact needed (a figure, name, date, status) is not available, do not guess: suggest what to say instead (for example acknowledge the question and commit to checking and getting back, naming what will be checked). Never invent figures, names or dates. Write it as something the user can say or act on, not as a description of the question.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 120,
+    "allow_general_knowledge": false,
+    "roles": [
+      "other"
+    ],
+    "skip_cooldown": true,
+    "actions": []
+  },
+  {
     "id": "clarification",
     "description": "clarification: a question was asked that the transcript does not already answer. It counts whether or not it ends in a question mark - the recogniser drops the mark on short utterances.",
     "contract": "State the question that was asked and left unanswered, as close to the asker's own words as the transcript allows. The hint is useless if the reader cannot tell which question it means.",
@@ -8,7 +23,11 @@
     "severity": "info",
     "ttl_seconds": 120,
     "allow_general_knowledge": false,
-    "actions": []
+    "actions": [],
+    "roles": [
+      "other",
+      "unknown"
+    ]
   },
   {
     "id": "term",
@@ -19,7 +38,11 @@
     "severity": "info",
     "ttl_seconds": 120,
     "allow_general_knowledge": true,
-    "actions": []
+    "actions": [],
+    "roles": [
+      "other",
+      "unknown"
+    ]
   },
   {
     "id": "correction",
@@ -54,20 +77,26 @@
     "wire_name": "action",
     "allow_general_knowledge": false,
     "actions": [
-      { "kind": "create_action_item", "label": "Create task" }
+      {
+        "kind": "create_action_item",
+        "label": "Create task"
+      }
     ]
   },
   {
     "id": "follow_up",
-    "description": "follow_up: someone agrees to get back, check, send or follow up on something later (a promise to revisit), whether or not an owner or a date was named.",
-    "contract": "State what was promised to be followed up, and who is to do it and by when only if the transcript says so. Do not invent either one.",
+    "description": "follow_up: someone agrees to get back, check, send or follow up on something later (a promise to revisit), whether or not an owner or a date was named. In a session where lines are labelled \"Tôi\" (the user) and \"Người khác\" (others), it also fires when another person states something with an open point (a promise, a risk, a vague number, a missing owner or date) that the user should ask about next.",
+    "contract": "State what was promised to be followed up, and who is to do it and by when only if the transcript says so. Do not invent either one. When the latest line is by \"Người khác\" and states something unresolved, prefer a short question the user (\"Tôi\") should ask next to pin it down (owner, date, scope, number), phrased as the question itself, grounded in what that person said; the follow_up task is that question.",
     "retrieval": "never",
     "kind": "follow_up",
     "severity": "info",
     "ttl_seconds": 300,
     "allow_general_knowledge": false,
     "actions": [
-      { "kind": "create_action_item", "label": "Create task" }
+      {
+        "kind": "create_action_item",
+        "label": "Create task"
+      }
     ]
   }
 ]

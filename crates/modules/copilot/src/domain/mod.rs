@@ -59,6 +59,13 @@ pub enum Channel {
 }
 
 impl Channel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Me => "me",
+            Self::Others => "others",
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "me" => Some(Self::Me),
@@ -184,6 +191,7 @@ pub fn to_stt_result(
         far_speaker_name: Some(name),
         far_speaker_source: Some("participant".to_owned()),
         far_speaker_confidence: Some(1.0),
+        channel: Some(seg.channel.as_str().to_owned()),
     }
 }
 

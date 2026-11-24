@@ -283,6 +283,7 @@ impl H {
             far_speaker_name: None,
             far_speaker_source: None,
             far_speaker_confidence: None,
+            channel: None,
         }
     }
 
@@ -605,6 +606,7 @@ async fn slot_claim_is_atomic_under_concurrency() {
         return;
     };
     let params = SlotParams {
+        bypass_cooldown: false,
         room: RoomId::new(),
         workspace: h.ws,
         cooldown_seconds: 0,
@@ -1030,4 +1032,149 @@ async fn worker_handles_stream_message_without_blocking() {
     };
     worker.handle(&msg).await.unwrap();
     assert_eq!(h.engine.tracked_rooms(), 0);
+}
+
+// ---------------------------------------------------------------- copilot roles
+
+impl H {
+    fn seg_ch(&self, channel: &str, text: &str, lang: &str) -> SttResult {
+        let mut s = self.seg(text);
+        s.channel = Some(channel.into());
+        s.language = lang.into();
+        s
+    }
+}
+
+fn request_text(r: &Request) -> String {
+    format!("{:?} {:?}", r.system, r.messages)
+}
+
+#[tokio::test]
+async fn own_speech_never_triggers_answer_and_prompts_carry_role_labels() {
+    let Some(h) = harness(json!({"enabled": true, "cooldown_seconds": 0})).await else {
+        return;
+    };
+    let ask = "Bao giờ bên anh gửi báo giá cho khách được không?";
+    // Context: the other side talks first, then the user's own question-like line.
+    h.llm.script_decide(
+        json!({"should_suggest": false, "category": "", "confidence": 0, "reason": "n/a"}),
+    );
+    assert_eq!(
+        h.engine
+            .process(&h.seg_ch("others", "Chào anh, mình bàn về báo giá nhé", "vi"))
+            .await,
+        Outcome::DecideDeclined
+    );
+    // The model wrongly answers `answer` on the user's own line: dropped by the role filter.
+    h.llm.script_decide(decide("answer", 0.95));
+    assert_eq!(
+        h.engine.process(&h.seg_ch("me", ask, "vi")).await,
+        Outcome::RoleNotAllowed
+    );
+    let calls = h.llm.calls_for("suggestion_decide");
+    let own = request_text(&calls[1]);
+    assert!(own.contains("[Tôi] Bao giờ"), "{own}");
+    assert!(own.contains("[Người khác] Chào anh"), "{own}");
+    assert!(own.contains("USER you are helping"), "{own}");
+    // `answer` is not even offered for the user's own speech.
+    assert!(!own.contains("answer: another participant"), "{own}");
+    assert!(h.llm.calls_for("suggestion_generate").is_empty());
+
+    // The same line from the other side is offered `answer` and produces a hint.
+    h.llm.script_decide(decide("answer", 0.9));
+    h.llm.script_generate(
+        json!({"content": "Cho mình kiểm tra lịch rồi báo lại ngày gửi.", "detail": "", "source": "", "conflict": false}),
+    );
+    assert_eq!(
+        h.engine.process(&h.seg_ch("others", ask, "vi")).await,
+        Outcome::Published
+    );
+    let decide_req = request_text(h.llm.calls_for("suggestion_decide").last().unwrap());
+    assert!(
+        decide_req.contains("answer: another participant"),
+        "{decide_req}"
+    );
+    let gen_req = request_text(&h.llm.calls_for("suggestion_generate")[0]);
+    assert!(gen_req.contains("Hint type: answer"), "{gen_req}");
+    assert!(gen_req.contains("[Người khác] Bao giờ"), "{gen_req}");
+    let out = h.published().await;
+    assert_eq!(out[0]["category"], "answer");
+}
+
+#[tokio::test]
+async fn regular_meetings_keep_unknown_role_and_no_answer_category() {
+    let Some(h) = harness(json!({"enabled": true, "cooldown_seconds": 0})).await else {
+        return;
+    };
+    h.llm.script_decide(
+        json!({"should_suggest": false, "category": "", "confidence": 0, "reason": "n/a"}),
+    );
+    assert_eq!(
+        h.engine
+            .process(&h.seg("when will the beta be ready?"))
+            .await,
+        Outcome::DecideDeclined
+    );
+    let req = request_text(&h.llm.calls_for("suggestion_decide")[0]);
+    assert!(!req.contains("USER you are helping"), "{req}");
+    assert!(!req.contains("answer: another participant"), "{req}");
+    assert!(
+        !req.contains("[Tôi]") && !req.contains("[Người khác]"),
+        "{req}"
+    );
+    assert!(req.contains("[speaker-1]"), "{req}");
+}
+
+#[tokio::test]
+async fn answer_skips_cooldown_but_other_categories_do_not_and_dedup_holds() {
+    let Some(h) = harness(json!({"enabled": true, "cooldown_seconds": 30})).await else {
+        return;
+    };
+    h.llm.script_decide(decide("term", 0.9));
+    h.llm.script_generate(hint("Next.js is a React framework."));
+    assert_eq!(
+        h.engine.process(&h.seg_ch("others", TEXT, "en")).await,
+        Outcome::Published
+    );
+    // Cooldown now active. A plain statement is blocked before any model call...
+    let decides = h.llm.calls_for("suggestion_decide").len();
+    assert_eq!(
+        h.engine
+            .process(&h.seg_ch("others", "and then we discuss Remix too", "en"))
+            .await,
+        Outcome::CooldownActive
+    );
+    assert_eq!(h.llm.calls_for("suggestion_decide").len(), decides);
+    // ...a question to the user goes through the decide call; the model picking a non-answer
+    // category is still held by the cooldown...
+    h.llm.script_decide(decide("clarification", 0.9));
+    assert_eq!(
+        h.engine
+            .process(&h.seg_ch("others", "Can you share the launch date with us?", "en"))
+            .await,
+        Outcome::CooldownActive
+    );
+    // ...but `answer` is not delayed.
+    let answer = json!({"content": "Say you will check the launch date and get back to them.", "detail": "", "source": "", "conflict": false});
+    h.llm.script_decide(decide("answer", 0.9));
+    h.llm.script_generate(answer.clone());
+    assert_eq!(
+        h.engine
+            .process(&h.seg_ch("others", "Could you tell us when the launch is?", "en"))
+            .await,
+        Outcome::Published
+    );
+    // Identical hint text is still deduplicated.
+    h.llm.script_decide(decide("answer", 0.9));
+    h.llm.script_generate(answer);
+    assert_eq!(
+        h.engine
+            .process(&h.seg_ch(
+                "others",
+                "Can you also tell us when the launch happens?",
+                "en"
+            ))
+            .await,
+        Outcome::Duplicate
+    );
 }

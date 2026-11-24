@@ -886,6 +886,7 @@ pub async fn build(
         ai,
         access: Arc::new(KnowledgeAccessAdapter(workspace.queries())),
         results,
+        documents: None,
     })
     .await;
     let suggestions_router = suggestions_redis.map(|redis| {

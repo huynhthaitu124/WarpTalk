@@ -166,7 +166,47 @@ impl TextExtractor for OcrTextExtractor {
     }
 }
 
-/// First extractor that supports the input wins.
+pub const PDF_MIME: &str = "application/pdf";
+pub const DOCX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const PPTX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+pub const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Content type from magic bytes, when the bytes are conclusive: `%PDF-` within the first KiB,
+/// or a zip (`PK\x03\x04`) whose entry names (local headers at the start, central directory at
+/// the end) identify OOXML word / presentation / spreadsheet packages.
+pub fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes[..bytes.len().min(1024)]
+        .windows(5)
+        .any(|w| w == b"%PDF-")
+    {
+        return Some(PDF_MIME);
+    }
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return None;
+    }
+    const WINDOW: usize = 1 << 20;
+    let head = &bytes[..bytes.len().min(WINDOW)];
+    let tail = &bytes[bytes.len().saturating_sub(WINDOW)..];
+    let has = |n: &[u8]| contains(head, n) || contains(tail, n);
+    if has(b"word/document.xml") {
+        Some(DOCX_MIME)
+    } else if has(b"ppt/presentation.xml") {
+        Some(PPTX_MIME)
+    } else if has(b"xl/workbook.xml") {
+        Some(XLSX_MIME)
+    } else {
+        None
+    }
+}
+
+/// First extractor that supports the input wins. The content type is decided by magic bytes
+/// first (a `.txt` upload that is really a PDF is a PDF), then by MIME / file extension.
 pub struct ExtractorChain {
     extractors: Vec<Arc<dyn TextExtractor>>,
 }
@@ -186,6 +226,19 @@ impl ExtractorChain {
     }
 
     pub async fn extract(&self, input: &ExtractInput<'_>) -> Result<ExtractedText, ExtractError> {
+        // A conclusive sniff overrides the declared type and the file name.
+        let sniffed;
+        let input = match sniff_mime(input.bytes) {
+            Some(mime) => {
+                sniffed = ExtractInput {
+                    bytes: input.bytes,
+                    mime,
+                    file_name: None,
+                };
+                &sniffed
+            }
+            None => input,
+        };
         for e in &self.extractors {
             if e.supports(input.mime, input.file_name) {
                 return e.extract(input).await;

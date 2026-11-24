@@ -111,6 +111,25 @@ impl KnowledgeModule {
         self.indexing.clone()
     }
 
+    /// Let the indexer read uploaded pdf/docx objects through `source` and extract their text
+    /// (limits, OCR engine for scanned PDFs). Call right after [`KnowledgeModule::new`], before
+    /// the handlers are taken.
+    pub fn with_document_source(
+        mut self,
+        source: Arc<dyn application::DocumentSource>,
+        limits: infrastructure::ExtractLimits,
+        ocr: Arc<dyn application::OcrEngine>,
+    ) -> Self {
+        let chain = Arc::new(infrastructure::full_chain(limits, ocr));
+        match Arc::get_mut(&mut self.indexing) {
+            Some(svc) => {
+                svc.set_extraction(source, chain);
+            }
+            None => tracing::error!("indexing service already shared; document source ignored"),
+        }
+        self
+    }
+
     /// Handler for `embedding:index_requests` (run with [`index_consumer_config`]).
     pub fn index_handler(&self) -> Arc<dyn warptalk_bus::StreamHandler> {
         Arc::new(IndexRequestHandler::new(self.indexing.clone()))

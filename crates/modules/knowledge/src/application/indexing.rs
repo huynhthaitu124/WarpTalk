@@ -15,9 +15,11 @@ use warptalk_qdrant::{
 };
 use warptalk_settings::{NS_RAG, ScopeChain, SettingsStore};
 
+use super::extract::{ExtractError, ExtractInput, ExtractorChain};
 use super::facts::{ExtractParams, FactExtractor};
 use super::ports::{
-    ChunkRecord, FactRecord, JobStart, JobStatus, KnowledgeRepository, ResultPublisher, SourceKey,
+    ChunkRecord, DocumentSource, DocumentSourceError, FactRecord, JobStart, JobStatus,
+    KnowledgeRepository, ResultPublisher, SourceKey,
 };
 use crate::domain::pii::{self, PiiPolicy};
 use crate::domain::{
@@ -42,6 +44,13 @@ pub struct IndexingDeps {
 
 pub struct IndexingService {
     d: IndexingDeps,
+    /// Reads uploaded pdf/docx bytes and extracts their text (`needs_extraction` requests).
+    extraction: Option<Extraction>,
+}
+
+struct Extraction {
+    source: Arc<dyn DocumentSource>,
+    chain: Arc<ExtractorChain>,
 }
 
 /// Failure classes of one attempt.
@@ -267,7 +276,69 @@ fn gate_segments(
 
 impl IndexingService {
     pub fn new(d: IndexingDeps) -> Self {
-        Self { d }
+        Self {
+            d,
+            extraction: None,
+        }
+    }
+
+    /// Enable text extraction for requests that carry `needs_extraction` + `object_key`
+    /// (pdf/docx uploads). Without it such documents index 0 chunks and end up `skipped`.
+    pub fn with_extraction(
+        mut self,
+        source: Arc<dyn DocumentSource>,
+        chain: Arc<ExtractorChain>,
+    ) -> Self {
+        self.set_extraction(source, chain);
+        self
+    }
+
+    pub fn set_extraction(&mut self, source: Arc<dyn DocumentSource>, chain: Arc<ExtractorChain>) {
+        self.extraction = Some(Extraction { source, chain });
+    }
+
+    /// For a `needs_extraction` request: fetch the object and extract its pages into
+    /// `content`. `Ok(None)` = nothing to do (or the type cannot be extracted: the document
+    /// then indexes nothing and is reported as skipped, as before).
+    async fn with_extracted_content(
+        &self,
+        req: &IndexRequest,
+    ) -> Result<Option<IndexRequest>, IndexError> {
+        if !req.needs_extraction || req.content.is_some() || !req.chunks.is_empty() {
+            return Ok(None);
+        }
+        let (Some(ex), Some(key)) = (
+            &self.extraction,
+            req.object_key.as_deref().filter(|k| !k.is_empty()),
+        ) else {
+            return Ok(None);
+        };
+        let bytes = ex.source.fetch(key).await.map_err(|e| match e {
+            DocumentSourceError::NotFound(m) => IndexError::Permanent(m),
+            DocumentSourceError::Backend(m) => IndexError::Transient(m),
+        })?;
+        let input = ExtractInput {
+            bytes: &bytes,
+            mime: req.mime_type.as_deref().unwrap_or(""),
+            file_name: req.file_name.as_deref(),
+        };
+        match ex.chain.extract(&input).await {
+            Ok(t) => Ok(Some(IndexRequest {
+                content: Some(IndexContent::Document { pages: t.pages }),
+                ..req.clone()
+            })),
+            Err(
+                e @ (ExtractError::Unsupported(_)
+                | ExtractError::OcrUnavailable
+                | ExtractError::InvalidEncoding),
+            ) => {
+                tracing::warn!(job = %req.job_id, error = %e, "document cannot be extracted; skipping");
+                Ok(None)
+            }
+            Err(ExtractError::Failed(m)) => Err(IndexError::Permanent(format!(
+                "text extraction failed: {m}"
+            ))),
+        }
     }
 
     pub(crate) async fn config(&self, workspace: Uuid) -> Result<RagConfig, IndexError> {
@@ -520,6 +591,9 @@ impl IndexingService {
                 profile,
             ));
         }
+
+        let extracted = self.with_extracted_content(req).await?;
+        let req = extracted.as_ref().unwrap_or(req);
 
         let row = self.d.repo.register_profile(ws, &profile).await?;
         let collection = row.collection;

@@ -1,0 +1,404 @@
+{
+  "id": "en-roadmap-sync",
+  "language": "en",
+  "title": "Q3 roadmap sync",
+  "participants": [
+    "Marcus",
+    "Priya",
+    "Elena",
+    "Tom"
+  ],
+  "lines": [
+    {
+      "t_ms": 11810,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "Thanks for joining. Today we're locking the Q3 roadmap, and the big question is whether we ship the new onboarding flow or the SSO work first."
+    },
+    {
+      "t_ms": 20210,
+      "channel": "me",
+      "speaker": "Priya",
+      "text": "I'd lean towards onboarding, because activation is our weakest metric right now."
+    },
+    {
+      "t_ms": 31140,
+      "channel": "others",
+      "speaker": "Tom",
+      "text": "Agreed, our activation rate is still well below target, and I'd like weekly active teams to be our north star for the quarter."
+    },
+    {
+      "t_ms": 42950,
+      "channel": "others",
+      "speaker": "Elena",
+      "text": "On the design side we need two weeks of usability testing before engineering starts, and we should run it as an A/B test with a holdout group."
+    },
+    {
+      "t_ms": 51845,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "Priya, what's your read on the churn numbers, are we still at around six percent monthly?"
+    },
+    {
+      "t_ms": 61840,
+      "channel": "me",
+      "speaker": "Priya",
+      "text": "Last I checked it was closer to four percent, I'll confirm with Tom and post the exact number in the channel."
+    },
+    {
+      "t_ms": 68700,
+      "channel": "others",
+      "speaker": "Tom",
+      "text": "I can pull the dashboard by Wednesday if that helps."
+    },
+    {
+      "t_ms": 80235,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "On engineering capacity we have six engineers, but one is on leave for half of the quarter, and the SSO work needs at least three people."
+    },
+    {
+      "t_ms": 90395,
+      "channel": "others",
+      "speaker": "Elena",
+      "text": "Should we also plan the API rate limiting work? Someone mentioned it last week but I don't remember who owns it."
+    },
+    {
+      "t_ms": 97970,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "Nobody owns it yet. We should assign it before the sprint starts."
+    },
+    {
+      "t_ms": 108845,
+      "channel": "me",
+      "speaker": "Priya",
+      "text": "Decision: onboarding ships first, SSO is scheduled for the second half of the quarter, and we revisit capacity in four weeks."
+    },
+    {
+      "t_ms": 116915,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "Elena, can you share the usability test plan with the team by next Monday?"
+    },
+    {
+      "t_ms": 122785,
+      "channel": "others",
+      "speaker": "Elena",
+      "text": "Sure, I'll send it by next Monday."
+    },
+    {
+      "t_ms": 134485,
+      "channel": "others",
+      "speaker": "Tom",
+      "text": "One more thing, the CFO wants a revenue forecast for the onboarding change, but I'd say we can't promise any number until the test finishes."
+    },
+    {
+      "t_ms": 143270,
+      "channel": "others",
+      "speaker": "Marcus",
+      "text": "Priya, do you want to present the roadmap at the all-hands on the twelfth, or should I?"
+    },
+    {
+      "t_ms": 151780,
+      "channel": "me",
+      "speaker": "Priya",
+      "text": "I'll present it. Let me draft the slides and share them with the team before then."
+    }
+  ],
+  "snippets": [
+    {
+      "title": "Q3 targets",
+      "kind": "document",
+      "text": "Q3 targets: activation rate 38% (currently 31%). Monthly logo churn 4.2%. Weekly active teams is tracked on the executive dashboard."
+    }
+  ],
+  "expectations": {
+    "suggestions": {
+      "expected": [
+        {
+          "at_line": 2,
+          "category": "fact",
+          "must_include": [
+            "38"
+          ],
+          "must_not_include": [
+            "45%",
+            "40%",
+            "35%"
+          ]
+        },
+        {
+          "at_line": 3,
+          "category": "term",
+          "must_include": [
+            "holdout"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 4,
+          "category": "correction|fact|answer",
+          "must_include": [
+            "4.2"
+          ],
+          "must_not_include": [
+            "6.0%"
+          ]
+        },
+        {
+          "at_line": 5,
+          "category": "follow_up",
+          "must_include": [
+            "churn|number"
+          ],
+          "must_not_include": [
+            "tomorrow",
+            "Friday"
+          ]
+        },
+        {
+          "at_line": 8,
+          "category": "clarification",
+          "must_include": [
+            "rate limiting"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 9,
+          "category": "action_item",
+          "must_include": [
+            "rate limiting"
+          ],
+          "must_not_include": [
+            "by Friday",
+            "Marcus will"
+          ]
+        },
+        {
+          "at_line": 14,
+          "category": "answer",
+          "must_include": [
+            "all-hands"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 15,
+          "category": "follow_up",
+          "must_include": [
+            "slides"
+          ],
+          "must_not_include": []
+        }
+      ],
+      "forbidden": [
+        {
+          "at_line": 6,
+          "category": "action_item"
+        },
+        {
+          "at_line": 11,
+          "category": "action_item"
+        }
+      ],
+      "must_not_include": [
+        "revenue increase of",
+        "$"
+      ]
+    },
+    "summary": {
+      "decisions": [
+        {
+          "keywords": [
+            "onboarding",
+            "first"
+          ]
+        },
+        {
+          "keywords": [
+            "SSO",
+            "second half"
+          ]
+        },
+        {
+          "keywords": [
+            "revisit",
+            "capacity",
+            "four weeks"
+          ]
+        }
+      ],
+      "action_items": [
+        {
+          "owner": "Priya",
+          "task_keywords": [
+            "churn",
+            "number"
+          ]
+        },
+        {
+          "owner": "Tom",
+          "task_keywords": [
+            "dashboard"
+          ],
+          "deadline": "Wednesday"
+        },
+        {
+          "owner": "Elena",
+          "task_keywords": [
+            "usability",
+            "test plan"
+          ],
+          "deadline": "next Monday"
+        },
+        {
+          "task_keywords": [
+            "rate limiting"
+          ]
+        },
+        {
+          "owner": "Priya",
+          "task_keywords": [
+            "present",
+            "roadmap",
+            "all-hands"
+          ],
+          "deadline": "twelfth"
+        }
+      ],
+      "must_not_include": [
+        "churn is 6",
+        "churn at 6",
+        "six percent churn",
+        "$",
+        "million",
+        "revenue increase"
+      ]
+    }
+  },
+  "fake": {
+    "suggestions": [
+      {
+        "at_line": 2,
+        "category": "fact",
+        "content": "Q3 target for activation rate is 38%, currently 31%.",
+        "detail": "From the Q3 targets document.",
+        "source": "S1"
+      },
+      {
+        "at_line": 3,
+        "category": "term",
+        "content": "Holdout group: users kept out of the new experience to measure its true effect.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 4,
+        "category": "correction",
+        "content": "Marcus said about 6% monthly churn, but the Q3 targets document gives 4.2%.",
+        "detail": "",
+        "source": "S1",
+        "conflict": true
+      },
+      {
+        "at_line": 5,
+        "category": "follow_up",
+        "content": "Priya will confirm the churn number with Tom and post it.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Priya",
+          "task": "Confirm the churn number with Tom and post it"
+        }
+      },
+      {
+        "at_line": 8,
+        "category": "clarification",
+        "content": "Who owns the API rate limiting work?",
+        "detail": "Elena asked; nobody has claimed it.",
+        "source": ""
+      },
+      {
+        "at_line": 9,
+        "category": "action_item",
+        "content": "Assign an owner for API rate limiting before the sprint starts.",
+        "detail": "No owner or date yet.",
+        "source": "",
+        "follow_up": {
+          "task": "Assign an owner for API rate limiting"
+        }
+      },
+      {
+        "at_line": 14,
+        "category": "answer",
+        "content": "Marcus asks who presents the roadmap at the all-hands on the twelfth.",
+        "detail": "",
+        "source": ""
+      },
+      {
+        "at_line": 11,
+        "category": "action_item",
+        "content": "Elena to share the usability test plan by next Monday.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Elena",
+          "task": "Share the usability test plan",
+          "due": "next Monday"
+        }
+      }
+    ],
+    "summary": {
+      "summary_short": "Q3 roadmap sync: onboarding ships first, SSO in the second half of the quarter.",
+      "summary_detailed": "The team decided to ship onboarding first and schedule SSO for the second half of the quarter, revisiting capacity in four weeks. Churn stands at 4.2% per the targets document. The CFO's revenue forecast cannot be promised until the test finishes.",
+      "decisions": [
+        "Onboarding ships first",
+        "SSO is scheduled for the second half of the quarter",
+        "Revisit capacity in four weeks"
+      ],
+      "action_items": [
+        {
+          "task": "Confirm the churn number with Tom and post it",
+          "owner": "Priya",
+          "due": null,
+          "source_segments": []
+        },
+        {
+          "task": "Pull the dashboard",
+          "owner": "Tom",
+          "due": "Wednesday",
+          "source_segments": []
+        },
+        {
+          "task": "Share the usability test plan",
+          "owner": "Elena",
+          "due": "next Monday",
+          "source_segments": []
+        },
+        {
+          "task": "Assign an owner for API rate limiting",
+          "owner": "Marcus",
+          "due": null,
+          "source_segments": []
+        },
+        {
+          "task": "Present the roadmap at the all-hands and draft slides",
+          "owner": "Priya",
+          "due": "twelfth",
+          "source_segments": []
+        }
+      ],
+      "open_questions": [
+        "Who owns API rate limiting?"
+      ],
+      "topics": [
+        "roadmap",
+        "onboarding",
+        "SSO",
+        "churn"
+      ]
+    }
+  }
+}

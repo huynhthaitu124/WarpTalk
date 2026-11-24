@@ -285,6 +285,7 @@ pub fn stt_result_from_segment(
         clean_flags: None,
         far_speaker_source: name.as_ref().map(|_| "participant".to_owned()),
         far_speaker_confidence: name.as_ref().map(|_| 1.0),
+        channel: None,
         far_speaker_name: name,
     })
 }

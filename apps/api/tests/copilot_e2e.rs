@@ -16,6 +16,7 @@ use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
+use warptalk_assistant::suggestion::Role as SuggestRole;
 use warptalk_assistant::suggestion::engine::Admission;
 use warptalk_assistant::suggestion::{
     EngineDeps, LlmResolver, NoopRetriever, Purpose, RedisConsentPolicy, RedisRoomSignals,
@@ -618,10 +619,20 @@ async fn copilot_session_end_to_end() {
     // ...and the REAL suggestion worker admits the others' question (and takes the rest).
     let worker = suggestion_worker(&e, ws).await;
     let first: SttResult = copy[0].json().unwrap();
+    let second: SttResult = copy[1].json().unwrap();
+    // Producer (copilot ingest) -> consumer (suggestion window): the channel becomes the role.
+    assert_eq!(first.channel.as_deref(), Some("others"));
+    assert_eq!(second.channel.as_deref(), Some("me"));
     match worker.engine().admit(&first).await {
-        Admission::Admitted(_) => {}
+        Admission::Admitted(a) => assert_eq!(a.role(), SuggestRole::Other),
         Admission::Rejected(why) => {
             panic!("suggestion engine rejected the copilot segment: {why:?}")
+        }
+    }
+    match worker.engine().admit(&second).await {
+        Admission::Admitted(a) => assert_eq!(a.role(), SuggestRole::SelfSpeaker),
+        Admission::Rejected(why) => {
+            panic!("suggestion engine rejected the own segment: {why:?}")
         }
     }
     for m in &copy {

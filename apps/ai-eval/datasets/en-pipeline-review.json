@@ -1,0 +1,388 @@
+{
+  "id": "en-pipeline-review",
+  "language": "en",
+  "title": "Events pipeline architecture review",
+  "participants": [
+    "Jo",
+    "Ravi",
+    "Mei",
+    "Sam"
+  ],
+  "lines": [
+    {
+      "t_ms": 10215,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Let's start the review of the new events pipeline, I'll walk through the design and then we can poke holes in it."
+    },
+    {
+      "t_ms": 20320,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Producers write to Kafka, a consumer service enriches each event, and a sink writes batches into the warehouse."
+    },
+    {
+      "t_ms": 31085,
+      "channel": "others",
+      "speaker": "Ravi",
+      "text": "Since Kafka guarantees global ordering across all partitions, we don't need to worry about out-of-order events in the sink."
+    },
+    {
+      "t_ms": 40805,
+      "channel": "me",
+      "speaker": "Sam",
+      "text": "Not quite, ordering is only per partition, so we need to key by account id and make the sink idempotent."
+    },
+    {
+      "t_ms": 50800,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Right. For delivery semantics we're aiming for effectively exactly-once, using idempotent writes in the sink."
+    },
+    {
+      "t_ms": 59970,
+      "channel": "others",
+      "speaker": "Ravi",
+      "text": "What retention are we planning for the raw topic, and what's the consumer lag alert threshold?"
+    },
+    {
+      "t_ms": 69855,
+      "channel": "others",
+      "speaker": "Mei",
+      "text": "Sam, what do you think about adding backpressure to the enrichment service instead of letting lag build up?"
+    },
+    {
+      "t_ms": 78915,
+      "channel": "me",
+      "speaker": "Sam",
+      "text": "I think that's reasonable, but we should define the SLO first, otherwise we're tuning blind."
+    },
+    {
+      "t_ms": 87755,
+      "channel": "others",
+      "speaker": "Mei",
+      "text": "Agreed. For failed events we'll route them to a dead-letter queue and alert if it grows."
+    },
+    {
+      "t_ms": 96430,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Someone should write up the replay procedure for the dead-letter queue before launch."
+    },
+    {
+      "t_ms": 104665,
+      "channel": "others",
+      "speaker": "Ravi",
+      "text": "Do we have a target latency? I recall something like five seconds end to end."
+    },
+    {
+      "t_ms": 112350,
+      "channel": "me",
+      "speaker": "Sam",
+      "text": "I'll check the ADR and confirm the target in the doc by end of day."
+    },
+    {
+      "t_ms": 120365,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Great. Ravi will own the sink idempotency work and finish it next sprint."
+    },
+    {
+      "t_ms": 128930,
+      "channel": "others",
+      "speaker": "Mei",
+      "text": "One question for you Sam, can you review the schema registry setup before Thursday?"
+    },
+    {
+      "t_ms": 134965,
+      "channel": "me",
+      "speaker": "Sam",
+      "text": "Yes, I can review it before Thursday."
+    },
+    {
+      "t_ms": 146500,
+      "channel": "others",
+      "speaker": "Jo",
+      "text": "Wrapping up: keyed partitions, idempotent sink, a dead-letter queue with a replay doc, and an SLO definition before we tune backpressure."
+    }
+  ],
+  "snippets": [
+    {
+      "title": "ADR-7 Events pipeline",
+      "kind": "document",
+      "text": "ADR-7: Raw topic retention is 7 days. Target p95 end-to-end latency is 2 seconds. Consumer lag alert fires at 10,000 messages. Failed events go to a dead-letter queue."
+    }
+  ],
+  "expectations": {
+    "suggestions": {
+      "expected": [
+        {
+          "at_line": 2,
+          "category": "correction",
+          "must_include": [
+            "partition"
+          ],
+          "must_not_include": [
+            "global ordering is guaranteed"
+          ]
+        },
+        {
+          "at_line": 4,
+          "category": "term",
+          "must_include": [
+            "exactly-once|idempotent"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 5,
+          "category": "fact",
+          "must_include": [
+            "7 days",
+            "10,000"
+          ],
+          "must_not_include": [
+            "30 days",
+            "14 days",
+            "1,000 messages"
+          ]
+        },
+        {
+          "at_line": 6,
+          "category": "answer|term",
+          "must_include": [
+            "backpressure"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 8,
+          "category": "term",
+          "must_include": [
+            "dead-letter"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 9,
+          "category": "action_item",
+          "must_include": [
+            "replay"
+          ],
+          "must_not_include": [
+            "by Friday",
+            "Sam will"
+          ]
+        },
+        {
+          "at_line": 10,
+          "category": "correction|fact",
+          "must_include": [
+            "2 seconds|two seconds"
+          ],
+          "must_not_include": [
+            "5 seconds is the target"
+          ]
+        },
+        {
+          "at_line": 11,
+          "category": "follow_up",
+          "must_include": [
+            "latency|target"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 13,
+          "category": "answer",
+          "must_include": [
+            "schema registry"
+          ],
+          "must_not_include": []
+        }
+      ],
+      "forbidden": [
+        {
+          "at_line": 3,
+          "category": "correction"
+        },
+        {
+          "at_line": 12,
+          "category": "action_item"
+        }
+      ],
+      "must_not_include": [
+        "30 days"
+      ]
+    },
+    "summary": {
+      "decisions": [
+        {
+          "keywords": [
+            "key",
+            "account id",
+            "idempotent"
+          ]
+        },
+        {
+          "keywords": [
+            "dead-letter",
+            "failed events"
+          ]
+        },
+        {
+          "keywords": [
+            "SLO",
+            "backpressure"
+          ]
+        }
+      ],
+      "action_items": [
+        {
+          "owner": "Ravi",
+          "task_keywords": [
+            "sink",
+            "idempotency"
+          ],
+          "deadline": "next sprint"
+        },
+        {
+          "owner": "Sam",
+          "task_keywords": [
+            "latency",
+            "target",
+            "ADR"
+          ],
+          "deadline": "end of day"
+        },
+        {
+          "owner": "Sam",
+          "task_keywords": [
+            "schema registry",
+            "review"
+          ],
+          "deadline": "Thursday"
+        },
+        {
+          "task_keywords": [
+            "replay",
+            "dead-letter"
+          ]
+        }
+      ],
+      "must_not_include": [
+        "global ordering is guaranteed",
+        "five seconds target",
+        "target latency is five",
+        "30 days",
+        "14 days"
+      ]
+    }
+  },
+  "fake": {
+    "suggestions": [
+      {
+        "at_line": 2,
+        "category": "correction",
+        "content": "Kafka only guarantees ordering within a partition, not across partitions.",
+        "detail": "Key by account id to keep per-account order.",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 4,
+        "category": "term",
+        "content": "Exactly-once: each event takes effect once even if delivered more than once, achieved here via idempotent writes.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 5,
+        "category": "fact",
+        "content": "ADR-7: raw topic retention is 7 days; lag alert fires at 10,000 messages.",
+        "detail": "",
+        "source": "S1"
+      },
+      {
+        "at_line": 6,
+        "category": "term",
+        "content": "Backpressure: slowing producers or consumers when downstream cannot keep up.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 8,
+        "category": "term",
+        "content": "Dead-letter queue: holds events that failed processing so they can be inspected and replayed.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 9,
+        "category": "action_item",
+        "content": "Write the replay procedure for the dead-letter queue before launch; no owner assigned.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "task": "Write the replay procedure for the dead-letter queue"
+        }
+      },
+      {
+        "at_line": 10,
+        "category": "fact",
+        "content": "ADR-7 sets the p95 end-to-end latency target at 2 seconds, not five.",
+        "detail": "",
+        "source": "S1"
+      },
+      {
+        "at_line": 11,
+        "category": "follow_up",
+        "content": "Sam will confirm the latency target in the ADR by end of day.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Sam",
+          "task": "Confirm the latency target in the ADR",
+          "due": "end of day"
+        }
+      }
+    ],
+    "summary": {
+      "summary_short": "Events pipeline review: key by account id, idempotent sink, dead-letter queue, SLO before backpressure.",
+      "summary_detailed": "The team reviewed the Kafka based pipeline. Ordering is per partition so events are keyed by account id and the sink is idempotent. Failed events go to a dead-letter queue. The SLO is defined before tuning backpressure. Retention is 7 days.",
+      "decisions": [
+        "Key events by account id and make the sink idempotent",
+        "Route failed events to a dead-letter queue",
+        "Define the SLO before tuning backpressure"
+      ],
+      "action_items": [
+        {
+          "task": "Own the sink idempotency work",
+          "owner": "Ravi",
+          "due": "next sprint",
+          "source_segments": []
+        },
+        {
+          "task": "Confirm the latency target in the ADR",
+          "owner": "Sam",
+          "due": "end of day",
+          "source_segments": []
+        },
+        {
+          "task": "Review the schema registry setup",
+          "owner": "Sam",
+          "due": "Thursday",
+          "source_segments": []
+        }
+      ],
+      "open_questions": [
+        "Who writes the dead-letter queue replay procedure?"
+      ],
+      "topics": [
+        "Kafka",
+        "idempotency",
+        "dead-letter queue",
+        "SLO"
+      ]
+    }
+  }
+}

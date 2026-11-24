@@ -13,8 +13,8 @@ pub mod search;
 
 pub use eval::{RelevanceKey, run_eval};
 pub use extract::{
-    ExtractError, ExtractInput, ExtractedText, ExtractorChain, MarkdownExtractor, NoopOcr,
-    OcrEngine, OcrTextExtractor, PlainTextExtractor, TextExtractor,
+    DOCX_MIME, ExtractError, ExtractInput, ExtractedText, ExtractorChain, MarkdownExtractor,
+    NoopOcr, OcrEngine, OcrTextExtractor, PDF_MIME, PlainTextExtractor, TextExtractor, sniff_mime,
 };
 pub use facts::{ExtractParams, FactExtractor};
 pub use indexing::{IndexError, IndexingDeps, IndexingService, JobDisposition, PurgeReport};
@@ -23,7 +23,8 @@ pub use model::{
     AccessContext, EffectiveScope, SearchFilters, SearchHit, SearchMetrics, SearchResult,
 };
 pub use ports::{
-    AccessScope, DocumentAccess, JobRecord, JobStatus, KnowledgeRepository, ResultPublisher,
+    AccessScope, DocumentAccess, DocumentSource, DocumentSourceError, JobRecord, JobStatus,
+    KnowledgeRepository, ResultPublisher,
 };
 pub use rerank::{LexicalReranker, LlmReranker, Reranker};
 pub use search::{KnowledgeService, SearchDeps};

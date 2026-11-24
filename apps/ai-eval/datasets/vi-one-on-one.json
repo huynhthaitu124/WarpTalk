@@ -1,0 +1,350 @@
+{
+  "id": "vi-one-on-one",
+  "language": "vi",
+  "title": "Họp 1:1 giữa quản lý và kỹ sư",
+  "participants": [
+    "Thảo",
+    "Phương"
+  ],
+  "lines": [
+    {
+      "t_ms": 7410,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Chào Phương, tuần này em thấy thế nào, có gì đang vướng không?"
+    },
+    {
+      "t_ms": 16085,
+      "channel": "me",
+      "speaker": "Phương",
+      "text": "Dạ em ổn chị, chỉ là em hơi quá tải vì vừa làm dự án migration vừa phải trực on-call."
+    },
+    {
+      "t_ms": 26630,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Chị hiểu rồi. Giờ nói chuyện review hiệu suất giữa năm nhé, em nên chuẩn bị bản tự đánh giá theo khung OKR của công ty."
+    },
+    {
+      "t_ms": 34700,
+      "channel": "me",
+      "speaker": "Phương",
+      "text": "Dạ, em chưa quen cách viết OKR cho vị trí kỹ sư, chị có ví dụ nào không ạ?"
+    },
+    {
+      "t_ms": 43100,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Chị sẽ gửi em hai ví dụ mẫu trong tuần này, em xem rồi mình chỉnh lại cùng nhau."
+    },
+    {
+      "t_ms": 52490,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Về chuyện thăng cấp, năng lực của em đủ để lên senior, nhưng quyết định còn tùy ngân sách quý sau."
+    },
+    {
+      "t_ms": 61165,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Em có muốn chuyển sang mảng data platform vào quý sau không, hay ở lại team payments?"
+    },
+    {
+      "t_ms": 70060,
+      "channel": "me",
+      "speaker": "Phương",
+      "text": "Em muốn ở lại payments thêm một quý để hoàn thành migration, sau đó em sẽ cân nhắc lại ạ."
+    },
+    {
+      "t_ms": 81760,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Được, vậy mình ghi nhận em ở lại payments hết quý này, chị sẽ báo HR về lộ trình thăng cấp, nhưng chị chưa có con số tăng lương nào đâu nhé."
+    },
+    {
+      "t_ms": 89610,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Còn feedback cho chị thì sao, em thấy chị cần cải thiện điều gì không?"
+    },
+    {
+      "t_ms": 97735,
+      "channel": "me",
+      "speaker": "Phương",
+      "text": "Em nghĩ các buổi planning hơi dài, mình nên giới hạn còn bốn mươi lăm phút."
+    },
+    {
+      "t_ms": 105310,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Ý hay đó, chị sẽ thử giới hạn planning còn 45 phút từ sprint sau."
+    },
+    {
+      "t_ms": 113490,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "Cuối cùng chị muốn em nghỉ ngơi, em còn mười hai ngày phép năm chưa dùng đó."
+    },
+    {
+      "t_ms": 122110,
+      "channel": "me",
+      "speaker": "Phương",
+      "text": "Dạ em kiểm tra thì còn tám ngày phép thôi chị, em đã nghỉ bốn ngày hồi tháng Ba rồi."
+    },
+    {
+      "t_ms": 129960,
+      "channel": "others",
+      "speaker": "Thảo",
+      "text": "À ừ, chị sẽ nhờ HR kiểm tra lại số ngày phép của em cho chính xác nhé."
+    }
+  ],
+  "snippets": [],
+  "expectations": {
+    "suggestions": {
+      "expected": [
+        {
+          "at_line": 2,
+          "category": "term",
+          "must_include": [
+            "OKR"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 4,
+          "category": "follow_up",
+          "must_include": [
+            "ví dụ"
+          ],
+          "must_not_include": [
+            "thứ Hai",
+            "thứ Sáu"
+          ]
+        },
+        {
+          "at_line": 6,
+          "category": "answer",
+          "must_include": [
+            "data platform"
+          ],
+          "must_not_include": [
+            "lương"
+          ]
+        },
+        {
+          "at_line": 8,
+          "category": "follow_up|action_item",
+          "must_include": [
+            "HR"
+          ],
+          "must_not_include": [
+            "tăng lương 10",
+            "tăng 15%",
+            "tăng lương 20"
+          ]
+        },
+        {
+          "at_line": 9,
+          "category": "answer|clarification",
+          "must_include": [],
+          "must_not_include": []
+        },
+        {
+          "at_line": 13,
+          "category": "correction",
+          "must_include": [
+            "mười hai|12",
+            "tám|8"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 14,
+          "category": "follow_up",
+          "must_include": [
+            "ngày phép"
+          ],
+          "must_not_include": []
+        }
+      ],
+      "forbidden": [
+        {
+          "at_line": 11,
+          "category": "action_item"
+        },
+        {
+          "at_line": 3,
+          "category": "correction"
+        }
+      ],
+      "must_not_include": [
+        "tăng lương 10%",
+        "đã được thăng cấp"
+      ]
+    },
+    "summary": {
+      "decisions": [
+        {
+          "keywords": [
+            "Phương",
+            "payments",
+            "quý này"
+          ]
+        },
+        {
+          "keywords": [
+            "planning",
+            "45 phút"
+          ]
+        }
+      ],
+      "action_items": [
+        {
+          "owner": "Thảo",
+          "task_keywords": [
+            "ví dụ",
+            "OKR"
+          ],
+          "deadline": "trong tuần này"
+        },
+        {
+          "owner": "Thảo",
+          "task_keywords": [
+            "HR",
+            "lộ trình",
+            "thăng cấp"
+          ]
+        },
+        {
+          "owner": "Thảo",
+          "task_keywords": [
+            "planning",
+            "45 phút"
+          ],
+          "deadline": "sprint sau"
+        },
+        {
+          "owner": "Thảo",
+          "task_keywords": [
+            "HR",
+            "ngày phép"
+          ]
+        }
+      ],
+      "must_not_include": [
+        "tăng lương 10",
+        "tăng lương 15",
+        "tăng 10%",
+        "đã được thăng cấp",
+        "senior từ quý sau"
+      ]
+    }
+  },
+  "fake": {
+    "suggestions": [
+      {
+        "at_line": 2,
+        "category": "term",
+        "content": "OKR (Objectives and Key Results): khung mục tiêu và kết quả then chốt.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 4,
+        "category": "follow_up",
+        "content": "Thảo sẽ gửi hai ví dụ OKR mẫu trong tuần này.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Thảo",
+          "task": "Gửi hai ví dụ OKR mẫu",
+          "due": "trong tuần này"
+        }
+      },
+      {
+        "at_line": 6,
+        "category": "answer",
+        "content": "Thảo hỏi Phương muốn chuyển sang data platform hay ở lại payments; Phương chưa nói rõ.",
+        "detail": "",
+        "source": ""
+      },
+      {
+        "at_line": 8,
+        "category": "follow_up",
+        "content": "Thảo sẽ báo HR về lộ trình thăng cấp của Phương.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Thảo",
+          "task": "Báo HR về lộ trình thăng cấp"
+        }
+      },
+      {
+        "at_line": 13,
+        "category": "correction",
+        "content": "Thảo nói còn mười hai ngày phép, Phương nói còn tám ngày.",
+        "detail": "",
+        "source": ""
+      },
+      {
+        "at_line": 14,
+        "category": "follow_up",
+        "content": "Thảo nhờ HR kiểm tra lại số ngày phép của Phương.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Thảo",
+          "task": "Nhờ HR kiểm tra số ngày phép"
+        }
+      },
+      {
+        "at_line": 11,
+        "category": "action_item",
+        "content": "Thảo thử giới hạn planning còn 45 phút từ sprint sau.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Thảo",
+          "task": "Giới hạn planning 45 phút",
+          "due": "sprint sau"
+        }
+      }
+    ],
+    "summary": {
+      "summary_short": "1:1 giữa Thảo và Phương: quá tải, OKR, thăng cấp, ở lại payments, giới hạn planning 45 phút.",
+      "summary_detailed": "Phương báo quá tải vì migration và on-call. Thảo gửi ví dụ OKR, báo HR về lộ trình thăng cấp và chưa có con số tăng lương. Phương ở lại payments hết quý này. Hai bên lệch số ngày phép (mười hai so với tám).",
+      "decisions": [
+        "Phương ở lại team payments hết quý này",
+        "Giới hạn buổi planning còn 45 phút từ sprint sau"
+      ],
+      "action_items": [
+        {
+          "task": "Gửi hai ví dụ OKR mẫu",
+          "owner": "Thảo",
+          "due": "trong tuần này",
+          "source_segments": []
+        },
+        {
+          "task": "Báo HR về lộ trình thăng cấp",
+          "owner": "Thảo",
+          "due": null,
+          "source_segments": []
+        },
+        {
+          "task": "Giới hạn planning còn 45 phút",
+          "owner": "Thảo",
+          "due": "sprint sau",
+          "source_segments": []
+        }
+      ],
+      "open_questions": [
+        "Số ngày phép còn lại là bao nhiêu?"
+      ],
+      "topics": [
+        "OKR",
+        "thăng cấp",
+        "khối lượng công việc"
+      ]
+    }
+  }
+}
