@@ -2,6 +2,7 @@
 //! embeddings, summaries, suggestions, notifications later).
 
 pub mod adapters;
+pub mod metering;
 pub mod route_status;
 
 use std::sync::Arc;
@@ -161,6 +162,9 @@ pub async fn build_ai_plane(
     .await;
 
     warptalk_assistant::suggestion::register_config(&settings);
+    let usage = Arc::new(warptalk_assistant::usage::RedisUsageSink::new(
+        redis.clone(),
+    ));
     let engine = SuggestionEngine::new(EngineDeps {
         rooms: Arc::new(PgSuggestionRoomDirectory::new(pool)),
         signals: Arc::new(RedisRoomSignals::new(redis.clone())),
@@ -171,7 +175,8 @@ pub async fn build_ai_plane(
         clock: Arc::new(SystemClock),
         state: SuggestionState::new(redis.clone()),
         redis,
-    });
+    })
+    .with_usage(usage);
     let suggestion = Arc::new(SuggestionWorker::new(
         Arc::new(engine),
         SUGGESTION_MAX_PIPELINES,
@@ -203,9 +208,12 @@ pub async fn build_summary(
         followups: Arc::new(RedisFollowUpSource::new(redis.clone())),
         llm,
         settings: settings.clone(),
-        bus: Arc::new(RedisSummaryBus::new(redis)),
+        bus: Arc::new(RedisSummaryBus::new(redis.clone())),
         clock: Arc::new(SystemClock),
-    });
+    })
+    .with_usage(Arc::new(warptalk_assistant::usage::RedisUsageSink::new(
+        redis,
+    )));
     Ok(Arc::new(SummaryWorker::new(
         Arc::new(service),
         SUMMARY_MAX_JOBS,

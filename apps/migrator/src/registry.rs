@@ -16,5 +16,6 @@ pub fn registry() -> Vec<ModuleMigrations> {
         warptalk_knowledge::MIGRATIONS,
         warptalk_assistant::MIGRATIONS,
         warptalk_copilot::MIGRATIONS,
+        warptalk_billing::MIGRATIONS,
     ]
 }

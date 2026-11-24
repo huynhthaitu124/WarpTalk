@@ -23,3 +23,4 @@ warptalk-transcript = { workspace = true }
 warptalk-knowledge = { workspace = true }
 warptalk-assistant = { workspace = true }
 warptalk-copilot = { workspace = true }
+warptalk-billing = { workspace = true }

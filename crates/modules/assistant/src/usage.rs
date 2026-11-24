@@ -133,3 +133,39 @@ impl UsageSink for RedisUsageSink {
 }
 
 pub type SharedUsageSink = Arc<dyn UsageSink>;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byo_boundary_and_token_split() {
+        assert_eq!(boundary_label(DataBoundary::External), "platform");
+        assert_eq!(boundary_label(DataBoundary::WorkspaceControlled), "byo");
+        let u = Usage {
+            input_uncached: 10,
+            cache_read: 5,
+            cache_write: 1,
+            output: 7,
+            reasoning: 3,
+        };
+        assert_eq!(UsageEvent::tokens_of(&u), (16, 7));
+        let e = UsageEvent::llm(
+            "x".into(),
+            "llm_summary",
+            Uuid::nil(),
+            Uuid::nil(),
+            "m".into(),
+            DataBoundary::WorkspaceControlled,
+            1,
+            2,
+            None,
+        );
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(
+            (v["boundary"].as_str(), v["tokens_out"].as_i64()),
+            (Some("byo"), Some(2))
+        );
+    }
+}
