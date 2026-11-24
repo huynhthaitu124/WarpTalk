@@ -46,17 +46,33 @@ impl DevMailCapture {
     }
 }
 
-#[async_trait::async_trait]
-impl VerificationMailer for DevMailCapture {
-    async fn send_verification(&self, email: &str, token: &str) -> Result<(), AppError> {
+impl DevMailCapture {
+    async fn store(&self, purpose: &str, email: &str, token: &str) -> Result<(), AppError> {
+        tracing::info!(
+            email,
+            purpose,
+            "dev mail captured in redis (token not logged)"
+        );
         let mut conn = self
             .client
             .get_multiplexed_async_connection()
             .await
             .map_err(|e| AppError::internal(format!("dev mail capture redis: {e}")))?;
-        conn.set_ex::<_, _, ()>(Self::key("verify", email), token, TTL_SECONDS)
+        conn.set_ex::<_, _, ()>(Self::key(purpose, email), token, TTL_SECONDS)
             .await
             .map_err(|e| AppError::internal(format!("dev mail capture redis: {e}")))?;
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl VerificationMailer for DevMailCapture {
+    async fn send_verification(&self, email: &str, token: &str) -> Result<(), AppError> {
+        self.store("verify", email, token).await
+    }
+
+    /// Stored under `dev:mail:reset:{email_lowercase}`.
+    async fn send_password_reset(&self, email: &str, token: &str) -> Result<(), AppError> {
+        self.store("reset", email, token).await
     }
 }

@@ -1,0 +1,25 @@
+# Edge reverse proxy of docker-compose.prod.yml (profile "proxy"). Automatic HTTPS (Let's Encrypt)
+# for $DOMAIN; DOMAIN=localhost uses Caddy's internal CA (smoke test). Ports 80/443 must be reachable.
+{
+	admin off
+}
+
+{$DOMAIN} {
+	# Backend: no compression/buffering so SSE streams (suggestions) flow immediately.
+	handle /api/* {
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy web:8080
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

@@ -1,7 +1,11 @@
 //! Invitation mailer adapters.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use redis::AsyncCommands;
+use warptalk_email::EmailSender;
+use warptalk_email::templates::{self, Brand, InvitationInfo, Lang};
 use warptalk_kernel::{AppError, AppResult};
 
 use crate::application::invitations::{InvitationMail, InvitationMailer};
@@ -75,5 +79,120 @@ impl InvitationMailer for DevInvitationMailCapture {
             .await
             .map_err(|e| AppError::internal(format!("dev mail capture redis: {e}")))?;
         Ok(())
+    }
+}
+
+/// Delivers invitations through an [`EmailSender`] (Resend, ...). The mail links to
+/// `{APP_BASE_URL}/invitations/accept?token=`; the raw token is never logged.
+pub struct EmailInvitationMailer {
+    sender: Arc<dyn EmailSender>,
+    brand: Brand,
+    lang: Lang,
+}
+
+impl EmailInvitationMailer {
+    pub fn new(sender: Arc<dyn EmailSender>, brand: Brand, lang: Lang) -> Self {
+        Self {
+            sender,
+            brand,
+            lang,
+        }
+    }
+}
+
+#[async_trait]
+impl InvitationMailer for EmailInvitationMailer {
+    async fn send_invitation(&self, mail: &InvitationMail<'_>) -> AppResult<()> {
+        let expires = mail.expires_at.format("%Y-%m-%d").to_string();
+        let rendered = templates::workspace_invitation(
+            &self.brand,
+            self.lang,
+            &InvitationInfo {
+                workspace: mail.workspace_name,
+                inviter: mail.inviter_name,
+                role: mail.role.as_str(),
+                token: mail.token,
+                expires: &expires,
+            },
+        );
+        let id = self
+            .sender
+            .send(rendered.into_email(mail.to, "workspace_invitation"))
+            .await
+            .map_err(|e| AppError::Unavailable(format!("invitation email failed: {e}")))?;
+        tracing::info!(to = mail.to, message_id = %id.0, "workspace invitation email sent");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::sync::Mutex;
+    use warptalk_email::{Email, EmailError, MessageId};
+    use warptalk_kernel::WorkspaceRole;
+
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<Email>>);
+
+    #[async_trait]
+    impl EmailSender for Capture {
+        async fn send(&self, email: Email) -> Result<MessageId, EmailError> {
+            self.0.lock().unwrap().push(email);
+            Ok(MessageId("m".into()))
+        }
+    }
+
+    struct Failing;
+
+    #[async_trait]
+    impl EmailSender for Failing {
+        async fn send(&self, _: Email) -> Result<MessageId, EmailError> {
+            Err(EmailError::Unavailable("down".into()))
+        }
+    }
+
+    fn mail<'a>(token: &'a str, ws: &'a str) -> InvitationMail<'a> {
+        InvitationMail {
+            to: "new@example.test",
+            workspace_name: ws,
+            inviter_name: "Ann",
+            role: WorkspaceRole::Member,
+            token,
+            expires_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn invitation_links_to_accept_page_and_escapes() {
+        let cap = Arc::new(Capture::default());
+        let m = EmailInvitationMailer::new(
+            cap.clone(),
+            Brand::new("WarpTalk", "https://app.example.test"),
+            Lang::En,
+        );
+        m.send_invitation(&mail("tok123", "<b>Acme</b>"))
+            .await
+            .unwrap();
+        let sent = cap.0.lock().unwrap();
+        assert_eq!(sent[0].to, "new@example.test");
+        assert!(
+            sent[0]
+                .html
+                .contains("https://app.example.test/invitations/accept?token=tok123")
+        );
+        assert!(!sent[0].html.contains("<b>Acme</b>"));
+    }
+
+    #[tokio::test]
+    async fn delivery_failure_is_reported_for_retry() {
+        let m = EmailInvitationMailer::new(
+            Arc::new(Failing),
+            Brand::new("WarpTalk", "https://x.test"),
+            Lang::Vi,
+        );
+        assert!(m.send_invitation(&mail("t", "W")).await.is_err());
     }
 }

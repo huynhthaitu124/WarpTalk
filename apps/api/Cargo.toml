@@ -29,6 +29,8 @@ warptalk-telemetry = { workspace = true }
 warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-identity = { workspace = true }
+warptalk-email = { path = "../../crates/providers/email" }
+warptalk-google = { path = "../../crates/providers/google" }
 warptalk-workspace = { workspace = true }
 warptalk-storage = { workspace = true }
 warptalk-room = { workspace = true }

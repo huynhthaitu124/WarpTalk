@@ -16,4 +16,13 @@ impl VerificationMailer for LogMailer {
         );
         Ok(())
     }
+
+    async fn send_password_reset(&self, email: &str, token: &str) -> Result<(), AppError> {
+        tracing::info!(
+            email,
+            token_len = token.len(),
+            "password reset email requested (LogMailer; token not logged)"
+        );
+        Ok(())
+    }
 }

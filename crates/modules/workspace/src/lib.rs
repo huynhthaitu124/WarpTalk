@@ -37,7 +37,9 @@ pub use application::ports::{
     NoopUserDirectory, SettingsObserver as WorkspaceSettingsObserver, UserSummary,
 };
 pub use domain::AiPolicy;
-pub use infrastructure::mailers::{DevInvitationMailCapture, LogInvitationMailer};
+pub use infrastructure::mailers::{
+    DevInvitationMailCapture, EmailInvitationMailer, LogInvitationMailer,
+};
 pub use infrastructure::redis_documents::{
     RedisDocumentIndexPublisher, document_results_consumer_config,
 };

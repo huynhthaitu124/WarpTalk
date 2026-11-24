@@ -25,7 +25,8 @@ apps/web/playwright-report
 apps/web/e2e/__screenshots__
 apps/web/*.tsbuildinfo
 
-# Not needed to build any image
+# Not needed to build any image (rust-toolchain.toml would make rustup fetch another toolchain)
+rust-toolchain.toml
 apps/macos
 docs
 tests

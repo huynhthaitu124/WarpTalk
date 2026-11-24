@@ -1,0 +1,169 @@
+# WarpTalk PRODUCTION stack (copilot, ADR 0001): postgres, redis, qdrant, migrator (run-once), api, worker, web
+# and an optional Caddy edge proxy with automatic TLS (profile "proxy"). No LiveKit, no pipeline.
+#
+#   cp deploy/docker/prod.env.example deploy/docker/.env.prod      # fill in, never commit
+#   docker compose -f deploy/docker/docker-compose.prod.yml --env-file deploy/docker/.env.prod pull
+#   docker compose -f deploy/docker/docker-compose.prod.yml --env-file deploy/docker/.env.prod --profile proxy up -d
+#
+# See docs/DEPLOY.md. Nothing here contains secrets: every secret comes from the env file.
+name: warptalk-prod
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://${POSTGRES_USER:-warptalk}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-warptalk}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  RUST_LOG: ${RUST_LOG:-info}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+  AI_KEYS_KEK: ${AI_KEYS_KEK:-}
+  AI_KEYS_KEK_VERSION: ${AI_KEYS_KEK_VERSION:-1}
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+  STORAGE_LOCAL_DIR: /data/objects
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  S3_REGION: ${S3_REGION:-}
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-warptalk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-warptalk}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Password comes from env (not visible in the compose file); AOF persistence for streams/state.
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    volumes:
+      - qdrantdata:/qdrant/storage
+    # No healthcheck: the qdrant image has no curl/wget. api/worker only wait for "started".
+    logging: *logging
+
+  migrator:
+    image: ${WARPTALK_REGISTRY:?set WARPTALK_REGISTRY (e.g. ghcr.io/<owner>)}/warptalk-migrator:${WARPTALK_TAG:-latest}
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.rust, target: migrator }
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-warptalk}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-warptalk}
+      RUST_LOG: ${RUST_LOG:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  api:
+    image: ${WARPTALK_REGISTRY}/warptalk-api:${WARPTALK_TAG:-latest}
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.rust, target: api }
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      HTTP_BIND: 0.0.0.0:8080
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (>= 32 bytes)}
+      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-}
+      JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      DEV_MAIL_CAPTURE: ${DEV_MAIL_CAPTURE:-}
+    volumes:
+      - objects:/data/objects
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    logging: *logging
+
+  worker:
+    image: ${WARPTALK_REGISTRY}/warptalk-worker:${WARPTALK_TAG:-latest}
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.rust, target: worker }
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes:
+      - objects:/data/objects
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    logging: *logging
+
+  web:
+    image: ${WARPTALK_REGISTRY}/warptalk-web:${WARPTALK_TAG:-latest}
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.web }
+    restart: unless-stopped
+    environment:
+      API_PROXY_TARGET: http://api:8080
+    # Loopback only: for your own reverse proxy when the "proxy" profile is not used.
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:8080"
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging
+
+  caddy:
+    image: caddy:2.8-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN (e.g. warptalk.example.com)}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+    logging: *logging
+
+volumes:
+  pgdata:
+  redisdata:
+  qdrantdata:
+  objects:
+  caddy_data:
+  caddy_config:

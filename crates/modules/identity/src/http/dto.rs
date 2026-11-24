@@ -27,6 +27,32 @@ pub struct VerifyEmailRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmailRequest {
+    pub email: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    pub new_password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleTokenRequest {
+    pub id_token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
@@ -121,6 +147,8 @@ pub struct MeDto {
     pub timezone: String,
     pub email_verified: bool,
     pub system_admin: bool,
+    pub has_password: bool,
+    pub google_linked: bool,
 }
 
 impl From<MeView> for MeDto {
@@ -134,6 +162,8 @@ impl From<MeView> for MeDto {
             timezone: m.profile.timezone,
             email_verified: m.email_verified,
             system_admin: m.system_admin,
+            has_password: m.has_password,
+            google_linked: m.google_linked,
         }
     }
 }

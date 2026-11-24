@@ -28,6 +28,8 @@ rand = { workspace = true }
 base64 = { workspace = true }
 redis = { workspace = true }
 warptalk-cartesia = { workspace = true }
+warptalk-email = { path = "../../providers/email" }
+warptalk-google = { path = "../../providers/google" }
 
 [dev-dependencies]
 redis = { workspace = true }

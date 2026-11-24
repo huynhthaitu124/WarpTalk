@@ -19,9 +19,8 @@ ARG CARGO_CHEF_VERSION=0.1.78
 # ---------------------------------------------------------------------------------------------
 FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS chef
 ARG CARGO_CHEF_VERSION
-# rust-toolchain.toml says "stable" + rustfmt/clippy; the image already ships the pinned toolchain.
-ENV RUSTUP_TOOLCHAIN=${RUST_VERSION} \
-    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+# rust-toolchain.toml is excluded by .dockerignore: the image's pinned toolchain (RUST_VERSION) is used.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true \
     CARGO_TERM_COLOR=never
 RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
 WORKDIR /src
@@ -38,12 +37,14 @@ ARG WITH_PIPELINE=0
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
     CARGO_PROFILE_RELEASE_DEBUG=0
 COPY --from=planner /src/recipe.json recipe.json
-# Dependency layer: rebuilt only when Cargo.toml/Cargo.lock/recipe change.
+# Dependency layer: rebuilt only when Cargo.toml/Cargo.lock/recipe change. PKGS/BINS rely on word splitting.
+# hadolint ignore=SC2086
 RUN set -eux; \
     PKGS="-p warptalk-api -p warptalk-worker -p warptalk-migrator"; \
     if [ "$WITH_PIPELINE" = "1" ]; then PKGS="$PKGS -p warptalk-pipeline"; fi; \
     cargo chef cook --release --locked --recipe-path recipe.json $PKGS
 COPY . .
+# hadolint ignore=SC2086
 RUN set -eux; \
     BINS="--bin warptalk-api --bin warptalk-worker --bin warptalk-migrator"; \
     if [ "$WITH_PIPELINE" = "1" ]; then BINS="$BINS --bin warptalk-pipeline"; fi; \
@@ -55,13 +56,14 @@ RUN set -eux; \
 
 # ---------------------------------------------------------------------------------------------
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime-base
+# hadolint ignore=DL3008
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     groupadd --system --gid 10001 warptalk; \
     useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin warptalk; \
-    mkdir -p /data && chown 10001:10001 /data
+    mkdir -p /data/objects && chown -R 10001:10001 /data
 ENV RUST_LOG=info \
     LOG_FORMAT=json \
     STORAGE_LOCAL_DIR=/data/objects

@@ -609,14 +609,17 @@ pub async fn build(
         ..Policy::default()
     };
 
-    let identity = IdentityModule::new(IdentityDeps {
-        pool: pool.clone(),
-        jwt: jwt.clone(),
-        clock: clock.clone(),
-        mailer,
-        policy,
-        voice: voice_deps(&opts, redis.as_ref()),
-    });
+    let identity = IdentityModule::with_extras(
+        IdentityDeps {
+            pool: pool.clone(),
+            jwt: jwt.clone(),
+            clock: clock.clone(),
+            mailer,
+            policy,
+            voice: voice_deps(&opts, redis.as_ref()),
+        },
+        crate::auth_wiring::identity_extras(redis.as_ref()),
+    );
     let invitation_mailer = opts
         .invitation_mailer
         .unwrap_or_else(|| Arc::new(LogInvitationMailer));

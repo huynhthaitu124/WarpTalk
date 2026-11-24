@@ -88,11 +88,18 @@ Cột "ai dùng": **A** = `warptalk-api`, **W** = `warptalk-worker`, **P** = `wa
 | `JWT_REFRESH_TTL_SECONDS` | không | `2592000` (30 ngày) | | |
 | `HTTP_BIND` | không | `0.0.0.0:8080` | `127.0.0.1:8080` | `dev-up.sh` dùng `127.0.0.1:8080` (khớp mặc định app macOS) |
 | `CORS_ORIGINS` | không | rỗng | `http://localhost:3000,http://127.0.0.1:3000` | Phân tách dấu phẩy. Khi web đi qua rewrite `/api` của Next dev (hoặc bản export chạy qua proxy cùng origin) thì không cần |
-| `DEV_MAIL_CAPTURE` | không | tắt | `1` | Phải đúng `1`. **Chỉ dev**: token xác minh email/lời mời lưu thô vào Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`, TTL 1 giờ). Thiếu biến này API chỉ log độ dài token (chưa có mailer thật), nên không thể xác minh email |
+| `DEV_MAIL_CAPTURE` | không | tắt | `1` | Phải đúng `1`. **Chỉ dev**: token xác minh email/lời mời lưu thô vào Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`, TTL 1 giờ). Thiếu biến này và thiếu `RESEND_API_KEY` thì API chỉ log độ dài token, nên không thể xác minh email |
 | `LIVEKIT_URL` | không (cả 3 hoặc không) | không | `ws://localhost:7880` | Thiếu một trong ba: `POST /meetings/{id}/join` và `/bridge-token` trả `503 LIVEKIT_NOT_CONFIGURED`. URL này **được trả cho trình duyệt**, phải truy cập được từ máy người dùng |
 | `LIVEKIT_API_KEY` | như trên | không | `devkey` | **BÍ MẬT** ở production |
 | `LIVEKIT_API_SECRET` | như trên | không | `secret` | **BÍ MẬT** ở production |
 | `AI_ALLOW_INSECURE_BASE_URL` | không | strict | `true` | Nhận `1`, `true`, `TRUE`, `yes`. Cho phép `baseUrl` BYO dạng http/loopback (ví dụ Ollama). Chỉ dev |
+| `RESEND_API_KEY` | không (cần để gửi email thật) | không | `re_...` | **BÍ MẬT**. Có biến này (và không bật `DEV_MAIL_CAPTURE`) thì email xác minh, đặt lại mật khẩu và lời mời workspace được gửi qua Resend (`POST https://api.resend.com/emails`). Thiếu cả hai: API chỉ log và in WARN lúc khởi động, người dùng không xác minh/đặt lại được |
+| `EMAIL_FROM` | bắt buộc khi có `RESEND_API_KEY` | không | `WarpTalk <no-reply@your-domain>` | Người gửi đã xác minh domain trên Resend. Thiếu thì API không khởi động |
+| `APP_BASE_URL` | bắt buộc khi có `RESEND_API_KEY` | không | `https://app.your-domain` | Gốc URL web, dùng cho link trong email: `/verify-email?token=`, `/reset-password?token=`, `/invitations/accept?token=`. Thiếu thì API không khởi động |
+| `EMAIL_BRAND_NAME` | không | `WarpTalk` | | Tên sản phẩm trong tiêu đề/nội dung email |
+| `EMAIL_DEFAULT_LANG` | không | `vi` | `en` | Ngôn ngữ mẫu email (`vi` hoặc `en`) |
+| `GOOGLE_CLIENT_IDS` | không | không | `123-web.apps.googleusercontent.com,123-mac.apps.googleusercontent.com` | Danh sách OAuth client id (phân tách dấu phẩy) được chấp nhận làm `aud` của Google ID token (web + macOS). Thiếu thì `POST /api/v1/auth/google` trả `503 GOOGLE_NOT_CONFIGURED` |
+| `DEV_MAIL_CAPTURE` (bổ sung) | | | `1` | Ngoài `dev:mail:verify:{email}`, token đặt lại mật khẩu lưu ở `dev:mail:reset:{email}` (TTL 1 giờ). Ưu tiên cao hơn `RESEND_API_KEY` |
 
 Ngoài ra A và W còn đọc nhóm AI/Qdrant ở 3.3 và 3.4.
 
@@ -478,5 +485,5 @@ Nguồn: `docs/architecture/PROGRESS.md`, `apps/pipeline/LIVEKIT.md`, `apps/maco
 - `workspace` dùng role uuid cố định; BR-31/32 (một membership Internal) chưa enforce.
 - Outbox chưa có lease khi claim (consumer phải idempotent). `IdentityUserDirectory` gọi từng user một.
 - Họp ngoài trên macOS: không có far-speaker hint (mọi lời bên kia là "Google Meet participants"); lease capturer chưa phản ánh trạng thái audio (B8).
-- Email thật: chưa có mailer SMTP/provider; dev dùng `DEV_MAIL_CAPTURE=1` (không bao giờ bật ở môi trường dùng chung).
+- Email thật: gửi qua Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `APP_BASE_URL`); chưa có SMTP; dev dùng `DEV_MAIL_CAPTURE=1` (không bao giờ bật ở môi trường dùng chung). Mẫu email dùng một ngôn ngữ mặc định (`EMAIL_DEFAULT_LANG`), chưa theo ngôn ngữ từng người dùng.
 - Bộ docker-compose này chỉ dành cho dev (LiveKit `--dev`, Postgres trust auth, khoá `devkey/secret`). Chưa có Dockerfile cho app.
