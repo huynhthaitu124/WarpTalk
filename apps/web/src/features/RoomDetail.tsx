@@ -15,6 +15,7 @@ import { LANGUAGES, languageLabel } from '@/lib/languages';
 import type { Participant, Room } from '@/lib/schemas';
 import { TERMINAL_STATUSES, formatShortDate, formatWhen, langCodes, roomMoment, useCopy, useHostName } from './common';
 import { errMsg } from './errors';
+import { Feature } from '@/lib/features';
 
 const TERMINAL = TERMINAL_STATUSES;
 
@@ -37,7 +38,7 @@ export function JoinRoomForm({ roomId, defaultName }: { roomId: string; defaultN
         <form onSubmit={submit} className="flex flex-col gap-4">
           <Field label="Display name (optional)"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} /></Field>
           <Field label="I speak"><Select value={speak} onValueChange={setSpeak} options={opts} /></Field>
-          <Field label="I want to listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field>
+          <Feature name="dubbing"><Field label="I want to listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field></Feature>
           {join.isError && <Alert tone="danger">{errMsg(join.error)}</Alert>}
           <Button type="submit" variant="primary" loading={join.isPending}>Join meeting</Button>
         </form>
@@ -359,7 +360,7 @@ export function RoomDetailPage() {
         ) : (
           <div className="flex min-w-0 flex-col border-t border-hairline">
             <ParticipantsCard roomId={room.id} list={list} canModerate={canModerate && !terminal} selfId={userId} />
-            {canModerate && <RoutesCard roomId={room.id} canGenerate={canModerate && !terminal} participants={list} />}
+            {canModerate && <Feature name="dubbing"><RoutesCard roomId={room.id} canGenerate={canModerate && !terminal} participants={list} /></Feature>}
           </div>
         )}
       </div>

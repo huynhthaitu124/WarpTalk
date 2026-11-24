@@ -11,8 +11,9 @@ use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, RoomId, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_room::RoomQueries;
 use warptalk_settings::{
-    AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_RAG, NS_SUGGESTION, PipelineSettings,
-    RagSettings, Scope, ScopeChain, SettingsStore, SuggestionSettings,
+    AiProvidersSettings, FeatureFlags, NS_AI_PROVIDERS, NS_FEATURES, NS_PIPELINE, NS_RAG,
+    NS_SUGGESTION, PipelineSettings, RagSettings, Scope, ScopeChain, SettingsStore,
+    SuggestionSettings,
 };
 use warptalk_web::extract::{Json, Path, Query};
 use warptalk_web::{AuthUser, JwtKeys};
@@ -55,7 +56,15 @@ struct ScopeQuery {
 }
 
 fn known_namespace(ns: &str) -> AppResult<()> {
-    if [NS_PIPELINE, NS_SUGGESTION, NS_RAG, NS_AI_PROVIDERS].contains(&ns) {
+    if [
+        NS_PIPELINE,
+        NS_SUGGESTION,
+        NS_RAG,
+        NS_AI_PROVIDERS,
+        NS_FEATURES,
+    ]
+    .contains(&ns)
+    {
         Ok(())
     } else {
         Err(AppError::not_found(format!("unknown namespace `{ns}`")))
@@ -173,6 +182,7 @@ async fn effective_value(store: &SettingsStore, ns: &str, chain: ScopeChain) -> 
         NS_SUGGESTION => ser(store.get::<SuggestionSettings>(ns, chain).await?),
         NS_RAG => ser(store.get::<RagSettings>(ns, chain).await?),
         NS_AI_PROVIDERS => ser(store.get::<AiProvidersSettings>(ns, chain).await?),
+        NS_FEATURES => ser(store.get::<FeatureFlags>(ns, chain).await?),
         _ => Err(AppError::not_found(format!("unknown namespace `{ns}`"))),
     }
 }

@@ -59,6 +59,9 @@ export async function installNativeMock(page: Page, opts: MockOptions = {}) {
         return Promise.resolve(state.status);
       },
       captureStatus: () => rec('captureStatus', [], state.status),
+      // Copilot capture (P1 in the real app): recorded only; the web UI turns "Start/Stop capture" on when these exist.
+      startCopilotSession: (o: unknown) => rec('startCopilotSession', [o], { ...state.status, state: 'running' }),
+      stopCopilotSession: () => rec('stopCopilotSession', [], { ...state.status, state: 'idle' }),
       updateAuth: (a: unknown) => rec('updateAuth', [a], { updated: true }),
       showOverlay: (v: boolean) => rec('showOverlay', [v], { visible: v }),
       pushOverlayCaption: (c: unknown) => rec('pushOverlayCaption', [c], null),

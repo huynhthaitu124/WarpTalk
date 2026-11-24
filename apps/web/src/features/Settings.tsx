@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn';
 import { AiSettings } from './AiSettings';
 import { GlobalGlossaryAdmin } from './GlobalGlossary';
 import { VoiceSection } from './VoiceProfile';
+import { Feature } from '@/lib/features';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
@@ -258,7 +259,7 @@ function AccountTab() {
           <FieldRow label="Theme"><Select value={theme} onValueChange={(v) => setTheme(v as 'dark' | 'light')} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]} /></FieldRow>
         </SettingsGroup>
       </section>
-      <VoiceSection />
+      <Feature name="voiceClone"><VoiceSection /></Feature>
       <div><Button onClick={() => void logout()}>Sign out</Button></div>
     </div>
   );

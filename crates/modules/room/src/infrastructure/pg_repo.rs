@@ -18,14 +18,14 @@ use warptalk_kernel::{
 };
 
 use crate::application::ports::{
-    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
+    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewCopilotRoom, NewRoom,
     ParticipantRecord, RoomRecord, RoomRepo, UpdateLanguagesInput, VoiceConsentDirectory,
 };
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
-    ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction,
-    RoomStatus, RoomType, RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes,
-    room_languages,
+    ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_COPILOT_SESSION,
+    ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction, RoomStatus, RoomType, RouteSpeaker,
+    STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes, room_languages,
 };
 
 /// Name of the partial unique index "one open bridge room per workspace + provider + meeting".
@@ -741,6 +741,51 @@ impl RoomRepo for PgRoomRepo {
             .ok_or_else(|| AppError::internal("room vanished after insert"))?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(rec)
+    }
+
+    async fn create_copilot(&self, new: NewCopilotRoom) -> AppResult<(RoomRecord, ParticipantId)> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query(
+            "INSERT INTO translation_room.translation_rooms \
+             (id, workspace_id, host_id, title, translation_room_code, status, translation_room_type, \
+              max_participants, source_language, target_languages, settings, started_at, created_at, \
+              created_by) \
+             VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', $6, 1, $7, $8, $9, $10, $10, $3)",
+        )
+        .bind(new.id.as_uuid())
+        .bind(new.workspace_id.as_uuid())
+        .bind(new.host.as_uuid())
+        .bind(&new.title)
+        .bind(&new.code)
+        .bind(ROOM_TYPE_COPILOT_SESSION)
+        .bind(&new.source_language)
+        .bind(serde_json::json!([new.target_language]))
+        .bind(serde_json::json!({ "requires_approval": false }))
+        .bind(new.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let participant = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO translation_room.translation_room_participants \
+             (id, translation_room_id, user_id, display_name, role, listen_language, \
+              speak_language, status, joined_at, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, 'host', $5, $5, 'CONNECTED', $6, $6, $6)",
+        )
+        .bind(participant)
+        .bind(new.id.as_uuid())
+        .bind(new.host.as_uuid())
+        .bind(&new.host_display_name)
+        .bind(&new.source_language)
+        .bind(new.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let rec = fetch_room(&mut tx, new.id)
+            .await?
+            .ok_or_else(|| AppError::internal("room vanished after insert"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((rec, ParticipantId::from(participant)))
     }
 
     async fn list(

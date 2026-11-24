@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
 import type { RoomAction } from '@/lib/queries';
 import type { RoomStatus } from '@/lib/schemas';
+import { Feature } from '@/lib/features';
 import { REACTIONS } from './protocol';
 
 const iconBtn = 'size-10 shrink-0 rounded-lg p-0 max-sm:size-9';
@@ -64,6 +65,7 @@ export function ControlBar(p: ControlBarProps) {
           <ClosedCaptioning weight={p.captionsOn ? 'fill' : 'regular'} className="size-5" aria-hidden />
         </Button>
       </Tip>
+      <Feature name="dubbing">
       <Dropdown>
         <Tip label="Listen language">
           <DropdownTrigger asChild>
@@ -79,6 +81,7 @@ export function ControlBar(p: ControlBarProps) {
           ))}
         </DropdownContent>
       </Dropdown>
+      </Feature>
       <Dropdown>
         <Tip label="Meeting settings">
           <DropdownTrigger asChild>

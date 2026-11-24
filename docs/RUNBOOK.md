@@ -1,6 +1,8 @@
 # WarpTalk: Runbook demo (dev, macOS)
 
-Tài liệu này là hướng dẫn duy nhất để dựng và chạy demo đầy đủ trên một máy Mac. Mọi tên biến môi trường bên dưới đã được đối chiếu với code (mục 3 ghi file nguồn). Mọi đường dẫn tính từ thư mục gốc repo.
+**Định vị hiện tại (ADR 0001):** WarpTalk là *meeting assistant copilot* (transcript, gợi ý, follow-up, biên bản). Dịch họp, dub, voice clone và cầu nối họp ngoài (LiveKit) được **tạm ẩn sau feature flag, mặc định tắt**; code vẫn còn. Stack mặc định chỉ gồm Postgres, Redis, Qdrant, api, worker và web: **không LiveKit, không pipeline**. Muốn chạy lại phần dịch: `scripts/dev-up.sh --start --translation` (mục 2) và bật flag (mục 2.1).
+
+Tài liệu này là hướng dẫn để dựng và chạy demo trên một máy Mac. Mọi tên biến môi trường bên dưới đã được đối chiếu với code (mục 3 ghi file nguồn). Mọi đường dẫn tính từ thư mục gốc repo.
 
 Mục lục: 1. Yêu cầu máy · 2. Khởi động nhanh · 3. Biến môi trường · 4. Chạy từng thành phần · 5. Cấu hình key thật · 6. Pipeline với LiveKit thật · 7. App macOS · 8. Kịch bản demo · 9. Đo latency · 10. Chạy test · 11. Troubleshooting · 12. Giới hạn đã biết
 
@@ -22,32 +24,37 @@ Mục lục: 1. Yêu cầu máy · 2. Khởi động nhanh · 3. Biến môi tr�
 
 Kiểm tra nhanh: `cargo --version && node --version && docker compose version && jq --version && redis-cli --version`.
 
-Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit), 8080 (API), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
+Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit, chỉ khi `--translation`), 8080 (API), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
 
 ---
 
 ## 2. Khởi động nhanh (5 lệnh)
 
 ```bash
-# 1. Hạ tầng + build + migrate + chạy api/worker/pipeline nền + web (log ở ./.logs/)
+# 1. Hạ tầng (Postgres, Redis, Qdrant) + build + migrate + chạy api/worker nền + web (log ở ./.logs/)
+#    Mặc định KHÔNG có LiveKit và KHÔNG có pipeline dịch/dub. Thêm --translation nếu cần (xem bên dưới).
 scripts/dev-up.sh --start --web
-# 2. Dữ liệu demo: 2 user, workspace, phòng vi -> en, ja
+# 2. Dữ liệu demo: 2 user, workspace, phòng vi -> en, ja (chỉ dùng được khi bật dịch họp, mục 2.1)
 scripts/demo-seed.sh
 # 3. Mở web
 open http://localhost:3000
-# 4. Đăng nhập bằng email/mật khẩu do bước 2 in ra; mở phòng "Demo vi-en-ja ..."
+# 4. Đăng nhập; Home -> "Start copilot session" (hoặc /<workspace>/sessions)
 # 5. Dừng: scripts/dev-up.sh --stop      (dừng cả docker: scripts/dev-up.sh --down)
 ```
 
 Lần đầu `dev-up.sh` tự:
 - tạo `deploy/docker/.env` từ `deploy/docker/.env.example` (file `.env` bị `.gitignore`, chứa key thật của bạn);
 - sinh `JWT_SECRET` và `AI_KEYS_KEK` ngẫu nhiên và ghi vào `.env` (để restart không mất phiên đăng nhập);
-- `docker compose up -d --wait` (Postgres, Redis, Qdrant, LiveKit), chờ Qdrant `/readyz` và LiveKit `http://localhost:7880` trả `OK`;
-- `cargo build` 4 binary (lần đầu mất vài phút), chạy `warptalk-migrator`.
+- `docker compose up -d --wait` (**chỉ** Postgres, Redis, Qdrant), chờ Qdrant `/readyz`. LiveKit thuộc profile `translation` của compose nên không chạy trừ khi có `--translation`;
+- `cargo build` 3 binary (migrator, api, worker; thêm pipeline khi có `--translation`; lần đầu mất vài phút), chạy `warptalk-migrator`.
 
-Chế độ pipeline mặc định của script là `--fake` (MT/TTS giả, transport mô phỏng, **không cần key**). Muốn dùng key thật: điền key vào `deploy/docker/.env` rồi `scripts/dev-up.sh --stop && scripts/dev-up.sh --start --real` (mục 5). Chạy `scripts/dev-up.sh` không tham số = chỉ chuẩn bị hạ tầng + migrate rồi **in** lệnh để tự chạy từng thành phần (mục 4).
+**Dịch họp (`--translation`)**: thêm docker profile `translation` (LiveKit, chờ `http://localhost:7880` trả `OK`), build và chạy `warptalk-pipeline`. Chế độ pipeline mặc định khi đó là `--fake` (MT/TTS giả, transport mô phỏng, **không cần key**). Muốn dùng key thật: điền key vào `deploy/docker/.env` rồi `scripts/dev-up.sh --stop && scripts/dev-up.sh --start --real` (mục 5). Chạy `scripts/dev-up.sh` không tham số = chỉ chuẩn bị hạ tầng + migrate rồi **in** lệnh để tự chạy từng thành phần (mục 4).
 
-Các cờ: `--start` chạy nền; `--web` thêm Next.js dev server; `--fake|--real`; `--no-docker` (đã có Postgres/Redis riêng); `--no-build`; `--stop`; `--down`; `PROFILE=release` dùng `target/release`.
+### 2.1 Feature flags (web)
+
+Web hỏi `GET /api/v1/features?workspaceId=` → `{translationMeetings, dubbing, voiceClone, externalBridge, copilot}` (camelCase; mặc định `false,false,false,false,true`; nếu endpoint chưa có/404 web dùng đúng các giá trị mặc định này). Cờ tắt thì web ẩn: tạo/bắt đầu họp dịch (`/meetings`, `/rooms`, `/join`), route/dub/chọn ngôn ngữ nghe, mục Voice clone trong Settings và trang `/external` (mục nav "External meeting" được thay bằng "Copilot"). Truy cập trực tiếp URL của tính năng đang ẩn sẽ chuyển về Home, không báo lỗi. Cách bật cờ ở backend: namespace settings `features` (xem tài liệu của module settings); chỉ bật `translationMeetings` khi đã chạy `--translation`.
+
+Các cờ: `--start` chạy nền; `--web` thêm Next.js dev server; `--translation` thêm LiveKit + pipeline (ẩn mặc định); `--fake|--real` (chỉ có nghĩa với `--translation`); `--no-docker` (đã có Postgres/Redis riêng); `--no-build`; `--stop`; `--down`; `PROFILE=release` dùng `target/release`.
 
 ---
 
@@ -157,20 +164,20 @@ Biến chỉ dành cho Docker Compose (code Rust/JS **không đọc**): `POSTGRE
 Mọi lệnh ở thư mục gốc repo. Nạp env trước mỗi lệnh: `set -a; . deploy/docker/.env; set +a`.
 
 ```bash
-# Hạ tầng
+# Hạ tầng mặc định: Postgres, Redis, Qdrant
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d --wait
-curl http://localhost:7880                      # LiveKit: trả "OK"
+# Thêm LiveKit (dịch họp, tuỳ chọn): ... --profile translation up -d --wait ; curl http://localhost:7880 -> "OK"
 curl http://localhost:6333/readyz               # Qdrant
 # docker compose ... --profile minio up -d      # MinIO tuỳ chọn (chưa nối vào code)
 
 # Build + migrate (phải xong trước api/worker)
-cargo build -p warptalk-migrator -p warptalk-api -p warptalk-worker -p warptalk-pipeline
+cargo build -p warptalk-migrator -p warptalk-api -p warptalk-worker      # thêm -p warptalk-pipeline khi chạy dịch họp
 target/debug/warptalk-migrator
 
 # Mỗi lệnh một terminal
 target/debug/warptalk-api                        # http://127.0.0.1:8080/health
 target/debug/warptalk-worker
-# Pipeline giả (không cần key):
+# Chỉ khi dịch họp (--translation). Pipeline giả (không cần key):
 env -u OPENAI_API_KEY -u CARTESIA_API_KEY MEDIA_TRANSPORT=simulated PIPELINE_FAKE_PROVIDERS=1 \
     SIM_PARTICIPANTS="<id1>,<id2>" target/debug/warptalk-pipeline
 # Pipeline key thật (transport mô phỏng, STT/MT/TTS thật; mục 5):
@@ -214,6 +221,8 @@ Kiểm tra: log worker không còn dòng `no AI key configured: chat messages ar
 ---
 
 ## 6. Build pipeline với LiveKit thật
+
+> Chỉ cần cho dịch họp / họp ngoài qua LiveKit, đang tạm ẩn (ADR 0001). Copilot không cần mục này.
 
 Cần để pipeline **nghe audio thật** trong phòng LiveKit (họp native có dub, họp ngoài). Chi tiết: [`apps/pipeline/LIVEKIT.md`](../apps/pipeline/LIVEKIT.md). Tóm tắt, **chưa từng build được trong môi trường phát triển** (cần clang >= 21, container dev chỉ có clang 18):
 
@@ -274,7 +283,9 @@ Quyền (System Settings > Privacy & Security): Micro; "Ghi âm thanh hệ thố
 
 ## 8. Kịch bản demo từng bước
 
-Chuẩn bị chung: `scripts/dev-up.sh --start --web`, `scripts/demo-seed.sh`, ghi lại 2 email, mật khẩu, mã phòng. Dùng 2 cửa sổ trình duyệt: một thường, một ẩn danh (hai người khác nhau).
+> Các kịch bản dưới đây là **dịch họp / dub / họp ngoài** (đang ẩn). Chạy `scripts/dev-up.sh --start --web --translation` và bật các flag tương ứng (mục 2.1) trước khi thử. Kịch bản copilot: Home -> "Start copilot session"; trên trình duyệt chỉ tạo phiên và xem transcript/biên bản, việc bắt audio cần app macOS (bridge `startCopilotSession`, P1, xem `apps/macos/BRIDGE.md`).
+
+Chuẩn bị chung: `scripts/dev-up.sh --start --web --translation`, `scripts/demo-seed.sh`, ghi lại 2 email, mật khẩu, mã phòng. Dùng 2 cửa sổ trình duyệt: một thường, một ẩn danh (hai người khác nhau).
 
 Phạm vi thật của từng kịch bản (đọc trước khi demo):
 

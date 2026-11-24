@@ -17,6 +17,8 @@ import { MeetingPage } from '@/features/Meeting';
 import { ExternalPage } from '@/features/External';
 import { SettingsPage } from '@/features/Settings';
 import { WorkspacesPage } from '@/features/Workspaces';
+import { SessionDetailPage, SessionsPage } from '@/features/Sessions';
+import { FeatureRoute } from '@/lib/features';
 
 const DesignPage = lazy(() => import('@/features/Design').then((m) => ({ default: m.DesignPage })));
 
@@ -62,7 +64,8 @@ export function App() {
             <Route index element={<ToWorkspace to="/home" />} />
             {/* Workspace pages live under /:workspaceSlug (shareable links). */}
             <Route path="/:workspaceSlug/home" element={<HomePage />} />
-            <Route path="/:workspaceSlug/meetings" element={<MeetingsPage />} />
+            <Route path="/:workspaceSlug/meetings" element={<FeatureRoute name="translationMeetings"><MeetingsPage /></FeatureRoute>} />
+            <Route path="/:workspaceSlug/sessions" element={<FeatureRoute name="copilot"><SessionsPage /></FeatureRoute>} />
             <Route path="/:workspaceSlug/members" element={<MembersPage />} />
             <Route path="/:workspaceSlug/glossary" element={<GlossaryListPage />} />
             <Route path="/:workspaceSlug/glossary/:glossaryId" element={<GlossaryDetailPage />} />
@@ -71,12 +74,14 @@ export function App() {
             <Route path="/:workspaceSlug/settings" element={<SettingsPage />} />
             <Route path="/:workspaceSlug/settings/:section" element={<SettingsPage />} />
             {/* Id-addressed pages, valid for people who are not in the room's workspace. */}
-            <Route path="/rooms" element={<ToWorkspace to="/meetings" />} />
-            <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
-            <Route path="/join" element={<Padded><JoinByCodePage /></Padded>} />
-            <Route path="/meetings" element={<ToWorkspace to="/meetings" />} />
-            <Route path="/meetings/:roomId" element={<MeetingPage />} />
-            <Route path="/external" element={<Padded><ExternalPage /></Padded>} />
+            <Route path="/rooms" element={<FeatureRoute name="translationMeetings"><ToWorkspace to="/meetings" /></FeatureRoute>} />
+            <Route path="/rooms/:roomId" element={<FeatureRoute name="translationMeetings"><RoomDetailPage /></FeatureRoute>} />
+            <Route path="/join" element={<FeatureRoute name="translationMeetings"><Padded><JoinByCodePage /></Padded></FeatureRoute>} />
+            <Route path="/meetings" element={<FeatureRoute name="translationMeetings"><ToWorkspace to="/meetings" /></FeatureRoute>} />
+            <Route path="/meetings/:roomId" element={<FeatureRoute name="translationMeetings"><MeetingPage /></FeatureRoute>} />
+            <Route path="/sessions" element={<FeatureRoute name="copilot"><ToWorkspace to="/sessions" /></FeatureRoute>} />
+            <Route path="/sessions/:sessionId" element={<FeatureRoute name="copilot"><SessionDetailPage /></FeatureRoute>} />
+            <Route path="/external" element={<FeatureRoute name="externalBridge"><Padded><ExternalPage /></Padded></FeatureRoute>} />
             <Route path="/workspaces" element={<Padded><WorkspacesPage /></Padded>} />
             <Route path="/settings" element={<ToWorkspace to="/settings" />} />
           </Route>

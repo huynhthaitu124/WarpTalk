@@ -44,6 +44,8 @@ export interface CaptureStatus {
   dubTrack?: string | null;
   error?: { code: string; message: string };
 }
+/** `startCopilotSession` (P1, apps/macos/BRIDGE.md): the app captures mic ("me") + meeting-app audio ("others") and posts segments itself. */
+export interface StartCopilotSessionOptions { sessionId: string; accessToken: string; apiBaseUrl: string }
 export interface OverlayCaption { speaker?: string; text: string; translation?: string; segmentId?: string; isFinal?: boolean }
 export type Permissions = Record<PermissionKind, PermissionState>;
 
@@ -54,6 +56,9 @@ export interface WarptalkNative {
   startExternalCapture(o: StartExternalCaptureOptions): Promise<CaptureStatus>;
   stopExternalCapture(): Promise<CaptureStatus>;
   captureStatus(): Promise<CaptureStatus>;
+  /** Optional until the macOS app implements it (P1 TODO, see BRIDGE.md): hosts without it behave like a plain browser. */
+  startCopilotSession?(o: StartCopilotSessionOptions): Promise<CaptureStatus>;
+  stopCopilotSession?(): Promise<CaptureStatus>;
   updateAuth(o: { accessToken: string }): Promise<{ updated: true }>;
   showOverlay(visible: boolean): Promise<{ visible: boolean }>;
   pushOverlayCaption(c: OverlayCaption): Promise<null>;

@@ -5,6 +5,7 @@ import { useJoinByCode } from '@/lib/queries';
 import { LANGUAGES } from '@/lib/languages';
 import { useWorkspace } from '@/lib/workspace';
 import { errMsg } from './errors';
+import { Feature } from '@/lib/features';
 
 /** Join-by-code form shared by the `/join` page and the dialog opened from Meetings. */
 export function JoinByCodeForm({ onJoined }: { onJoined?: () => void }) {
@@ -44,7 +45,7 @@ export function JoinByCodeForm({ onJoined }: { onJoined?: () => void }) {
       <Field label="Display name (optional)"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} /></Field>
       <div className="grid grid-cols-2 gap-3 max-[420px]:grid-cols-1">
         <Field label="I speak"><Select value={speak} onValueChange={setSpeak} options={opts} /></Field>
-        <Field label="I listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field>
+        <Feature name="dubbing"><Field label="I listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field></Feature>
       </div>
       {join.isError && <Alert tone="danger">{errMsg(join.error)}</Alert>}
       <Button type="submit" variant="primary" disabled={!valid} loading={join.isPending}>Join meeting</Button>

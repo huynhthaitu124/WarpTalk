@@ -13,12 +13,14 @@ pub mod infrastructure;
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use warptalk_db::{Migration, ModuleMigrations};
 use warptalk_kernel::{AppResult, Clock, RoomId, UserId, WorkspaceId};
 use warptalk_web::JwtKeys;
 
 use application::ports::{RoomEventPublisher, RoomRepo, VoiceConsentDirectory, WorkspacePolicy};
+pub use application::service::CreateCopilotRoom;
 use application::service::RoomService;
 pub use domain::BridgeConfig;
 use infrastructure::pg_repo::PgRoomRepo;
@@ -138,6 +140,9 @@ impl RoomQueries {
             host_id: r.host_id,
             effective_host_id: r.effective_host(),
             status: r.status.as_str().to_owned(),
+            room_type: r.room_type.as_str().to_owned(),
+            started_at: r.started_at,
+            ended_at: r.ended_at,
         }))
     }
 
@@ -160,6 +165,25 @@ impl RoomQueries {
             .lifecycle(room, actor, domain::RoomAction::End)
             .await
             .map(|_| ())
+    }
+
+    /// Create an `IN_PROGRESS` room of type `COPILOT_SESSION` hosted by `user` (ADR 0001). No
+    /// pipeline command is published: the caller wires whatever side effects it needs.
+    pub async fn create_copilot_room(
+        &self,
+        user: UserId,
+        req: CreateCopilotRoom,
+    ) -> AppResult<CopilotRoom> {
+        let (room, host_participant_id) = self.service.create_copilot(user, req).await?;
+        Ok(CopilotRoom {
+            room_id: room.id,
+            workspace_id: room.workspace_id,
+            host_id: room.host_id,
+            host_participant_id,
+            title: room.title,
+            started_at: room.started_at.unwrap_or(room.created_at),
+            created_at: room.created_at,
+        })
     }
 
     /// Ids of the workspace's rooms that are `IN_PROGRESS` (at most 1000).
@@ -214,6 +238,19 @@ impl RoomQueries {
     }
 }
 
+/// A freshly created copilot room.
+#[derive(Debug, Clone)]
+pub struct CopilotRoom {
+    pub room_id: RoomId,
+    pub workspace_id: WorkspaceId,
+    pub host_id: UserId,
+    /// Id of the host's participant row (the `speaker_id` of the "me" channel).
+    pub host_participant_id: warptalk_kernel::ParticipantId,
+    pub title: String,
+    pub started_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Read-only room facts (`status` is the room status string, e.g. `IN_PROGRESS`).
 #[derive(Debug, Clone)]
 pub struct RoomSummary {
@@ -222,6 +259,10 @@ pub struct RoomSummary {
     /// `COALESCE(active_host_id, host_id)`.
     pub effective_host_id: UserId,
     pub status: String,
+    /// Stored room type (`GROUP`, `EXTERNAL_BRIDGE`, `COPILOT_SESSION`, ...).
+    pub room_type: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
 }
 
 /// Read-only bridge facts (`provider`: `google_meet|zoom|teams`; `audio_mode`: `voice|text`).

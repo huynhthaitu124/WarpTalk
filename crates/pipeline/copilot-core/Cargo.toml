@@ -7,4 +7,32 @@ publish = false
 [lints]
 workspace = true
 
+[lib]
+name = "warptalk_copilot_core"
+
+[[bin]]
+name = "copilot-cli"
+path = "src/bin/copilot-cli.rs"
+
 [dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+warptalk-audio = { workspace = true }
+warptalk-ingress = { workspace = true }
+warptalk-pipeline-runtime = { workspace = true }
+warptalk-stt = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }

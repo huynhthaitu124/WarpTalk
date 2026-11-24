@@ -127,6 +127,25 @@ window.addEventListener('warptalk-native', (e) => {
 });
 ```
 
+## Copilot sessions (P1 TODO, ADR 0001)
+
+Product direction: WarpTalk is a meeting assistant copilot. The web app creates a copilot session (`POST /copilot/sessions`, a room of type `COPILOT_SESSION`) and, when the host is the macOS app, asks native to capture audio for it. **Not implemented in Swift yet**; the web app (`apps/web/src/features/Sessions.tsx`, `src/lib/native.ts`) already calls these two OPTIONAL methods when they exist and otherwise behaves like a plain browser ("Audio capture needs the WarpTalk desktop app" notice, the session is still created):
+
+```ts
+interface WarptalkNative {
+  /** Capture mic ("me" channel) + meeting-app audio via process tap ("others" channel) for an existing session and
+   *  stream transcript segments to the backend (`POST /copilot/sessions/{id}/segments`). Resolves with the capture status. */
+  startCopilotSession?(o: { sessionId: string; accessToken: string; apiBaseUrl: string }): Promise<CaptureStatus>;
+  /** Stops capture and flushes pending segments; the backend finalizes the transcript (`__MEETING_END__`). */
+  stopCopilotSession?(): Promise<CaptureStatus>;
+}
+```
+
+- `sessionId`: id returned by `POST /copilot/sessions`; `accessToken`: the web app's JWT (refresh through `updateAuth`, `auth-required` event as for external capture); `apiBaseUrl`: backend origin WITHOUT `/api/v1` (the web app passes its own origin when it has none configured).
+- Status and errors reuse `CaptureStatus` and the `warptalk-native` events (`status`, `level`, `audioFlowing`, `error`, `auth-required`). Suggested error codes: `ALREADY_RUNNING`, `PERMISSION_DENIED`, `NO_AUDIO_PROCESS`, `AUTH_EXPIRED`.
+- Overlay (transcript + suggestions + follow-ups from `GET /meetings/{id}/suggestions/stream`) stays P1 and is not part of these methods.
+- The web UI only shows "Start capture"/"Stop capture" when `typeof native.startCopilotSession === 'function'`, so shipping the methods turns the buttons on without a web change.
+
 ## Error codes
 `FORBIDDEN_ORIGIN`, `INVALID_ARGUMENT`, `UNKNOWN_METHOD`, `ALREADY_RUNNING`, `APP_NOT_RUNNING`, `NO_AUDIO_PROCESS` (app not playing sound yet), `PERMISSION_DENIED`, `CAPTURE_FAILED`, `AUTH_EXPIRED` (401 from backend), `LEASE_LOST` (heartbeat 409 with backend code `CAPTURER_LEASE_LOST`: another machine took over the capturer role), `NOT_REQUESTABLE`, `DUB_LISTENER_DISCONNECTED` (non-fatal event: the voice listener connection dropped), `INTERNAL`, plus backend error codes passed through unchanged (e.g. `INVALID_STATE`, `NOT_BRIDGE_ROOM` on a heartbeat 409 that is NOT a lost lease, `INVALID_CLIENT_TAG`, `FORBIDDEN`).
 

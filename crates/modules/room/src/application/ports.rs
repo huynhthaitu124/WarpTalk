@@ -212,6 +212,22 @@ pub struct NewRoom {
     pub now: DateTime<Utc>,
 }
 
+/// A copilot session room (type `COPILOT_SESSION`): created `IN_PROGRESS` with the host as the
+/// only (connected) participant.
+pub struct NewCopilotRoom {
+    pub id: RoomId,
+    pub workspace_id: WorkspaceId,
+    pub host: UserId,
+    pub host_display_name: String,
+    pub title: String,
+    pub code: String,
+    /// Language of the host's own channel (stored as the room's source language).
+    pub source_language: String,
+    /// Language of the other side (stored as the single target language).
+    pub target_language: String,
+    pub now: DateTime<Utc>,
+}
+
 pub struct NewBridgeRoom {
     pub id: RoomId,
     pub workspace_id: WorkspaceId,
@@ -298,6 +314,9 @@ pub struct Mutation {
 #[async_trait]
 pub trait RoomRepo: Send + Sync {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord>;
+    /// Insert an `IN_PROGRESS` copilot room and its host participant; returns the room and the
+    /// host's participant id. `Conflict DUPLICATE` when the room code is taken.
+    async fn create_copilot(&self, new: NewCopilotRoom) -> AppResult<(RoomRecord, ParticipantId)>;
     async fn list(
         &self,
         workspace: WorkspaceId,

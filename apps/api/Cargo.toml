@@ -44,6 +44,7 @@ warptalk-settings = { workspace = true }
 warptalk-knowledge = { workspace = true }
 warptalk-qdrant = { workspace = true }
 warptalk-assistant = { workspace = true }
+warptalk-copilot = { workspace = true }
 warptalk-transcript = { workspace = true }
 warptalk-llm = { workspace = true }
 warptalk-ai-plane = { workspace = true }
@@ -51,3 +52,4 @@ futures = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
+wiremock = { workspace = true }

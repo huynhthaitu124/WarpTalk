@@ -3,6 +3,7 @@ import { Camera, CameraSlash, Microphone, VideoCamera, WarningCircle } from '@ph
 import { Alert, Button, Card, CardBody, Checkbox, Field, Input, Select, StatusPill } from '@/ui';
 import { languageLabel } from '@/lib/languages';
 import type { Room } from '@/lib/schemas';
+import { Feature } from '@/lib/features';
 import type { MediaPreview } from './useMediaPreview';
 
 export interface PreJoinValues { name: string; speak: string; listen: string; joinMuted: boolean }
@@ -120,7 +121,7 @@ export function PreJoin({
           <Field label="Display name (optional)"><Input value={values.name} onChange={(e) => onChange({ name: e.target.value })} maxLength={100} autoComplete="name" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="I speak"><Select value={values.speak} onValueChange={(v) => onChange({ speak: v })} options={langs} /></Field>
-            <Field label="I listen in" hint={sameLang ? 'Same as the language you speak: no dubbing for you.' : undefined}><Select value={values.listen} onValueChange={(v) => onChange({ listen: v })} options={langs} /></Field>
+            <Feature name="dubbing"><Field label="I listen in" hint={sameLang ? 'Same as the language you speak: no dubbing for you.' : undefined}><Select value={values.listen} onValueChange={(v) => onChange({ listen: v })} options={langs} /></Field></Feature>
           </div>
           <Checkbox checked={values.joinMuted} onCheckedChange={(v) => onChange({ joinMuted: v })} label="Join with my microphone muted" />
           <Button variant="primary" size="lg" loading={joining} onClick={onJoin}>Join meeting</Button>

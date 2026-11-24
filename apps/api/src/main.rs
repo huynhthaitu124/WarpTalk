@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to PostgreSQL")?;
 
-    for module in ["identity", "assistant"] {
+    for module in ["identity", "assistant", "copilot"] {
         let migrated: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
         )
@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         cartesia_api_key: std::env::var("CARTESIA_API_KEY").ok(),
         voice_cloner: None,
         voice_admin: None,
+        stt_token_issuer: None,
     };
     let (verification_mailer, invitation_mailer): (
         Arc<dyn VerificationMailer>,

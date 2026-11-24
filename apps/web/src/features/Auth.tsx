@@ -36,11 +36,11 @@ function AuthLayout({ title, subtitle, children, footer }: { title: string; subt
       <aside className="hidden flex-col justify-between border-r border-hairline bg-panel p-12 lg:flex" aria-hidden>
         <Brand className="h-8 w-[130px]" />
         <div className="max-w-md">
-          <p className="text-display-md font-semibold text-ink">Every voice, in every language, live.</p>
+          <p className="text-display-md font-semibold text-ink">Your meeting copilot: never lose a thread.</p>
           <ul className="mt-8 flex flex-col gap-4 text-body-lg text-ink-muted">
-            <li className="flex items-center gap-3"><Translate size={20} weight="duotone" />Live captions and dubbed audio in your language</li>
-            <li className="flex items-center gap-3"><Microphone size={20} weight="duotone" />Works with Google Meet, Zoom and Teams</li>
-            <li className="flex items-center gap-3"><Brain size={20} weight="duotone" />Meetings become searchable knowledge</li>
+            <li className="flex items-center gap-3"><Translate size={20} weight="duotone" />Live transcripts, suggestions and follow-ups</li>
+            <li className="flex items-center gap-3"><Microphone size={20} weight="duotone" />Works with Google Meet, Zoom, Teams and in-person meetings</li>
+            <li className="flex items-center gap-3"><Brain size={20} weight="duotone" />Minutes and action items, ready when the meeting ends</li>
           </ul>
         </div>
         <p className="text-caption text-ink-subtle">WarpTalk</p>
@@ -147,7 +147,7 @@ export function RegisterPage() {
     }
   }
   return (
-    <AuthLayout title="Create your account" subtitle="Real-time translated meetings in minutes." footer={<>Already have an account? <Link to="/login">Sign in</Link></>}>
+    <AuthLayout title="Create your account" subtitle="A meeting copilot with transcripts, suggestions and minutes." footer={<>Already have an account? <Link to="/login">Sign in</Link></>}>
       <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
         <Field label="Full name" error={fe.fullName}><Input autoComplete="name" aria-required="true" value={fullName} onChange={(e) => setFullName(e.target.value)} /></Field>
         <Field label="Email" error={fe.email}><Input type="email" autoComplete="email" aria-required="true" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>

@@ -13,6 +13,7 @@ pub const NS_PIPELINE: &str = "pipeline";
 pub const NS_SUGGESTION: &str = "suggestion";
 pub const NS_RAG: &str = "rag";
 pub const NS_AI_PROVIDERS: &str = "ai_providers";
+pub const NS_FEATURES: &str = "features";
 
 /// Register the validators of all built-in namespaces.
 pub fn register_defaults(store: &SettingsStore) {
@@ -20,6 +21,7 @@ pub fn register_defaults(store: &SettingsStore) {
     store.register::<SuggestionSettings>(NS_SUGGESTION);
     store.register::<RagSettings>(NS_RAG);
     store.register::<AiProvidersSettings>(NS_AI_PROVIDERS);
+    store.register::<FeatureFlags>(NS_FEATURES);
 }
 
 /// Real-time pipeline knobs (spec 08 section 6).
@@ -308,5 +310,52 @@ impl Validate for AiProvidersSettings {
             }
         }
         Ok(())
+    }
+}
+
+/// Product feature flags (ADR 0001): the real-time translation product is hidden by default, the
+/// meeting copilot is on. Flags are advisory for clients (they hide UI); the API does not refuse
+/// translation routes of existing native rooms when a flag is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeatureFlags {
+    /// Native translation meetings (LiveKit + pipeline).
+    pub translation_meetings: bool,
+    pub dubbing: bool,
+    pub voice_clone: bool,
+    /// External meeting bridge (translation through a LiveKit stand-in seat).
+    pub external_bridge: bool,
+    /// Meeting assistant copilot (sessions, transcript, suggestions).
+    pub copilot: bool,
+}
+
+impl Default for FeatureFlags {
+    fn default() -> Self {
+        Self {
+            translation_meetings: false,
+            dubbing: false,
+            voice_clone: false,
+            external_bridge: false,
+            copilot: true,
+        }
+    }
+}
+
+impl Validate for FeatureFlags {}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod feature_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_and_partial_documents() {
+        let d = FeatureFlags::default();
+        assert!(d.copilot && !d.translation_meetings && !d.dubbing);
+        let p: FeatureFlags = serde_json::from_str(r#"{"dubbing":true}"#).unwrap();
+        assert!(p.dubbing && p.copilot && !p.voice_clone);
+        let j = serde_json::to_value(d).unwrap();
+        assert_eq!(j["translation_meetings"], false);
+        assert_eq!(j["external_bridge"], false);
     }
 }

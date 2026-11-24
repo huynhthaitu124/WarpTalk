@@ -209,6 +209,36 @@ impl RoomEventPublisher for RoomEffectsPublisher {
     }
 }
 
+/// Redis keys the assistant reads for a freshly created copilot room (it never sees `RoomStarted`
+/// or route publications): the `ai_policy` of its workspace and the reader language of the host
+/// (`languages` hash: participant id -> language the host reads, so suggestions come back in it).
+/// Best effort, like the other effects.
+pub async fn init_copilot_room_keys(
+    conn: &ConnectionManager,
+    handles: &RoomEffectsHandles,
+    room: RoomId,
+    host_participant: uuid::Uuid,
+    host_language: &str,
+) {
+    write_ai_policy(conn, handles, room).await;
+    let mut conn = conn.clone();
+    let key = languages_key(room);
+    let mut pipe = redis::pipe();
+    pipe.atomic()
+        .cmd("HSET")
+        .arg(&key)
+        .arg(host_participant.to_string())
+        .arg(host_language)
+        .ignore()
+        .cmd("EXPIRE")
+        .arg(&key)
+        .arg(ROOM_KEYS_TTL_SECS)
+        .ignore();
+    if let Err(e) = pipe.query_async::<()>(&mut conn).await {
+        tracing::warn!(%room, error = %e, "could not write the copilot room's reader language");
+    }
+}
+
 /// Workspace settings changed: refresh `ai_policy` of the workspace's live rooms.
 pub struct RoomAiPolicyRefresher {
     pub conn: ConnectionManager,

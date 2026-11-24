@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
   ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
-  SquaresFour, Sun, Users, X,
+  SquaresFour, Sparkle, Sun, Users, X,
 } from '@phosphor-icons/react';
 import {
   Avatar, Brand, Button, CommandMenuProvider, Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator,
@@ -14,6 +14,8 @@ import { useTheme } from '@/lib/theme';
 import { IS_DEV } from '@/lib/env';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import { usePendingInvitations, useRoom } from '@/lib/queries';
+import { useFeatures } from '@/lib/features';
+import { useSession } from '@/lib/copilot';
 import { cn } from '@/lib/cn';
 import { visibleSettingsSections } from './settingsNav';
 
@@ -136,6 +138,7 @@ function Sidebar() {
   const pending = usePendingInvitations(userId);
   const guest = !loading && workspaces.length === 0;
   const pendingCount = pending.data?.length ?? 0;
+  const { features } = useFeatures();
   const inSettings = !guest && /^\/[^/]+\/settings(\/|$)/.test(loc.pathname);
   return (
     <div className="flex h-full flex-col">
@@ -150,23 +153,34 @@ function Sidebar() {
               // A person who only joined rooms by code has no workspace: no switcher, no workspace nav.
               <SidebarNav label="Primary">
                 <SidebarLink to="/workspaces" icon={ico(Buildings)} badge={pendingCount || null}>Workspaces</SidebarLink>
-                <SidebarLink to="/join" icon={ico(Keyboard)}>Join by code</SidebarLink>
+                {features.translationMeetings && <SidebarLink to="/join" icon={ico(Keyboard)}>Join by code</SidebarLink>}
               </SidebarNav>
             ) : (
               <>
                 <SidebarNav label="Primary">
                   <SidebarLink to={wsPath('/home')} icon={ico(House)}>Home</SidebarLink>
-                  <SidebarLink
-                    to={wsPath('/meetings')}
-                    icon={ico(SquaresFour)}
-                    actions={[
-                      { label: 'Join by code', icon: <Keyboard size={14} weight="bold" />, to: `${wsPath('/meetings')}?join=1` },
-                      { label: 'New meeting', icon: <Plus size={14} weight="bold" />, to: `${wsPath('/meetings')}?new=1` },
-                    ]}
-                  >
-                    Meetings
-                  </SidebarLink>
-                  <SidebarLink to="/external" icon={ico(Broadcast)}>External meeting</SidebarLink>
+                  {features.copilot && (
+                    <SidebarLink
+                      to={wsPath('/sessions')}
+                      icon={ico(Sparkle)}
+                      actions={[{ label: 'Start copilot session', icon: <Plus size={14} weight="bold" />, to: `${wsPath('/sessions')}?new=1` }]}
+                    >
+                      Copilot
+                    </SidebarLink>
+                  )}
+                  {features.translationMeetings && (
+                    <SidebarLink
+                      to={wsPath('/meetings')}
+                      icon={ico(SquaresFour)}
+                      actions={[
+                        { label: 'Join by code', icon: <Keyboard size={14} weight="bold" />, to: `${wsPath('/meetings')}?join=1` },
+                        { label: 'New meeting', icon: <Plus size={14} weight="bold" />, to: `${wsPath('/meetings')}?new=1` },
+                      ]}
+                    >
+                      Meetings
+                    </SidebarLink>
+                  )}
+                  {features.externalBridge && <SidebarLink to="/external" icon={ico(Broadcast)}>External meeting</SidebarLink>}
                 </SidebarNav>
                 <SidebarNav label="Workspace" heading="Workspace">
                   <SidebarLink to={wsPath('/members')} icon={ico(Users)} badge={pendingCount || null}>Members</SidebarLink>
@@ -207,19 +221,26 @@ function Breadcrumb() {
   const rest = inWs ? parts.slice(1) : parts;
   const roomId = (rest[0] === 'rooms' || rest[0] === 'meetings') && rest[1] ? rest[1] : undefined;
   const room = useRoom(roomId);
+  const sess = useSession(rest[0] === 'sessions' ? rest[1] : undefined);
 
   const items: { label: ReactNode; to?: string }[] = [];
   const top = rest[0] ?? 'home';
-  if (roomId) {
+  if (rest[0] === 'sessions' && rest[1]) {
+    if (current) items.push({ label: 'Sessions', to: wsPath('/sessions') });
+    items.push({ label: <span title={sess.data?.title}>{sess.data?.title ?? 'Session'}</span> });
+  } else if (roomId) {
     if (current) items.push({ label: 'Meetings', to: wsPath('/meetings') });
     items.push({ label: <span title={room.data?.title}>{room.data?.title ?? 'Meeting'}</span> });
   } else if (top === 'settings') {
     items.push({ label: 'Settings', to: rest[1] ? wsPath('/settings') : undefined });
     if (rest[1]) items.push({ label: SETTINGS_LABEL[rest[1]] ?? rest[1] });
   } else {
-    const label = { home: 'Home', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
+    const label = { home: 'Home', sessions: 'Sessions', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
     items.push({ label });
   }
+  const pageTitle = items.map((i) => (typeof i.label === 'string' ? i.label : '')).filter(Boolean).at(-1)
+    ?? (rest[0] === 'sessions' && rest[1] ? sess.data?.title : undefined) ?? room.data?.title;
+  useEffect(() => { document.title = pageTitle ? `${pageTitle} · WarpTalk` : 'WarpTalk'; }, [pageTitle]);
   return (
     <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
       <ol className="flex min-w-0 items-center gap-1.5 text-body font-medium">
@@ -305,6 +326,7 @@ export function Shell() {
   const [drawer, setDrawer] = useState(false);
   const openerRef = useRef<HTMLElement | null>(null);
   const admin = canAdmin(current);
+  const { features } = useFeatures();
 
   const items = useMemo<CommandItem[]>(() => {
     const hasWs = workspaces.length > 0;
@@ -312,27 +334,32 @@ export function Shell() {
     return [
       ...(hasWs ? [
         nav('go-home', 'Go to Home', <House className="size-4" />, wsPath('/home'), 'G H'),
-        nav('go-meetings', 'Go to Meetings', <SquaresFour className="size-4" />, wsPath('/meetings'), 'G M'),
+        ...(features.copilot ? [nav('go-sessions', 'Go to Copilot sessions', <Sparkle className="size-4" />, wsPath('/sessions'), 'G C')] : []),
+        ...(features.translationMeetings ? [nav('go-meetings', 'Go to Meetings', <SquaresFour className="size-4" />, wsPath('/meetings'), 'G M')] : []),
         nav('go-members', 'Go to Members', <Users className="size-4" />, wsPath('/members'), 'G P'),
         nav('go-knowledge', 'Go to Knowledge', <Brain className="size-4" />, wsPath('/knowledge'), 'G K'),
         nav('go-documents', 'Go to Documents', <FileText className="size-4" />, wsPath('/documents')),
         nav('go-glossary', 'Go to Glossary', <BookBookmark className="size-4" />, wsPath('/glossary')),
         nav('go-settings', 'Go to Settings', <GearSix className="size-4" />, wsPath('/settings'), 'G S'),
         ...(admin ? [nav('go-ai', 'Go to AI providers', <Brain className="size-4" />, wsPath('/settings/ai'))] : []),
-        nav('go-external', 'Go to External meeting', <Broadcast className="size-4" />, '/external', 'G E'),
+        ...(features.externalBridge ? [nav('go-external', 'Go to External meeting', <Broadcast className="size-4" />, '/external', 'G E')] : []),
       ] : []),
       nav('go-workspaces', 'Manage workspaces', <Buildings className="size-4" />, '/workspaces'),
       ...(SHOW_DESIGN ? [nav('go-design', 'Open design system', <Palette className="size-4" />, '/design')] : []),
-      ...(hasWs ? [
+      ...(hasWs && features.copilot ? [
+        { id: 'new-session', group: 'Actions', label: 'Start copilot session', icon: <Sparkle className="size-4" />, shortcut: features.translationMeetings ? undefined : 'C', run: () => navigate(`${wsPath('/sessions')}?new=1`) },
+      ] : []),
+      ...(hasWs && features.translationMeetings ? [
         { id: 'new-room', group: 'Actions', label: 'Create meeting', icon: <Plus className="size-4" />, shortcut: 'C', run: () => navigate(`${wsPath('/meetings')}?new=1`) },
         { id: 'join-code', group: 'Actions', label: 'Join a meeting by code', icon: <Keyboard className="size-4" />, shortcut: 'J', run: () => navigate(`${wsPath('/meetings')}?join=1`) },
-      ] : [{ id: 'join-code', group: 'Actions', label: 'Join a meeting by code', icon: <Keyboard className="size-4" />, shortcut: 'J', run: () => navigate('/join') }]),
+      ] : []),
+      ...(!hasWs && features.translationMeetings ? [{ id: 'join-code', group: 'Actions', label: 'Join a meeting by code', icon: <Keyboard className="size-4" />, shortcut: 'J', run: () => navigate('/join') }] : []),
       { id: 'new-ws', group: 'Actions', label: 'Create workspace', icon: <Plus className="size-4" />, run: () => navigate('/workspaces?new=1') },
       { id: 'theme', group: 'Actions', label: 'Toggle theme', icon: <Sun className="size-4" />, run: toggle },
       ...workspaces.map((w) => ({ id: `ws-${w.id}`, group: 'Switch workspace', label: w.name, run: () => select(w.id) })),
       { id: 'logout', group: 'Account', label: 'Sign out', icon: <SignOut className="size-4" />, run: () => void logout() },
     ];
-  }, [navigate, toggle, workspaces, select, logout, wsPath, admin]);
+  }, [navigate, toggle, workspaces, select, logout, wsPath, admin, features]);
 
   return (
     <CommandMenuProvider items={items}>
