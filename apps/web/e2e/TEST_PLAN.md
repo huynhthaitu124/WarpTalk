@@ -408,3 +408,29 @@ Defaults for FEAT/SESS: platform flags `translationMeetings,dubbing,voiceClone,e
 | SESS-30..32 | P0 | Real backend: platform features, create in the dialog -> list -> detail -> End session, session created by API shows on Home/list | | auto |
 | A11Y-12 | P0 | axe: sessions list, action items tab, start dialog, detail live and ended, dark + light | | auto |
 | VR-20/21 | P1 | Screenshots: list, detail ended, detail live at 1280 and 390, dark + light; start dialog 1280/390 | | auto |
+
+## 14. Live copilot in the native host (COP) - `e2e/tests/sessions-live.spec.ts` (chromium project)
+
+The host is the scriptable mock `fixtures/native-mock.ts`, extended with `copilotStatus`, `pushOverlaySuggestion`, `clearOverlaySuggestion`, optional `listInputDevices`, `copilotStartError` (+ `mockSet.copilotStartError`) and a capture state that survives reloads (sessionStorage, like the real host that keeps capturing while the WebView reloads). Events are dispatched with `emitNative` (`copilot.partial|segment|status|error|levels`). `mockCopilot` records `stoppedBeforeEnd` (was `stopCopilotSession` already received when `POST .../end` arrived). COP-30 runs against the real backend and starts `target/debug/warptalk-worker` itself (the transcript consumer is not part of `scripts/e2e-backend.sh`; the test skips when the binary is not built).
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| COP-01 | P0 | Native dialog: preselected app (the one playing audio), pick another app, mic, languages, Start session | `POST /copilot/sessions`, navigates to `/sessions/:id`, `startCopilotSession` gets `{sessionId, accessToken, apiBaseUrl, appBundleId, micDeviceUid, languages}`; detail shows capture status and Stop capture | auto |
+| COP-02 | P1 | No apps / default mic | "None: microphone only"; `appBundleId` and `micDeviceUid` omitted | auto |
+| COP-03 | P0 | `startCopilotSession` rejects PERMISSION_DENIED | Error stays in the dialog with Open System Settings / Request permission / Try again; retry reuses the created session (one POST) and navigates | auto |
+| COP-04 | P1 | Start fails (NO_AUDIO_PROCESS) -> "Open the session without capture" | Session page with Start capture, no live panel | auto |
+| COP-10 | P0 | Start capture on the detail; `copilot.levels` (linear and dBFS), `copilot.status` per channel | Per-channel meter values and Connected / Reconnecting badges with detail | auto |
+| COP-11 | P0 | `copilot.partial` for both sides, then `copilot.segment` (twice) and a poll that returns it | Partial lines above the transcript; final replaces that side's partial and appears at once (pending); duplicate event ignored; the polled line replaces the pending one (no duplicate); non-final segment is only a partial | auto |
+| COP-12 | P0 | Stop capture | `stopCopilotSession` called, panel gone, session still Live with End session | auto |
+| COP-13 | P0 | End session while capturing | `stopCopilotSession` precedes `POST /copilot/sessions/{id}/end`; panel and partials cleared | auto |
+| COP-14 | P0 | `copilot.error` PERMISSION_DENIED | Error row with Request permission, Open System Settings, Dismiss; channel shows Problem | auto |
+| COP-15 | P1 | Start capture on the detail rejects | Error row with Try again; retry attaches | auto |
+| COP-16 | P0 | Reload while the host is capturing | `copilotStatus()` running -> attached (live panel, Stop capture, partials keep flowing) | auto |
+| COP-17 | P1 | Host captures session A, open session B | Notice with link to A; Start capture disabled | auto |
+| COP-20 | P0 | SSE suggestions while capturing; dismiss one; stop | `pushOverlaySuggestion {id, category, content, followUp?}` per suggestion (none when not capturing); `clearOverlaySuggestion(id)` on dismiss (no re-push on stream replay) and for the rest on stop; follow-ups stay listed | auto |
+| COP-21/22 | P0 | Browser, and a host without the copilot methods | Desktop-app explanation, no live panel or capture buttons, End session still works | auto |
+| COP-30 | P0 | Real backend: host emits segment events and posts the same segments via `POST /copilot/sessions/{id}/segments` | Lines never double: pending lines are replaced by the polled ones (server id = uuid v5 of session + clientSegmentId; text fallback), `Tôi` reads as Me; resend stays one line; End stops the host | auto |
+| A11Y-13 | P0 | axe: live detail (also with an error row) and native start dialog, dark + light | no serious/critical | auto |
+| VR-22/23 | P1 | Screenshots: live detail 1280 and 390 dark + light; native start dialog 1280 + 390 | match | auto |
+
+Notes: dedupe never relies on a text match alone when ids are available; the polled transcript stays the source of truth. `copilot.levels.rms` negative = dBFS, otherwise linear 0..1 (the host contract does not fix the unit; both are accepted).

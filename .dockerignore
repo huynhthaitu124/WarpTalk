@@ -1,0 +1,32 @@
+# Build context hygiene: keeps the context small and secrets out of images.
+.git
+.github
+.claude
+.logs
+.data
+target
+dump.rdb
+**/node_modules
+**/.DS_Store
+
+# Secrets / local env (the .example files stay)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Web build outputs and test artifacts
+apps/web/.next*
+apps/web/out
+apps/web/dist
+apps/web/test-results
+apps/web/playwright-report
+apps/web/e2e/__screenshots__
+apps/web/*.tsbuildinfo
+
+# Not needed to build any image
+apps/macos
+docs
+tests
+/*.md

@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1.7
+# WarpTalk Rust images (one Dockerfile, one target per binary). Build context = repo root.
+#
+#   docker build -f deploy/docker/Dockerfile.rust --target api      -t warptalk-api .
+#   docker build -f deploy/docker/Dockerfile.rust --target worker   -t warptalk-worker .
+#   docker build -f deploy/docker/Dockerfile.rust --target migrator -t warptalk-migrator .
+#   # Optional (translation is disabled by ADR 0001; the default build does NOT compile the pipeline):
+#   docker build -f deploy/docker/Dockerfile.rust --build-arg WITH_PIPELINE=1 --target pipeline -t warptalk-pipeline .
+#
+# Layers: cargo-chef caches the dependency build; only workspace code is rebuilt on source changes.
+# Runtime: debian bookworm-slim (glibc, no shell tooling beyond bash/coreutils), non-root uid 10001,
+# only ca-certificates added. TLS is rustls (no libssl). Expected size: ~85-110 MB per image
+# (~75 MB base + 10-35 MB stripped binary); verify with `docker images` after the first build.
+
+ARG RUST_VERSION=1.97
+ARG DEBIAN_RELEASE=bookworm
+ARG CARGO_CHEF_VERSION=0.1.78
+
+# ---------------------------------------------------------------------------------------------
+FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS chef
+ARG CARGO_CHEF_VERSION
+# rust-toolchain.toml says "stable" + rustfmt/clippy; the image already ships the pinned toolchain.
+ENV RUSTUP_TOOLCHAIN=${RUST_VERSION} \
+    CARGO_NET_GIT_FETCH_WITH_CLI=true \
+    CARGO_TERM_COLOR=never
+RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
+WORKDIR /src
+
+# ---------------------------------------------------------------------------------------------
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---------------------------------------------------------------------------------------------
+FROM chef AS builder
+ARG WITH_PIPELINE=0
+# Smaller binaries (the workspace release profile already sets thin LTO + codegen-units=1).
+ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
+    CARGO_PROFILE_RELEASE_DEBUG=0
+COPY --from=planner /src/recipe.json recipe.json
+# Dependency layer: rebuilt only when Cargo.toml/Cargo.lock/recipe change.
+RUN set -eux; \
+    PKGS="-p warptalk-api -p warptalk-worker -p warptalk-migrator"; \
+    if [ "$WITH_PIPELINE" = "1" ]; then PKGS="$PKGS -p warptalk-pipeline"; fi; \
+    cargo chef cook --release --locked --recipe-path recipe.json $PKGS
+COPY . .
+RUN set -eux; \
+    BINS="--bin warptalk-api --bin warptalk-worker --bin warptalk-migrator"; \
+    if [ "$WITH_PIPELINE" = "1" ]; then BINS="$BINS --bin warptalk-pipeline"; fi; \
+    cargo build --release --locked $BINS; \
+    mkdir -p /out; \
+    for b in warptalk-api warptalk-worker warptalk-migrator warptalk-pipeline; do \
+      if [ -f "target/release/$b" ]; then cp "target/release/$b" /out/; fi; \
+    done
+
+# ---------------------------------------------------------------------------------------------
+FROM debian:${DEBIAN_RELEASE}-slim AS runtime-base
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates; \
+    rm -rf /var/lib/apt/lists/*; \
+    groupadd --system --gid 10001 warptalk; \
+    useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin warptalk; \
+    mkdir -p /data && chown 10001:10001 /data
+ENV RUST_LOG=info \
+    LOG_FORMAT=json \
+    STORAGE_LOCAL_DIR=/data/objects
+LABEL org.opencontainers.image.vendor="WarpTalk" \
+      org.opencontainers.image.licenses="UNLICENSED" \
+      org.opencontainers.image.base.name="docker.io/library/debian:bookworm-slim"
+USER 10001:10001
+WORKDIR /data
+STOPSIGNAL SIGTERM
+
+# ---------------------------------------------------------------------------------------------
+FROM runtime-base AS api
+LABEL org.opencontainers.image.title="warptalk-api" \
+      org.opencontainers.image.description="WarpTalk REST/SSE API (axum), mounted under /api/v1, health at /health"
+COPY --from=builder --chown=10001:10001 /out/warptalk-api /usr/local/bin/warptalk-api
+ENV HTTP_BIND=0.0.0.0:8080
+EXPOSE 8080
+# No curl in the image: a bash /dev/tcp probe of GET /health (port follows HTTP_BIND).
+HEALTHCHECK --interval=15s --timeout=4s --start-period=20s --retries=3 \
+  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${HTTP_BIND##*:} && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+ENTRYPOINT ["/usr/local/bin/warptalk-api"]
+
+# ---------------------------------------------------------------------------------------------
+FROM runtime-base AS worker
+LABEL org.opencontainers.image.title="warptalk-worker" \
+      org.opencontainers.image.description="WarpTalk background worker (Redis consumers: transcript, suggestions, embeddings, summaries)"
+COPY --from=builder --chown=10001:10001 /out/warptalk-worker /usr/local/bin/warptalk-worker
+# The worker exposes no port; liveness is the process itself (restart policy handles crashes).
+ENTRYPOINT ["/usr/local/bin/warptalk-worker"]
+
+# ---------------------------------------------------------------------------------------------
+FROM runtime-base AS migrator
+LABEL org.opencontainers.image.title="warptalk-migrator" \
+      org.opencontainers.image.description="WarpTalk forward-only SQL migrations of every module; runs once then exits"
+COPY --from=builder --chown=10001:10001 /out/warptalk-migrator /usr/local/bin/warptalk-migrator
+ENTRYPOINT ["/usr/local/bin/warptalk-migrator"]
+
+# ---------------------------------------------------------------------------------------------
+# Optional. Needs `--build-arg WITH_PIPELINE=1`; default stack does not run it (ADR 0001).
+FROM runtime-base AS pipeline
+LABEL org.opencontainers.image.title="warptalk-pipeline" \
+      org.opencontainers.image.description="WarpTalk realtime translation pipeline (disabled by default, ADR 0001)"
+COPY --from=builder --chown=10001:10001 /out/warptalk-pipeline /usr/local/bin/warptalk-pipeline
+ENV MEDIA_TRANSPORT=simulated
+ENTRYPOINT ["/usr/local/bin/warptalk-pipeline"]
