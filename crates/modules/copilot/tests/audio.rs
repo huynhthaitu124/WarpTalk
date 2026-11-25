@@ -414,7 +414,16 @@ async fn tickets_are_single_use_session_bound_and_expire() {
 
 #[tokio::test]
 async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+    let Some(e) = env(
+        AudioConfig {
+            max_concurrent_per_user: 5,
+            ..fast_cfg()
+        },
+        FakeServerStt::new(),
+        true,
+    )
+    .await
+    else {
         return;
     };
     let host = UserId::new();
