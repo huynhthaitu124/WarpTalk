@@ -49,6 +49,8 @@ pub struct HttpSttTokenProvider {
     client: reqwest::Client,
     url: String,
     bearer: std::sync::Mutex<String>,
+    /// Optional JSON body: language mode / languages / vocabulary (see the server's `stt-token`).
+    prefs: std::sync::Mutex<Option<serde_json::Value>>,
 }
 
 impl HttpSttTokenProvider {
@@ -70,7 +72,21 @@ impl HttpSttTokenProvider {
                 session_id
             ),
             bearer: std::sync::Mutex::new(bearer.into()),
+            prefs: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Send the language configuration with every token request.
+    pub fn set_prefs(&self, lang: &crate::config::LanguageConfig) {
+        let body = serde_json::json!({
+            "languageMode": lang.mode.as_str(),
+            "languages": lang.languages,
+            "vocabulary": lang.vocabulary,
+        });
+        *self
+            .prefs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(body);
     }
 
     pub fn set_bearer(&self, bearer: impl Into<String>) {
@@ -89,10 +105,16 @@ impl SttTokenProvider for HttpSttTokenProvider {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let resp = self
-            .client
-            .post(&self.url)
-            .bearer_auth(bearer)
+        let prefs = self
+            .prefs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut req = self.client.post(&self.url).bearer_auth(bearer);
+        if let Some(p) = prefs {
+            req = req.json(&p);
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| CopilotError::Token(e.to_string()))?;

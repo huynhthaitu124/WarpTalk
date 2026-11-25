@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use warptalk_ingress::EndpointerConfig;
+use warptalk_stt::LangDetectConfig;
 
 use crate::error::CopilotError;
 
@@ -17,6 +18,7 @@ pub struct CopilotConfig {
     pub others: ChannelConfig,
     pub echo: EchoGuardConfig,
     pub stt: SttConfig,
+    pub language: LanguageConfig,
     pub sink: SinkConfig,
     pub engine: EngineConfig,
 }
@@ -41,6 +43,7 @@ impl CopilotConfig {
         self.others.validate("others")?;
         self.echo.validate()?;
         self.stt.validate()?;
+        self.language.validate()?;
         self.sink.validate()?;
         self.engine.validate()
     }
@@ -156,10 +159,176 @@ pub enum SttBackend {
     Fake,
 }
 
+/// Where transcription runs (ADR 0001 item 4 and its fallback).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SttRouting {
+    /// Direct to the provider with an ephemeral token; on repeated failure a channel switches
+    /// to the server (`stt_fallback`), and direct is retried periodically.
+    #[default]
+    Auto,
+    /// Direct only (no fallback).
+    Direct,
+    /// Always through the server socket (audio is uploaded; the server posts the segments).
+    Server,
+}
+
+/// When and how `auto` routing leaves and re-enters the direct path.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FallbackConfig {
+    /// This many direct failures (open, feed, commit, failed utterance) within `window_ms`
+    /// switch the channel to the server.
+    pub failure_threshold: u32,
+    pub window_ms: u64,
+    /// While on the server, try direct again after this long (checked at utterance
+    /// boundaries); a failed probe waits another period.
+    pub retry_direct_after_ms: u64,
+    /// Time budget of a direct probe (the live utterance flow waits for it).
+    pub probe_timeout_ms: u64,
+}
+
+impl Default for FallbackConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 3,
+            window_ms: 60_000,
+            retry_direct_after_ms: 5 * 60_000,
+            probe_timeout_ms: 3_000,
+        }
+    }
+}
+
+/// The server-side STT socket (`GET {base}{path}` with the bearer in `Authorization`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServerSttConfig {
+    /// `{id}` is the session id.
+    pub path_template: String,
+    pub connect_timeout_ms: u64,
+    /// A commit outstanding this long with no message from the server kills the connection.
+    pub event_timeout_ms: u64,
+    /// A single websocket send slower than this kills the connection (backpressure).
+    pub send_timeout_ms: u64,
+}
+
+impl Default for ServerSttConfig {
+    fn default() -> Self {
+        Self {
+            path_template: "/api/v1/copilot/sessions/{id}/audio".into(),
+            connect_timeout_ms: 5_000,
+            event_timeout_ms: 20_000,
+            send_timeout_ms: 5_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum LanguageMode {
+    /// One hinted language (the channel's `language_hint`); segment language as reported.
+    Fixed,
+    /// Default. The first of `languages` is hinted and the others stay expected, the glossary
+    /// goes in as a prompt, and a segment's language is corrected only on strong evidence.
+    /// A hard single hint on a Vietnamese meeting full of English terms makes the model
+    /// transliterate them; pure auto-detection mislabels short Vietnamese utterances.
+    #[default]
+    Auto,
+    /// No hint; the language of every segment is detected afterwards (vi/en heuristic).
+    Multi,
+}
+
+impl LanguageMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Auto => "auto",
+            Self::Multi => "multi",
+        }
+    }
+}
+
+/// Language and vocabulary handling (code-switching).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LanguageConfig {
+    pub mode: LanguageMode,
+    /// Expected languages (ISO 639-1), primary first, e.g. `["vi", "en"]`.
+    pub languages: Vec<String>,
+    /// Extra vocabulary (product names, jargon) sent as a prompt hint, on top of the workspace
+    /// glossary the server adds.
+    pub vocabulary: Vec<String>,
+    /// Thresholds of the vi/en heuristic.
+    pub detect: LangDetectConfig,
+}
+
+impl Default for LanguageConfig {
+    fn default() -> Self {
+        Self {
+            mode: LanguageMode::Auto,
+            languages: Vec::new(),
+            vocabulary: Vec::new(),
+            detect: LangDetectConfig::default(),
+        }
+    }
+}
+
+impl LanguageConfig {
+    fn validate(&self) -> Result<(), CopilotError> {
+        if self.languages.len() > 8
+            || self.languages.iter().any(|l| {
+                l.is_empty()
+                    || l.len() > 15
+                    || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+        {
+            return Err(bad(
+                "language.languages: at most 8 language tags such as `vi`",
+            ));
+        }
+        if self.vocabulary.len() > 500 {
+            return Err(bad("language.vocabulary: at most 500 terms"));
+        }
+        Ok(())
+    }
+
+    /// Language hint for a channel's STT session.
+    pub fn hint(&self, channel_hint: Option<&str>) -> Option<String> {
+        match self.mode {
+            LanguageMode::Fixed => channel_hint.map(str::to_owned),
+            LanguageMode::Auto => self
+                .languages
+                .first()
+                .map(|l| l.to_ascii_lowercase())
+                .or_else(|| channel_hint.map(str::to_owned)),
+            LanguageMode::Multi => None,
+        }
+    }
+
+    /// Language stored on a segment given what the provider reported.
+    pub fn resolve(&self, text: &str, reported: &str) -> String {
+        match self.mode {
+            LanguageMode::Fixed => reported.to_owned(),
+            mode => warptalk_stt::resolve_language(
+                text,
+                Some(reported),
+                &self.languages,
+                mode == LanguageMode::Auto,
+                &self.detect,
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SttConfig {
     pub backend: SttBackend,
+    pub mode: SttRouting,
+    pub fallback: FallbackConfig,
+    pub server: ServerSttConfig,
     /// Used when the token response has no `websocketUrl`.
     pub default_websocket_url: String,
     pub language_hint: Option<String>,
@@ -183,6 +352,9 @@ impl Default for SttConfig {
     fn default() -> Self {
         Self {
             backend: SttBackend::Realtime,
+            mode: SttRouting::Auto,
+            fallback: FallbackConfig::default(),
+            server: ServerSttConfig::default(),
             default_websocket_url: "wss://api.openai.com/v1/realtime".into(),
             language_hint: None,
             token_refresh_margin_s: 60,
@@ -202,6 +374,23 @@ impl SttConfig {
     fn validate(&self) -> Result<(), CopilotError> {
         if self.connect_timeout_ms == 0 || self.event_timeout_ms == 0 || self.open_timeout_ms == 0 {
             return Err(bad("stt timeouts must be > 0"));
+        }
+        if self.fallback.failure_threshold == 0 || self.fallback.window_ms == 0 {
+            return Err(bad(
+                "stt.fallback: failure_threshold and window_ms must be > 0",
+            ));
+        }
+        if self.fallback.probe_timeout_ms == 0 || self.fallback.retry_direct_after_ms == 0 {
+            return Err(bad(
+                "stt.fallback: probe_timeout_ms and retry_direct_after_ms must be > 0",
+            ));
+        }
+        if !self.server.path_template.starts_with('/')
+            || !self.server.path_template.contains("{id}")
+        {
+            return Err(bad(
+                "stt.server.path_template must start with / and contain {id}",
+            ));
         }
         if url::Url::parse(&self.default_websocket_url).is_err() {
             return Err(bad("stt.default_websocket_url is not a valid URL"));

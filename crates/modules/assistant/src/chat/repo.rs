@@ -64,13 +64,15 @@ impl PgChatRepository {
     /// Store the user message and the answer; returns the answer's id.
     pub async fn save_exchange(&self, x: &Exchange<'_>) -> AppResult<Uuid> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // v7 ids are monotonic in this process: the question sorts before its answer.
+        let question_id = Uuid::now_v7();
         let answer_id = Uuid::now_v7();
         sqlx::query(
             "INSERT INTO assistant.chat_messages \
              (id, workspace_id, room_id, user_id, role, kind, content, scope, created_at) \
              VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8)",
         )
-        .bind(Uuid::now_v7())
+        .bind(question_id)
         .bind(x.workspace.as_uuid())
         .bind(x.room.as_uuid())
         .bind(x.user.as_uuid())

@@ -10,17 +10,27 @@ use warptalk_ingress::EndpointerConfig;
 use warptalk_pipeline_runtime::SpeechToText;
 
 use crate::channel::{Counters, EventTx, Worker, WorkerCtx};
-use crate::config::{ChannelConfig, CopilotConfig};
+use crate::config::{ChannelConfig, CopilotConfig, SttRouting};
 use crate::echo::LevelHistory;
 use crate::error::CopilotError;
 use crate::queue::{Chunk, ChunkQueue};
 use crate::sink::SegmentSink;
+use crate::stt::{NoticeBoard, TimingBoard};
 use crate::types::{Channel, ChannelStats, CopilotEvent, EngineStats, PushStatus, StatusKind};
 
 pub struct CopilotDeps {
     pub stt: Arc<dyn SpeechToText>,
     pub sink: Arc<dyn SegmentSink>,
     pub session_id: String,
+}
+
+/// Optional extras beyond [`CopilotDeps`]: the server-socket STT used for fallback / `server`
+/// routing and the boards it shares with the engine (see `stt::ServerAudioStt`).
+#[derive(Default)]
+pub struct EngineExtras {
+    pub server_stt: Option<Arc<dyn SpeechToText>>,
+    pub timing: Option<Arc<TimingBoard>>,
+    pub notices: Option<Arc<NoticeBoard>>,
 }
 
 struct Chan {
@@ -49,7 +59,24 @@ impl CopilotEngine {
         cfg: CopilotConfig,
         deps: CopilotDeps,
     ) -> Result<(Self, mpsc::Receiver<CopilotEvent>), CopilotError> {
+        Self::with_extras(cfg, deps, EngineExtras::default())
+    }
+
+    /// Like [`Self::new`] with a server-socket STT for `auto` fallback or `server` routing.
+    pub fn with_extras(
+        cfg: CopilotConfig,
+        deps: CopilotDeps,
+        extras: EngineExtras,
+    ) -> Result<(Self, mpsc::Receiver<CopilotEvent>), CopilotError> {
         cfg.validate()?;
+        if cfg.stt.mode == SttRouting::Server && extras.server_stt.is_none() {
+            return Err(CopilotError::Config(
+                "stt.mode = server needs a server STT backend".into(),
+            ));
+        }
+        let timing = extras.timing.unwrap_or_default();
+        let fallback_cfg = Arc::new(cfg.stt.fallback.clone());
+        let language_cfg = Arc::new(cfg.language.clone());
         let (ev_tx, ev_rx) = mpsc::channel(cfg.engine.event_capacity);
         let events_dropped = Arc::new(AtomicU64::new(0));
         let events = EventTx::new(ev_tx, events_dropped.clone());
@@ -75,6 +102,11 @@ impl CopilotEngine {
                     echo: echo_cfg.clone(),
                     queue: queue.clone(),
                     stt: deps.stt.clone(),
+                    server_stt: extras.server_stt.clone(),
+                    routing: cfg.stt.mode,
+                    fallback: fallback_cfg.clone(),
+                    language: language_cfg.clone(),
+                    timing: timing.clone(),
                     sink: deps.sink.clone(),
                     events: events.clone(),
                     my_hist: hists[ch.index()].clone(),
@@ -104,7 +136,10 @@ impl CopilotEngine {
             ticker: Mutex::new(None),
             stopped: AtomicBool::new(false),
         };
-        engine.start_ticker(Duration::from_millis(cfg.engine.status_interval_ms));
+        engine.start_ticker(
+            Duration::from_millis(cfg.engine.status_interval_ms),
+            extras.notices,
+        );
         engine.events.emit(CopilotEvent::Status {
             channel: None,
             kind: StatusKind::Started,
@@ -113,7 +148,7 @@ impl CopilotEngine {
         Ok((engine, ev_rx))
     }
 
-    fn start_ticker(&self, period: Duration) {
+    fn start_ticker(&self, period: Duration, notices: Option<Arc<NoticeBoard>>) {
         let sink = self.sink.clone();
         let events = self.events.clone();
         let queues = [self.chans[0].queue.clone(), self.chans[1].queue.clone()];
@@ -124,6 +159,15 @@ impl CopilotEngine {
             let mut last_dropped = [0u64; 2];
             loop {
                 tick.tick().await;
+                if let Some(n) = &notices {
+                    for (code, message) in n.drain() {
+                        events.emit(CopilotEvent::Error {
+                            channel: None,
+                            code,
+                            message,
+                        });
+                    }
+                }
                 let un = sink.unauthorized();
                 if un && !unauth {
                     events.emit(CopilotEvent::Error {
@@ -219,6 +263,8 @@ impl CopilotEngine {
                 echo_marked: c.counters.echo_marked.load(Ordering::Relaxed),
                 stt_errors: c.counters.stt_errors.load(Ordering::Relaxed),
                 stt_sessions_opened: c.counters.sessions_opened.load(Ordering::Relaxed),
+                stt_route: c.counters.route(),
+                stt_fallbacks: c.counters.fallbacks.load(Ordering::Relaxed),
             }
         };
         EngineStats {

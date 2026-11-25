@@ -12,6 +12,13 @@
 //! * STT sits behind `warptalk_pipeline_runtime::SpeechToText`: [`EphemeralRealtimeStt`]
 //!   (OpenAI Realtime, server-issued ephemeral token via [`SttTokenProvider`]), [`FakeStt`]
 //!   (tests / offline). WhisperKit (P2) would be another implementation.
+//! * STT routing (`stt.mode`): `auto` (default) streams direct and, after repeated failures of a
+//!   channel, switches it to the server socket (`ServerAudioStt`: audio goes to
+//!   `GET /copilot/sessions/{id}/audio`, the server transcribes and ingests, the engine only
+//!   shows the returned segments and never posts them: no double posting), then probes direct
+//!   again every `stt.fallback.retry_direct_after_ms`. Status `SttFallback` / `SttRecovered`.
+//! * Language (`language.mode`): `fixed` | `auto` (default) | `multi`, `language.languages`
+//!   (e.g. `["vi","en"]`), `language.vocabulary`; per-segment vi/en detection in `auto`/`multi`.
 //! * Sessions are rotated, and the token refreshed ahead of expiry, only at utterance
 //!   boundaries, so a reconnect never cuts speech.
 //! * Echo guard (P0, see [`echo`]): marks `me` utterances dominated by `others` as
@@ -29,7 +36,10 @@
 //! enum Channel { Me, Others }
 //! enum PushStatus { Accepted, DroppedOldest, Closed, Ignored }
 //! enum StatusKind { Started, Stopped, SpeechStart, SpeechEnd, SttConnected, SttUnavailable,
-//!                   SinkOnline, SinkOffline, AudioDropped }
+//!                   SinkOnline, SinkOffline, AudioDropped, SttFallback, SttRecovered }
+//! enum SttRoute { Direct, Server }          // ChannelStats.stt_route (+ stt_fallbacks)
+//! enum SttRouting { Auto, Direct, Server }  // CopilotHandle::stt_mode(), config `stt.mode`
+//! enum LanguageMode { Fixed, Auto, Multi }  // config `language.mode`
 //! record SegmentRecord { client_segment_id: String, channel: Channel, text: String,
 //!                        language: String, start_ms: u64, end_ms: u64, confidence: Option<f32>,
 //!                        is_final: bool, likely_echo: bool, utterance_seq: u64 }
@@ -68,16 +78,16 @@ pub mod types;
 pub mod wav;
 
 pub use config::{
-    ChannelConfig, CopilotConfig, EchoAction, EchoGuardConfig, EngineConfig, SinkConfig,
-    SttBackend, SttConfig,
+    ChannelConfig, CopilotConfig, EchoAction, EchoGuardConfig, EngineConfig, FallbackConfig,
+    LanguageConfig, LanguageMode, ServerSttConfig, SinkConfig, SttBackend, SttConfig, SttRouting,
 };
-pub use engine::{CopilotDeps, CopilotEngine};
+pub use engine::{CopilotDeps, CopilotEngine, EngineExtras};
 pub use error::CopilotError;
 pub use handle::{CopilotEventListener, CopilotHandle, EventStream, StartParams};
 pub use sink::{HttpSegmentSink, MemorySink, SegmentSink};
-pub use stt::{EphemeralRealtimeStt, FakeStt};
+pub use stt::{EphemeralRealtimeStt, FakeStt, NoticeBoard, ServerAudioStt, TimingBoard};
 pub use token::{HttpSttTokenProvider, SttToken, SttTokenProvider, TokenManager};
 pub use types::{
     Channel, ChannelStats, CopilotEvent, EngineStats, PushStatus, SegmentRecord, SinkStats,
-    StatusKind,
+    StatusKind, SttRoute,
 };

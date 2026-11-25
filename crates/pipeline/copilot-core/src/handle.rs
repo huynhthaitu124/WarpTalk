@@ -9,11 +9,11 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::config::{CopilotConfig, SttBackend};
-use crate::engine::{CopilotDeps, CopilotEngine};
+use crate::config::{CopilotConfig, SttBackend, SttRouting};
+use crate::engine::{CopilotDeps, CopilotEngine, EngineExtras};
 use crate::error::CopilotError;
 use crate::sink::HttpSegmentSink;
-use crate::stt::{EphemeralRealtimeStt, FakeStt};
+use crate::stt::{EphemeralRealtimeStt, FakeStt, NoticeBoard, ServerAudioStt, TimingBoard};
 use crate::token::{HttpSttTokenProvider, TokenManager};
 use crate::types::{Channel, CopilotEvent, EngineStats, PushStatus};
 
@@ -69,6 +69,7 @@ struct Running {
     engine: Arc<CopilotEngine>,
     sink: Arc<HttpSegmentSink>,
     tokens: Option<Arc<HttpSttTokenProvider>>,
+    server: Option<Arc<ServerAudioStt>>,
     refresher: Option<JoinHandle<()>>,
 }
 
@@ -121,22 +122,45 @@ impl CopilotHandle {
             &params.session_id,
             params.bearer.clone(),
         )?;
+        let routing = self.cfg.stt.mode;
+        let timing = Arc::new(TimingBoard::default());
+        let notices = Arc::new(NoticeBoard::default());
+        let server = (routing != SttRouting::Direct)
+            .then(|| {
+                ServerAudioStt::new(
+                    self.cfg.stt.server.clone(),
+                    &self.cfg.language,
+                    &params.base_url,
+                    &params.session_id,
+                    params.bearer.clone(),
+                    timing.clone(),
+                    notices.clone(),
+                )
+                .map(Arc::new)
+            })
+            .transpose()?;
         let (stt, tokens, refresher): (Arc<dyn warptalk_pipeline_runtime::SpeechToText>, _, _) =
-            match self.cfg.stt.backend {
-                SttBackend::Fake => (
+            match (routing, self.cfg.stt.backend) {
+                // Server routing never touches the direct path: the server socket stands in.
+                (SttRouting::Server, _) => match &server {
+                    Some(s) => (s.clone(), None, None),
+                    None => return Err(CopilotError::Config("server STT unavailable".into())),
+                },
+                (_, SttBackend::Fake) => (
                     Arc::new(FakeStt::new(Duration::from_millis(
                         self.cfg.stt.fake_latency_ms,
                     ))),
                     None,
                     None,
                 ),
-                SttBackend::Realtime => {
+                (_, SttBackend::Realtime) => {
                     let prov = Arc::new(HttpSttTokenProvider::new(
                         &params.base_url,
                         &params.session_id,
                         params.bearer.clone(),
                         Duration::from_millis(self.cfg.stt.open_timeout_ms),
                     )?);
+                    prov.set_prefs(&self.cfg.language);
                     let mgr = TokenManager::new(
                         prov.clone(),
                         Duration::from_secs(self.cfg.stt.token_refresh_margin_s),
@@ -154,12 +178,19 @@ impl CopilotHandle {
                     )
                 }
             };
-        let (engine, rx) = CopilotEngine::new(
+        let (engine, rx) = CopilotEngine::with_extras(
             self.cfg.clone(),
             CopilotDeps {
                 stt,
                 sink: sink.clone(),
                 session_id: params.session_id,
+            },
+            EngineExtras {
+                server_stt: server
+                    .clone()
+                    .map(|s| s as Arc<dyn warptalk_pipeline_runtime::SpeechToText>),
+                timing: Some(timing),
+                notices: Some(notices),
             },
         )?;
         *self
@@ -171,6 +202,7 @@ impl CopilotHandle {
             engine: Arc::new(engine),
             sink,
             tokens,
+            server,
             refresher,
         });
         Ok(())
@@ -200,9 +232,19 @@ impl CopilotHandle {
         {
             r.sink.set_bearer(bearer.clone());
             if let Some(t) = &r.tokens {
-                t.set_bearer(bearer);
+                t.set_bearer(bearer.clone());
+            }
+            if let Some(sv) = &r.server {
+                sv.set_bearer(bearer);
             }
         }
+    }
+
+    /// The configured STT routing (`auto` | `direct` | `server`). Where each channel runs *now*
+    /// is `stats().me.stt_route` / `.others.stt_route`; switches arrive as `SttFallback` /
+    /// `SttRecovered` status events.
+    pub fn stt_mode(&self) -> SttRouting {
+        self.cfg.stt.mode
     }
 
     /// Hot-reload one channel's endpointer from JSON (partial `EndpointerConfig`).

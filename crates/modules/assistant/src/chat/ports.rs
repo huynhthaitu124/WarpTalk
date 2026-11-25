@@ -249,7 +249,10 @@ impl PriorContextSource for SummaryMemoryPriorContext {
                 text.push_str(&format!(" Decisions: {}.", s.decisions.join("; ")));
             }
             if !s.open_questions.is_empty() {
-                text.push_str(&format!(" Open questions: {}.", s.open_questions.join("; ")));
+                text.push_str(&format!(
+                    " Open questions: {}.",
+                    s.open_questions.join("; ")
+                ));
             }
             push(
                 format!(

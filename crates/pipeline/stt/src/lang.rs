@@ -32,7 +32,7 @@ impl Default for LangDetectConfig {
             vi_min_share: 0.65,
             en_max_share: 0.2,
             unknown_ascii_weight: 0.5,
-            min_evidence: 1.0,
+            min_evidence: 1.5,
             mixed_min_side: 2.0,
         }
     }
@@ -197,37 +197,40 @@ fn base(lang: &str) -> String {
 
 /// Language to store on a segment.
 ///
-/// * `provider`: what the STT reported (may be the hint that was sent, `auto`, `und`, empty).
-/// * `allowed`: the session's declared languages (base codes, first = primary).
-/// * `trust_provider`: when `true` (mode `auto`) a provider language that is in `allowed` is
-///   kept as is; when `false` (mode `multi`) the heuristic may override it if it is confident
-///   (`Vi`/`En`/`Mixed`) and disagrees, because a hint-less provider often just echoes a
-///   default.
+/// * `provider`: what the STT reported. With a hint it is just the hint echoed back, so it is
+///   weak evidence; `auto`, `und`, empty mean "unknown".
+/// * `allowed`: the session's declared languages (base codes, first = primary); empty = any.
+/// * `conservative`: `true` (mode `auto`, a hint was sent) overrides an in-list provider
+///   language only on strong evidence (`Vi` / `En`, not `Mixed`); `false` (mode `multi`, no
+///   hint) takes any confident detection, mixed text going to its dominant side.
 ///
-/// Languages other than `vi`/`en` are never produced by the heuristic: for them the provider's
-/// answer is returned unchanged.
+/// Languages other than `vi`/`en` are never produced by the heuristic: for them the
+/// provider's answer is returned unchanged.
 pub fn resolve_language(
     text: &str,
     provider: Option<&str>,
     allowed: &[String],
-    trust_provider: bool,
+    conservative: bool,
     cfg: &LangDetectConfig,
 ) -> String {
     let prov = provider
         .map(base)
         .filter(|p| !p.is_empty() && p != "auto" && p != "und" && p != "unknown");
     let in_allowed = |l: &str| allowed.is_empty() || allowed.iter().any(|a| base(a) == l);
-    let can_detect = |l: &str| in_allowed(l) || allowed.is_empty();
-    if let Some(p) = &prov {
-        if p != "vi" && p != "en" && in_allowed(p) {
-            return p.clone();
-        }
-        if trust_provider && in_allowed(p) {
-            return p.clone();
-        }
+    if let Some(p) = &prov
+        && p != "vi"
+        && p != "en"
+        && in_allowed(p)
+    {
+        return p.clone();
     }
-    match detect(text, cfg).language() {
-        Some(l) if can_detect(l) => l.to_owned(),
+    let detected = detect(text, cfg);
+    let pick = match (detected, conservative) {
+        (Detected::Mixed(_), true) => None,
+        (d, _) => d.language(),
+    };
+    match pick {
+        Some(l) if in_allowed(l) => l.to_owned(),
         _ => prov
             .or_else(|| allowed.first().map(|a| base(a)))
             .unwrap_or_else(|| "und".to_owned()),
@@ -293,13 +296,35 @@ mod tests {
     }
 
     #[test]
-    fn resolve_auto_keeps_a_valid_provider_language() {
-        let l = resolve_language("hello there", Some("vi"), &vi_en(), true, &cfg());
-        assert_eq!(l, "vi");
+    fn resolve_auto_keeps_the_hint_unless_the_evidence_is_strong() {
+        // The hint echoed back on clearly English text is overridden ...
+        let l = resolve_language(
+            "let's review the roadmap",
+            Some("vi"),
+            &vi_en(),
+            true,
+            &cfg(),
+        );
+        assert_eq!(l, "en");
+        // ... but not on thin evidence, or on genuinely mixed text.
+        assert_eq!(
+            resolve_language("ok", Some("vi"), &vi_en(), true, &cfg()),
+            "vi"
+        );
+        let mixed = "Ok let's sync on the roadmap, sau đó chúng ta release bản mới";
+        assert!(matches!(detect(mixed, &cfg()), Detected::Mixed(_)));
+        assert_eq!(
+            resolve_language(mixed, Some("vi"), &vi_en(), true, &cfg()),
+            "vi"
+        );
+        assert_eq!(
+            resolve_language(mixed, Some("en"), &vi_en(), true, &cfg()),
+            "en"
+        );
     }
 
     #[test]
-    fn resolve_multi_overrides_a_wrong_provider_language() {
+    fn resolve_multi_takes_any_confident_detection() {
         let l = resolve_language(
             "Tôi nghĩ chúng ta nên bắt đầu",
             Some("en"),

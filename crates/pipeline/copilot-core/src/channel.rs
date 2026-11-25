@@ -11,12 +11,13 @@
 //! session are tagged with a generation so a draining old session cannot be confused with its
 //! successor.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
+use tracing::debug;
 use warptalk_audio::resample;
 use warptalk_ingress::{EndReason, EndpointEvent, Endpointer, EnergyVad, FRAME_SAMPLES, Vad};
 use warptalk_pipeline_runtime::{
@@ -24,11 +25,15 @@ use warptalk_pipeline_runtime::{
     Utterance,
 };
 
-use crate::config::{ChannelConfig, EchoAction, EchoGuardConfig, EngineConfig};
+use crate::config::{
+    ChannelConfig, EchoAction, EchoGuardConfig, EngineConfig, FallbackConfig, LanguageConfig,
+    SttRouting,
+};
 use crate::echo::{self, LevelHistory};
 use crate::queue::{Chunk, ChunkQueue};
 use crate::sink::SegmentSink;
-use crate::types::{Channel, CopilotEvent, SegmentRecord, StatusKind};
+use crate::stt::TimingBoard;
+use crate::types::{Channel, CopilotEvent, SegmentRecord, StatusKind, SttRoute};
 
 /// Non-blocking event emitter (drops, and counts, when the consumer is too slow).
 #[derive(Clone)]
@@ -56,6 +61,36 @@ pub(crate) struct Counters {
     pub echo_marked: AtomicU64,
     pub stt_errors: AtomicU64,
     pub sessions_opened: AtomicU64,
+    pub fallbacks: AtomicU64,
+    /// 0 = direct, 1 = server.
+    pub route: AtomicU8,
+}
+
+impl Counters {
+    pub(crate) fn route(&self) -> SttRoute {
+        if self.route.load(Ordering::Relaxed) == 1 {
+            SttRoute::Server
+        } else {
+            SttRoute::Direct
+        }
+    }
+}
+
+/// Where a channel's STT session runs. `Server` sessions produce segments the server has
+/// already ingested: they are shown but never posted to the sink (no double posting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    Direct,
+    Server,
+}
+
+impl Route {
+    fn name(self) -> &'static str {
+        match self {
+            Route::Direct => "direct",
+            Route::Server => "server",
+        }
+    }
 }
 
 pub(crate) struct WorkerCtx {
@@ -65,7 +100,14 @@ pub(crate) struct WorkerCtx {
     pub engine: Arc<EngineConfig>,
     pub echo: Arc<EchoGuardConfig>,
     pub queue: Arc<ChunkQueue>,
+    /// Direct provider path (unused when `routing` is `Server`).
     pub stt: Arc<dyn SpeechToText>,
+    /// Server socket path (`Auto` fallback and `Server`).
+    pub server_stt: Option<Arc<dyn SpeechToText>>,
+    pub routing: SttRouting,
+    pub fallback: Arc<FallbackConfig>,
+    pub language: Arc<LanguageConfig>,
+    pub timing: Arc<TimingBoard>,
     pub sink: Arc<dyn SegmentSink>,
     pub events: EventTx,
     pub my_hist: Arc<Mutex<LevelHistory>>,
@@ -78,6 +120,7 @@ struct Live {
     session: Box<dyn SttSession>,
     opened_at: Instant,
     gen_id: u64,
+    route: Route,
 }
 
 struct Meta {
@@ -112,6 +155,11 @@ pub(crate) struct Worker {
     lvl_sumsq: f64,
     lvl_n: u64,
     lvl_last_ms: u64,
+    route: Route,
+    /// Recent direct failures (for the fallback threshold).
+    direct_failures: VecDeque<Instant>,
+    retry_direct_at: Option<Instant>,
+    gen_routes: HashMap<u64, Route>,
 }
 
 impl Worker {
@@ -140,11 +188,19 @@ impl Worker {
             lvl_sumsq: 0.0,
             lvl_n: 0,
             lvl_last_ms: 0,
+            route: Route::Direct,
+            direct_failures: VecDeque::new(),
+            retry_direct_at: None,
+            gen_routes: HashMap::new(),
         }
     }
 
     pub(crate) async fn run(mut self) {
         let queue = self.ctx.queue.clone();
+        if self.ctx.routing == SttRouting::Server && self.ctx.server_stt.is_some() {
+            self.route = Route::Server;
+            self.ctx.counters.route.store(1, Ordering::Relaxed);
+        }
         self.ensure_session().await;
         loop {
             tokio::select! {
@@ -328,11 +384,15 @@ impl Worker {
         match l.session.feed(samples).await {
             Ok(()) => self.streamed += samples.len(),
             Err(e) => {
+                let route = l.route;
                 self.live = None;
                 self.stream_ok = false;
                 self.next_open_after = Some(Instant::now());
                 self.error("stt_feed", e.to_string());
                 self.status(StatusKind::SttUnavailable, Some(e.to_string()));
+                if route == Route::Direct {
+                    self.note_direct_failure(&e.to_string());
+                }
             }
         }
     }
@@ -396,11 +456,19 @@ impl Worker {
         };
         meta.gen_id = l.gen_id;
         let now = Instant::now();
+        if l.route == Route::Server {
+            self.ctx.timing.set(
+                self.ctx.channel,
+                meta.seq,
+                meta.start_ms + self.cfg.start_offset_ms,
+                end_ms.max(meta.start_ms) + self.cfg.start_offset_ms,
+            );
+        }
         let utt = Utterance {
             room: self.ctx.session_id.clone(),
             speaker: self.ctx.channel.as_str().to_string(),
             seq: meta.seq,
-            lang: self.cfg.language_hint.clone(),
+            lang: self.ctx.language.hint(self.cfg.language_hint.as_deref()),
             audio: audio.into(),
             speech_ms,
             total_ms,
@@ -413,6 +481,7 @@ impl Worker {
             mode: SttMode::Realtime,
             streamed_samples: streamed,
         };
+        let route = l.route;
         match l.session.commit(req).await {
             Ok(()) => self.pending.push_back(meta),
             Err(e) => {
@@ -420,6 +489,9 @@ impl Worker {
                 self.next_open_after = Some(Instant::now());
                 self.error("stt_commit", e.to_string());
                 self.status(StatusKind::SttUnavailable, Some(e.to_string()));
+                if route == Route::Direct {
+                    self.note_direct_failure(&e.to_string());
+                }
             }
         }
         self.rotate_if_old().await;
@@ -427,24 +499,27 @@ impl Worker {
 
     // ---- STT session ---------------------------------------------------------------------
 
-    async fn ensure_session(&mut self) -> bool {
-        if self.live.is_some() {
-            return true;
+    fn backend(&self, route: Route) -> Option<Arc<dyn SpeechToText>> {
+        match route {
+            Route::Direct => (self.ctx.routing != SttRouting::Server).then(|| self.ctx.stt.clone()),
+            Route::Server => self.ctx.server_stt.clone(),
         }
-        if self.next_open_after.is_some_and(|t| Instant::now() < t) {
-            return false;
-        }
+    }
+
+    /// Open a session on `route`'s backend (not installed yet).
+    async fn open_live(&mut self, route: Route, timeout: Duration) -> Result<Live, String> {
+        let stt = self
+            .backend(route)
+            .ok_or_else(|| format!("no {} STT backend", route.name()))?;
         self.gen_counter += 1;
         let gen_id = self.gen_counter;
         let (tx, mut rx) = mpsc::channel::<SttEvent>(64);
         let params = SessionParams {
             room: self.ctx.session_id.clone(),
             speaker: self.ctx.channel.as_str().to_string(),
-            lang_hint: self.cfg.language_hint.clone(),
+            lang_hint: self.ctx.language.hint(self.cfg.language_hint.as_deref()),
         };
-        let open_timeout = self.ctx.open_timeout;
-        let res = tokio::time::timeout(open_timeout, self.ctx.stt.open_session(params, tx)).await;
-        match res {
+        match tokio::time::timeout(timeout, stt.open_session(params, tx)).await {
             Ok(Ok(session)) => {
                 let fwd = self.fwd_tx.clone();
                 tokio::spawn(async move {
@@ -454,24 +529,47 @@ impl Worker {
                         }
                     }
                 });
+                self.gen_routes.insert(gen_id, route);
                 self.ctx
                     .counters
                     .sessions_opened
                     .fetch_add(1, Ordering::Relaxed);
-                self.live = Some(Live {
+                Ok(Live {
                     session,
                     opened_at: Instant::now(),
                     gen_id,
-                });
+                    route,
+                })
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err("open timed out".to_string()),
+        }
+    }
+
+    fn set_route(&mut self, route: Route) {
+        self.route = route;
+        self.ctx
+            .counters
+            .route
+            .store(u8::from(route == Route::Server), Ordering::Relaxed);
+    }
+
+    async fn ensure_session(&mut self) -> bool {
+        if self.live.is_some() {
+            return true;
+        }
+        if self.next_open_after.is_some_and(|t| Instant::now() < t) {
+            return false;
+        }
+        let route = self.route;
+        match self.open_live(route, self.ctx.open_timeout).await {
+            Ok(live) => {
+                self.live = Some(live);
                 self.next_open_after = None;
-                self.status(StatusKind::SttConnected, None);
+                self.status(StatusKind::SttConnected, Some(route.name().to_string()));
                 true
             }
-            other => {
-                let msg = match other {
-                    Ok(Err(e)) => e.to_string(),
-                    _ => "open timed out".to_string(),
-                };
+            Err(msg) => {
                 self.next_open_after = Some(
                     Instant::now() + Duration::from_millis(self.ctx.engine.reconnect_backoff_ms),
                 );
@@ -481,20 +579,112 @@ impl Worker {
                     "stt_open"
                 };
                 self.error(code, msg.clone());
-                self.status(StatusKind::SttUnavailable, Some(msg));
+                self.status(StatusKind::SttUnavailable, Some(msg.clone()));
+                match route {
+                    Route::Direct => {
+                        // Token issue / connect failures count towards the fallback; on the
+                        // threshold the server session is opened right away.
+                        if self.note_direct_failure(&msg) {
+                            self.next_open_after = None;
+                            return Box::pin(self.ensure_session()).await;
+                        }
+                    }
+                    Route::Server => {
+                        // In `auto` the server is no better: go back to trying direct.
+                        if self.ctx.routing == SttRouting::Auto {
+                            self.set_route(Route::Direct);
+                            self.retry_direct_at = None;
+                            self.direct_failures.clear();
+                        }
+                    }
+                }
                 false
             }
         }
     }
 
-    /// At an utterance boundary: replace an old session by a fresh one (old one drains in the
-    /// background; its remaining events are matched by generation).
+    /// Records a failure of the direct path; in `auto` mode, once the threshold is reached
+    /// within the window, switches this channel to the server. Returns whether it switched.
+    fn note_direct_failure(&mut self, reason: &str) -> bool {
+        if self.ctx.routing != SttRouting::Auto
+            || self.ctx.server_stt.is_none()
+            || self.route != Route::Direct
+        {
+            return false;
+        }
+        let now = Instant::now();
+        let window = Duration::from_millis(self.ctx.fallback.window_ms);
+        self.direct_failures.push_back(now);
+        while self
+            .direct_failures
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > window)
+        {
+            self.direct_failures.pop_front();
+        }
+        if (self.direct_failures.len() as u32) < self.ctx.fallback.failure_threshold {
+            return false;
+        }
+        self.direct_failures.clear();
+        self.set_route(Route::Server);
+        self.retry_direct_at =
+            Some(now + Duration::from_millis(self.ctx.fallback.retry_direct_after_ms));
+        self.ctx.counters.fallbacks.fetch_add(1, Ordering::Relaxed);
+        if let Some(l) = self.live.take() {
+            // In-flight transcripts of the old session still drain (matched by generation).
+            tokio::spawn(async move { l.session.close().await });
+        }
+        self.status(
+            StatusKind::SttFallback,
+            Some(format!("direct->server: {reason}")),
+        );
+        true
+    }
+
+    /// While on the server in `auto` mode: after `retry_direct_after_ms`, probe the direct
+    /// path at an utterance boundary and switch back if it opens.
+    async fn maybe_recover_direct(&mut self) {
+        if self.route != Route::Server
+            || self.ctx.routing != SttRouting::Auto
+            || self.ep.is_speaking()
+            || !self.retry_direct_at.is_some_and(|t| Instant::now() >= t)
+        {
+            return;
+        }
+        let probe = Duration::from_millis(self.ctx.fallback.probe_timeout_ms);
+        match self.open_live(Route::Direct, probe).await {
+            Ok(live) => {
+                if let Some(old) = self.live.take() {
+                    tokio::spawn(async move { old.session.close().await });
+                }
+                self.live = Some(live);
+                self.set_route(Route::Direct);
+                self.retry_direct_at = None;
+                self.direct_failures.clear();
+                self.next_open_after = None;
+                self.status(StatusKind::SttConnected, Some("direct".into()));
+                self.status(StatusKind::SttRecovered, Some("server->direct".into()));
+            }
+            Err(msg) => {
+                debug!(error = %msg, "direct STT still unavailable; staying on the server");
+                self.retry_direct_at = Some(
+                    Instant::now() + Duration::from_millis(self.ctx.fallback.retry_direct_after_ms),
+                );
+            }
+        }
+    }
+
+    /// At an utterance boundary: replace an old direct session by a fresh one (old one drains
+    /// in the background; its remaining events are matched by generation). Server sessions
+    /// reconnect their shared socket by themselves and are never rotated. Also the moment a
+    /// server-routed channel probes the direct path again.
     async fn rotate_if_old(&mut self) {
+        self.maybe_recover_direct().await;
         let max = Duration::from_millis(self.ctx.engine.session_rotate_after_ms);
         let old = self
             .live
             .as_ref()
-            .is_some_and(|l| l.opened_at.elapsed() >= max);
+            .is_some_and(|l| l.route == Route::Direct && l.opened_at.elapsed() >= max);
         if old && !self.ep.is_speaking() {
             if let Some(l) = self.live.take() {
                 tokio::spawn(async move { l.session.close().await });
@@ -514,6 +704,11 @@ impl Worker {
                 }
                 if !ok {
                     self.error("stt_failed", "transcription failed for an utterance".into());
+                    if self.gen_routes.get(&gen_id) == Some(&Route::Direct) {
+                        self.note_direct_failure("transcription failed");
+                    }
+                } else if self.gen_routes.get(&gen_id) == Some(&Route::Direct) {
+                    self.direct_failures.clear();
                 }
                 self.emit(CopilotEvent::Partial {
                     channel: self.ctx.channel,
@@ -553,11 +748,13 @@ impl Worker {
             None => (now_tl, now_tl, false, self.seq, text.clone()),
         };
         let off = self.cfg.start_offset_ms;
+        let language = self.ctx.language.resolve(&text, &seg.lang);
+        let via_server = self.gen_routes.get(&gen_id) == Some(&Route::Server);
         let rec = SegmentRecord {
             client_segment_id: SegmentRecord::new_id(),
             channel: self.ctx.channel,
             text,
-            language: seg.lang.clone(),
+            language,
             start_ms: start + off,
             end_ms: end + off,
             confidence: seg.confidence,
@@ -585,7 +782,10 @@ impl Worker {
             .text
             .trim_end()
             .ends_with(['.', '!', '?', '。', '！', '？']);
-        if !(echo_flag && self.ctx.echo.action == EchoAction::Drop) {
+        // Segments from the server path were already ingested by the server (same dedup
+        // store, usage and credit gate as `POST /segments`): posting them again would
+        // double them in the transcript, so they are only shown.
+        if !via_server && !(echo_flag && self.ctx.echo.action == EchoAction::Drop) {
             self.ctx.sink.submit(rec).await;
         }
         // Semantic endpointing hint (no-op unless `vad_sentence_hint_hangover_ms` > 0).

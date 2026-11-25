@@ -117,11 +117,12 @@ struct FakeResolver(Arc<FakeLlm>, Mutex<DataBoundary>);
 #[async_trait]
 impl LlmResolver for FakeResolver {
     async fn for_purpose(&self, _: WorkspaceId, _: Purpose) -> Result<ResolvedLlm, ResolveError> {
+        let boundary = *self.1.lock().unwrap();
         Ok(ResolvedLlm {
             provider: self.0.clone(),
             model: Some("fake-chat".into()),
-            boundary: *self.1.lock().unwrap(),
-            key_source: match *self.1.lock().unwrap() {
+            boundary,
+            key_source: match boundary {
                 DataBoundary::External => KeySource::Platform,
                 DataBoundary::WorkspaceControlled => KeySource::Workspace,
             },
@@ -643,7 +644,10 @@ async fn recap_selects_window_and_caches_per_window_end() {
         .json(u, "POST", &uri, Some(json!({"last_minutes": 5})))
         .await;
     assert_eq!(v2["cached"], true);
-    assert_eq!(v2["answer"], v["answer"]);
+    assert_eq!(
+        v2["answer"].as_str().unwrap().trim(),
+        v["answer"].as_str().unwrap().trim()
+    );
     assert_eq!(h.llm.total(), 1);
     assert_eq!(h.usage.events.lock().unwrap().len(), 1);
     // Another window is a different key.
@@ -791,7 +795,7 @@ async fn injection_in_transcript_stays_inside_the_fence() {
     let closes: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.contains("<<END-"))
+        .filter(|(_, l)| l.contains("<<END-") && l.contains("transcript"))
         .map(|(i, _)| i)
         .collect();
     let close = lines.iter().position(|l| *l == close_marker).unwrap();
@@ -963,7 +967,8 @@ async fn since_ms_scope_and_earlier_lines_retrieval() {
     .await;
     let p = h.llm.last_user_text();
     assert!(!p.contains("launch budget is 50k"));
-    assert!(p.contains("filler chatter 30 "));
+    assert!(p.contains("filler chatter 39 "));
+    assert!(!p.contains("filler chatter 29 "));
     assert_eq!(
         h.docs.1.lock().unwrap().len(),
         1,

@@ -81,6 +81,20 @@ pub enum StatusKind {
     SinkOffline,
     /// Audio chunks were dropped (drop-oldest) since the last status; `detail` has the count.
     AudioDropped,
+    /// A channel switched from direct STT to the server socket; `detail` = `direct->server: <why>`.
+    /// (Appended last: existing ordinals are unchanged.)
+    SttFallback,
+    /// A channel went back to direct STT; `detail` = `server->direct`.
+    SttRecovered,
+}
+
+/// Where a channel's transcription currently runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SttRoute {
+    #[default]
+    Direct,
+    Server,
 }
 
 /// Events for the overlay / UI.
@@ -128,6 +142,10 @@ pub struct ChannelStats {
     pub echo_marked: u64,
     pub stt_errors: u64,
     pub stt_sessions_opened: u64,
+    /// Current route of the channel.
+    pub stt_route: SttRoute,
+    /// Direct -> server switches so far.
+    pub stt_fallbacks: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

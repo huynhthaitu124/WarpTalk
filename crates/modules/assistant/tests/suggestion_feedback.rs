@@ -15,9 +15,9 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 use warptalk_assistant::application::ports::WorkspaceAccess;
+use warptalk_assistant::suggestion::PgSuggestionStore;
 use warptalk_assistant::suggestion::feedback_http::{FeedbackApi, router};
 use warptalk_assistant::suggestion::store::{ContextLine, SuggestionRecord, SuggestionStore};
-use warptalk_assistant::suggestion::PgSuggestionStore;
 use warptalk_assistant::summary::{RoomAccess, RoomAccessInfo, WorkspaceScope};
 use warptalk_config::JwtConfig;
 use warptalk_kernel::{AppResult, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole};
@@ -34,7 +34,11 @@ impl RoomAccess for FakeAccess {
     async fn room_access(&self, room: RoomId, user: UserId) -> AppResult<Option<RoomAccessInfo>> {
         Ok(self.rooms.lock().unwrap().get(&(room, user)).cloned())
     }
-    async fn workspace_scope(&self, _: WorkspaceId, _: UserId) -> AppResult<Option<WorkspaceScope>> {
+    async fn workspace_scope(
+        &self,
+        _: WorkspaceId,
+        _: UserId,
+    ) -> AppResult<Option<WorkspaceScope>> {
         Ok(None)
     }
 }
@@ -255,7 +259,10 @@ impl H {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     async fn feedback_rows(&self, id: Uuid) -> Vec<(Uuid, String, Option<String>)> {
@@ -296,23 +303,53 @@ async fn feedback_requires_a_viewer_of_the_suggestions_room() {
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = h
-        .call(guest, false, "POST", &uri, Some(json!({"action": "wrong", "comment": "  bad\u{7} date  "})))
+        .call(
+            guest,
+            false,
+            "POST",
+            &uri,
+            Some(json!({"action": "wrong", "comment": "  bad\u{7} date  "})),
+        )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let (st, _) = h
-        .call(outsider, false, "POST", &uri, Some(json!({"action": "helpful"})))
+        .call(
+            outsider,
+            false,
+            "POST",
+            &uri,
+            Some(json!({"action": "helpful"})),
+        )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
     let (st, _) = h
-        .call(stranger, false, "POST", &uri, Some(json!({"action": "helpful"})))
+        .call(
+            stranger,
+            false,
+            "POST",
+            &uri,
+            Some(json!({"action": "helpful"})),
+        )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _) = h
-        .call(host, false, "POST", &format!("/suggestions/{}/feedback", Uuid::now_v7()), Some(json!({"action": "used"})))
+        .call(
+            host,
+            false,
+            "POST",
+            &format!("/suggestions/{}/feedback", Uuid::now_v7()),
+            Some(json!({"action": "used"})),
+        )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _) = h
-        .call(host, false, "POST", &uri, Some(json!({"action": "nonsense"})))
+        .call(
+            host,
+            false,
+            "POST",
+            &uri,
+            Some(json!({"action": "nonsense"})),
+        )
         .await;
     assert!(st.is_client_error());
     // Unauthenticated.
@@ -337,7 +374,13 @@ async fn feedback_requires_a_viewer_of_the_suggestions_room() {
 
     // Repeating a verdict updates it instead of duplicating.
     let (st, _) = h
-        .call(guest, false, "POST", &uri, Some(json!({"action": "wrong", "comment": "still wrong"})))
+        .call(
+            guest,
+            false,
+            "POST",
+            &uri,
+            Some(json!({"action": "wrong", "comment": "still wrong"})),
+        )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let rows = h.feedback_rows(id).await;
@@ -382,13 +425,22 @@ async fn quality_aggregates_per_category_for_owner_and_admin_only() {
     let cats = v["categories"].as_array().unwrap();
     let term = cats.iter().find(|c| c["category"] == "term").unwrap();
     assert_eq!(
-        (term["shown"].as_i64(), term["used"].as_i64(), term["dismissed"].as_i64(), term["wrong"].as_i64()),
+        (
+            term["shown"].as_i64(),
+            term["used"].as_i64(),
+            term["dismissed"].as_i64(),
+            term["wrong"].as_i64()
+        ),
         (Some(3), Some(1), Some(1), Some(2))
     );
     assert!((term["wrongRate"].as_f64().unwrap() - 2.0 / 3.0).abs() < 1e-9);
     let answer = cats.iter().find(|c| c["category"] == "answer").unwrap();
     assert_eq!(
-        (answer["shown"].as_i64(), answer["notHelpful"].as_i64(), answer["wrongRate"].as_f64()),
+        (
+            answer["shown"].as_i64(),
+            answer["notHelpful"].as_i64(),
+            answer["wrongRate"].as_f64()
+        ),
         (Some(1), Some(1), Some(0.0))
     );
     assert_eq!(v["total"]["shown"], 4);
@@ -397,13 +449,23 @@ async fn quality_aggregates_per_category_for_owner_and_admin_only() {
     // Plain member: forbidden. Other workspace of the owner: forbidden (no role there).
     let (st, _) = h.call(member, false, "GET", &uri, None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
-    let other = format!("/workspaces/{}/suggestions/quality?{}", Uuid::now_v7(), range());
+    let other = format!(
+        "/workspaces/{}/suggestions/quality?{}",
+        Uuid::now_v7(),
+        range()
+    );
     let (st, _) = h.call(owner, false, "GET", &other, None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
     // A system admin may read it; an inverted range is rejected.
     let (st, v) = h.call(member, true, "GET", &other, None).await;
-    assert_eq!((st, v["total"]["shown"].as_i64()), (StatusCode::OK, Some(0)));
-    let bad = format!("/workspaces/{}/suggestions/quality?from=2026-02-01&to=2026-01-01", h.ws);
+    assert_eq!(
+        (st, v["total"]["shown"].as_i64()),
+        (StatusCode::OK, Some(0))
+    );
+    let bad = format!(
+        "/workspaces/{}/suggestions/quality?from=2026-02-01&to=2026-01-01",
+        h.ws
+    );
     let (st, _) = h.call(owner, false, "GET", &bad, None).await;
     assert!(st.is_client_error());
 }
@@ -418,7 +480,13 @@ async fn export_is_system_admin_only_anonymised_and_parses_as_an_eval_meeting() 
     let fine = h.seed("term", "fine hint").await;
     for (id, action) in [(bad, "wrong"), (meh, "not_helpful"), (fine, "helpful")] {
         let (st, _) = h
-            .call(host, false, "POST", &format!("/suggestions/{id}/feedback"), Some(json!({"action": action})))
+            .call(
+                host,
+                false,
+                "POST",
+                &format!("/suggestions/{id}/feedback"),
+                Some(json!({"action": action})),
+            )
             .await;
         assert_eq!(st, StatusCode::NO_CONTENT);
     }
@@ -426,7 +494,13 @@ async fn export_is_system_admin_only_anonymised_and_parses_as_an_eval_meeting() 
     let (st, _) = h.call(host, false, "GET", &uri, None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
     let (st, _) = h
-        .call(admin, true, "GET", &format!("/admin/suggestions/export?label=bogus&{}", range()), None)
+        .call(
+            admin,
+            true,
+            "GET",
+            &format!("/admin/suggestions/export?label=bogus&{}", range()),
+            None,
+        )
         .await;
     assert!(st.is_client_error());
 
@@ -438,24 +512,44 @@ async fn export_is_system_admin_only_anonymised_and_parses_as_an_eval_meeting() 
         .iter()
         .map(|m| serde_json::from_value(m.clone()).unwrap())
         .collect();
-    let m = meetings.iter().find(|m| m.id == format!("fb-{bad}")).unwrap();
-    assert!(meetings.iter().all(|m| m.id != format!("fb-{meh}") && m.id != format!("fb-{fine}")));
+    let m = meetings
+        .iter()
+        .find(|m| m.id == format!("fb-{bad}"))
+        .unwrap();
+    assert!(
+        meetings
+            .iter()
+            .all(|m| m.id != format!("fb-{meh}") && m.id != format!("fb-{fine}"))
+    );
     eval_mirror::validate(m);
     assert_eq!(m.language, "en");
     assert!(m.title.contains("wrong") && m.snippets.is_empty());
     assert_eq!(m.participants, vec!["Speaker 1", "Speaker 2"]);
     // Ids and PII are gone; duplicate texts were disambiguated.
     let raw = serde_json::to_string(&v["meetings"]).unwrap();
-    assert!(!raw.contains("alice@corp.com") && !raw.contains("Alice") && !raw.contains(&h.ws.to_string()) && !raw.contains(&h.room.to_string()));
+    assert!(
+        !raw.contains("alice@corp.com")
+            && !raw.contains("Alice")
+            && !raw.contains(&h.ws.to_string())
+            && !raw.contains(&h.room.to_string())
+    );
     assert_eq!(m.lines.len(), 3);
     assert_eq!(m.lines[2].t_ms, 1000, "time never goes back");
     let exp = &m.expectations.suggestions;
-    assert_eq!((exp.forbidden[0].at_line, exp.forbidden[0].category.as_str()), (2, "fact"));
+    assert_eq!(
+        (exp.forbidden[0].at_line, exp.forbidden[0].category.as_str()),
+        (2, "fact")
+    );
     assert_eq!(exp.must_not_include.len(), 1);
 
     // The other label.
     let uri = format!("/admin/suggestions/export?label=not_helpful&{}", range());
     let (_, v) = h.call(admin, true, "GET", &uri, None).await;
-    let ids: Vec<&str> = v["meetings"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> = v["meetings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
     assert!(ids.contains(&format!("fb-{meh}").as_str()));
 }
