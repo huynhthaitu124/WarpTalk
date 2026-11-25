@@ -16,12 +16,14 @@ use super::model::{
     SummaryStatus, Trigger, codes, output_schema,
 };
 use super::ports::{
-    ExternalLlmGate, FollowUpSource, RoomMetaSource, SummaryBus, TranscriptData, TranscriptSource,
+    ExternalLlmGate, FollowUpSource, LiveFollowUp, RoomMetaSource, SummaryBus, TranscriptData,
+    TranscriptSource,
 };
 use super::prompt;
 use super::prompt::Speakers;
 use super::repo::{Enqueued, PgSummaryRepository};
 use crate::memory::{MeetingMemory, PgMeetingMemory, PriorContext, PriorQuery};
+use crate::safety::{self, Fence};
 use crate::suggestion::{DataBoundary, LlmResolver, Purpose, ResolveError};
 use crate::usage::{SharedUsageSink, UsageEvent};
 
@@ -335,7 +337,7 @@ impl SummaryService {
                         job.workspace_id.as_uuid(),
                         job.room_id.as_uuid(),
                         g.model.clone(),
-                        g.boundary,
+                        g.key_source,
                         g.tally.input,
                         g.tally.output,
                         None,
@@ -540,6 +542,7 @@ impl SummaryService {
             provider: resolved.provider.clone(),
             model: model.clone(),
             cfg,
+            lang: language.clone(),
             system: prompt::system_prompt_for(
                 cfg,
                 &language,
@@ -551,15 +554,27 @@ impl SummaryService {
             clock: self.d.clock.as_ref(),
             job_id: job.id,
         };
-        let meta_block =
-            prompt::meta_block_with(&meta, &followups, speakers.as_ref(), &prior_block);
+        let head_of = |f: &Fence, followups: &[LiveFollowUp]| {
+            prompt::meta_block_with(&meta, followups, speakers.as_ref(), &prior_block, f)
+        };
         let raw = if wins.len() == 1 {
-            let user = format!("{meta_block}\n{}", prompt::transcript_block(&wins[0]));
-            run.call(&prompt::single_instruction(cfg), &user, "single")
-                .await?
+            run.call(
+                &prompt::single_instruction(cfg),
+                |f| {
+                    format!(
+                        "{}\n{}",
+                        head_of(f, &followups),
+                        prompt::transcript_block(f, &wins[0])
+                    )
+                },
+                "single",
+            )
+            .await?
         } else {
-            let head = prompt::meta_block_with(&meta, &[], speakers.as_ref(), &prior_block);
-            self.map_reduce(&run, &wins, &head, &meta_block).await?
+            self.map_reduce(&run, &wins, &|f| head_of(f, &[]), &|f| {
+                head_of(f, &followups)
+            })
+            .await?
         };
         let mut content = prompt::validate_with(raw, &ids, &hay, speakers.as_ref(), &prior_tasks);
         content.language = language;
@@ -575,7 +590,7 @@ impl SummaryService {
         Ok(Generated {
             content,
             model,
-            boundary: resolved.boundary,
+            key_source: resolved.key_source,
             tally,
         })
     }
@@ -584,8 +599,8 @@ impl SummaryService {
         &self,
         run: &Run<'_>,
         wins: &[Vec<&str>],
-        meta_head: &str,
-        meta_full: &str,
+        meta_head: &(dyn Fn(&Fence) -> String + Sync),
+        meta_full: &(dyn Fn(&Fence) -> String + Sync),
     ) -> Result<RawOutput, JobError> {
         let cfg = run.cfg;
         let total = wins.len();
@@ -594,8 +609,14 @@ impl SummaryService {
         for (ci, chunk) in wins.chunks(conc).enumerate() {
             let calls = chunk.iter().enumerate().map(|(j, w)| {
                 let instruction = prompt::map_instruction(cfg, ci * conc + j + 1, total);
-                let user = format!("{meta_head}\n{}", prompt::transcript_block(w));
-                async move { run.call(&instruction, &user, "map").await }
+                async move {
+                    run.call(
+                        &instruction,
+                        |f| format!("{}\n{}", meta_head(f), prompt::transcript_block(f, w)),
+                        "map",
+                    )
+                    .await
+                }
             });
             for r in futures::future::join_all(calls).await {
                 parts.push(r?);
@@ -612,9 +633,21 @@ impl SummaryService {
             let mut next = Vec::with_capacity(groups.len());
             for chunk in groups.chunks(conc) {
                 let calls = chunk.iter().map(|g| {
-                    let user = format!("{meta_head}\nPartial records:\n{}", partials_json(g));
                     let instruction = &instruction;
-                    async move { run.call(instruction, &user, "reduce").await }
+                    async move {
+                        run.call(
+                            instruction,
+                            |f| {
+                                format!(
+                                    "{}\nPartial records:\n{}",
+                                    meta_head(f),
+                                    partials_block(f, g)
+                                )
+                            },
+                            "reduce",
+                        )
+                        .await
+                    }
                 });
                 for r in futures::future::join_all(calls).await {
                     next.push(r?);
@@ -622,16 +655,41 @@ impl SummaryService {
             }
             parts = next;
         }
-        let user = format!("{meta_full}\nPartial records:\n{}", partials_json(&parts));
-        run.call(&instruction, &user, "reduce").await
+        run.call(
+            &instruction,
+            |f| {
+                format!(
+                    "{}\nPartial records:\n{}",
+                    meta_full(f),
+                    partials_block(f, &parts)
+                )
+            },
+            "reduce",
+        )
+        .await
     }
 }
 
 struct Generated {
     content: SummaryContent,
     model: String,
-    boundary: DataBoundary,
+    key_source: crate::suggestion::KeySource,
     tally: Tally,
+}
+
+/// Each partial record in its own fence (they are model output derived from untrusted text).
+fn partials_block(fence: &Fence, parts: &[RawOutput]) -> String {
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            fence.wrap(
+                &format!("partial_{i}"),
+                &partials_json(std::slice::from_ref(p)),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn partials_json(parts: &[RawOutput]) -> String {
@@ -684,6 +742,7 @@ struct Run<'a> {
     model: String,
     cfg: &'a SummaryConfig,
     system: String,
+    lang: String,
     tally: std::sync::Mutex<Tally>,
     repo: &'a PgSummaryRepository,
     clock: &'a dyn Clock,
@@ -691,12 +750,16 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    fn request(&self, instruction: &str, user: &str, stage: &str) -> Request {
+    fn request(&self, instruction: &str, user: &str, stage: &str, fence: &Fence) -> Request {
         let mut req = Request::new(
             self.model.clone(),
             vec![Message::user(format!("{instruction}\n\n{user}"))],
         );
-        req.system = Some(self.system.clone());
+        req.system = Some(format!(
+            "{}\n\n{}",
+            self.system,
+            safety::untrusted_rule(safety::Lang::from_code(&self.lang), fence)
+        ));
         req.temperature = Some(self.cfg.temperature);
         req.max_output_tokens = Some(self.cfg.max_output_tokens);
         req.response_format = Some(JsonSchemaFormat {
@@ -723,10 +786,13 @@ impl Run<'_> {
     async fn call(
         &self,
         instruction: &str,
-        user: &str,
+        user: impl FnOnce(&Fence) -> String,
         stage: &str,
     ) -> Result<RawOutput, JobError> {
-        let req = self.request(instruction, user, stage);
+        // One fence per LLM call (shared by its retries).
+        let fence = Fence::new();
+        let user = user(&fence);
+        let req = self.request(instruction, &user, stage, &fence);
         let mut last = JobError::transient(codes::LLM_UNAVAILABLE, "no attempt made");
         for attempt in 1..=self.cfg.max_attempts {
             let timeout = Duration::from_secs(self.cfg.llm_timeout_secs);

@@ -725,6 +725,13 @@ public protocol CopilotHandleProtocol: AnyObject, Sendable {
     func stop() throws 
     
     /**
+     * The configured STT routing (`auto` | `direct` | `server`). Where each channel runs *now*
+     * is `stats().me.stt_route` / `.others.stt_route`; switches arrive as `SttFallback` /
+     * `SttRecovered` status events.
+     */
+    func sttMode()  -> SttRouting
+    
+    /**
      * Replace the bearer (after the app refreshed its access token).
      */
     func updateBearer(bearer: String) 
@@ -852,6 +859,18 @@ open func stop()throws   {try rustCallWithError(FfiConverterTypeCopilotError_lif
     uniffi_warptalk_copilot_core_fn_method_copilothandle_stop(self.uniffiClonePointer(),$0
     )
 }
+}
+    
+    /**
+     * The configured STT routing (`auto` | `direct` | `server`). Where each channel runs *now*
+     * is `stats().me.stt_route` / `.others.stt_route`; switches arrive as `SttFallback` /
+     * `SttRecovered` status events.
+     */
+open func sttMode() -> SttRouting  {
+    return try!  FfiConverterTypeSttRouting_lift(try! rustCall() {
+    uniffi_warptalk_copilot_core_fn_method_copilothandle_stt_mode(self.uniffiClonePointer(),$0
+    )
+})
 }
     
     /**
@@ -1084,10 +1103,24 @@ public struct ChannelStats {
     public var echoMarked: UInt64
     public var sttErrors: UInt64
     public var sttSessionsOpened: UInt64
+    /**
+     * Current route of the channel.
+     */
+    public var sttRoute: SttRoute
+    /**
+     * Direct -> server switches so far.
+     */
+    public var sttFallbacks: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chunksPushed: UInt64, chunksDropped: UInt64, utterances: UInt64, segments: UInt64, echoMarked: UInt64, sttErrors: UInt64, sttSessionsOpened: UInt64) {
+    public init(chunksPushed: UInt64, chunksDropped: UInt64, utterances: UInt64, segments: UInt64, echoMarked: UInt64, sttErrors: UInt64, sttSessionsOpened: UInt64, 
+        /**
+         * Current route of the channel.
+         */sttRoute: SttRoute, 
+        /**
+         * Direct -> server switches so far.
+         */sttFallbacks: UInt64) {
         self.chunksPushed = chunksPushed
         self.chunksDropped = chunksDropped
         self.utterances = utterances
@@ -1095,6 +1128,8 @@ public struct ChannelStats {
         self.echoMarked = echoMarked
         self.sttErrors = sttErrors
         self.sttSessionsOpened = sttSessionsOpened
+        self.sttRoute = sttRoute
+        self.sttFallbacks = sttFallbacks
     }
 }
 
@@ -1126,6 +1161,12 @@ extension ChannelStats: Equatable, Hashable {
         if lhs.sttSessionsOpened != rhs.sttSessionsOpened {
             return false
         }
+        if lhs.sttRoute != rhs.sttRoute {
+            return false
+        }
+        if lhs.sttFallbacks != rhs.sttFallbacks {
+            return false
+        }
         return true
     }
 
@@ -1137,6 +1178,8 @@ extension ChannelStats: Equatable, Hashable {
         hasher.combine(echoMarked)
         hasher.combine(sttErrors)
         hasher.combine(sttSessionsOpened)
+        hasher.combine(sttRoute)
+        hasher.combine(sttFallbacks)
     }
 }
 
@@ -1155,7 +1198,9 @@ public struct FfiConverterTypeChannelStats: FfiConverterRustBuffer {
                 segments: FfiConverterUInt64.read(from: &buf), 
                 echoMarked: FfiConverterUInt64.read(from: &buf), 
                 sttErrors: FfiConverterUInt64.read(from: &buf), 
-                sttSessionsOpened: FfiConverterUInt64.read(from: &buf)
+                sttSessionsOpened: FfiConverterUInt64.read(from: &buf), 
+                sttRoute: FfiConverterTypeSttRoute.read(from: &buf), 
+                sttFallbacks: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -1167,6 +1212,8 @@ public struct FfiConverterTypeChannelStats: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.echoMarked, into: &buf)
         FfiConverterUInt64.write(value.sttErrors, into: &buf)
         FfiConverterUInt64.write(value.sttSessionsOpened, into: &buf)
+        FfiConverterTypeSttRoute.write(value.sttRoute, into: &buf)
+        FfiConverterUInt64.write(value.sttFallbacks, into: &buf)
     }
 }
 
@@ -1967,6 +2014,95 @@ extension CopilotEvent: Equatable, Hashable {}
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum LanguageMode {
+    
+    /**
+     * One hinted language (the channel's `language_hint`); segment language as reported.
+     */
+    case fixed
+    /**
+     * Default. The first of `languages` is hinted and the others stay expected, the glossary
+     * goes in as a prompt, and a segment's language is corrected only on strong evidence.
+     * A hard single hint on a Vietnamese meeting full of English terms makes the model
+     * transliterate them; pure auto-detection mislabels short Vietnamese utterances.
+     */
+    case auto
+    /**
+     * No hint; the language of every segment is detected afterwards (vi/en heuristic).
+     */
+    case multi
+}
+
+
+#if compiler(>=6)
+extension LanguageMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLanguageMode: FfiConverterRustBuffer {
+    typealias SwiftType = LanguageMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LanguageMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .fixed
+        
+        case 2: return .auto
+        
+        case 3: return .multi
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LanguageMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .fixed:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .auto:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .multi:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLanguageMode_lift(_ buf: RustBuffer) throws -> LanguageMode {
+    return try FfiConverterTypeLanguageMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLanguageMode_lower(_ value: LanguageMode) -> RustBuffer {
+    return FfiConverterTypeLanguageMode.lower(value)
+}
+
+
+extension LanguageMode: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
  * Result of `push_audio` (never an error: the audio path does not fail).
  */
@@ -2078,6 +2214,15 @@ public enum StatusKind {
      * Audio chunks were dropped (drop-oldest) since the last status; `detail` has the count.
      */
     case audioDropped
+    /**
+     * A channel switched from direct STT to the server socket; `detail` = `direct->server: <why>`.
+     * (Appended last: existing ordinals are unchanged.)
+     */
+    case sttFallback
+    /**
+     * A channel went back to direct STT; `detail` = `server->direct`.
+     */
+    case sttRecovered
 }
 
 
@@ -2112,6 +2257,10 @@ public struct FfiConverterTypeStatusKind: FfiConverterRustBuffer {
         case 8: return .sinkOffline
         
         case 9: return .audioDropped
+        
+        case 10: return .sttFallback
+        
+        case 11: return .sttRecovered
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -2156,6 +2305,14 @@ public struct FfiConverterTypeStatusKind: FfiConverterRustBuffer {
         case .audioDropped:
             writeInt(&buf, Int32(9))
         
+        
+        case .sttFallback:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .sttRecovered:
+            writeInt(&buf, Int32(11))
+        
         }
     }
 }
@@ -2177,6 +2334,169 @@ public func FfiConverterTypeStatusKind_lower(_ value: StatusKind) -> RustBuffer 
 
 
 extension StatusKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where a channel's transcription currently runs.
+ */
+
+public enum SttRoute {
+    
+    case direct
+    case server
+}
+
+
+#if compiler(>=6)
+extension SttRoute: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSttRoute: FfiConverterRustBuffer {
+    typealias SwiftType = SttRoute
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SttRoute {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .direct
+        
+        case 2: return .server
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SttRoute, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .direct:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .server:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSttRoute_lift(_ buf: RustBuffer) throws -> SttRoute {
+    return try FfiConverterTypeSttRoute.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSttRoute_lower(_ value: SttRoute) -> RustBuffer {
+    return FfiConverterTypeSttRoute.lower(value)
+}
+
+
+extension SttRoute: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where transcription runs (ADR 0001 item 4 and its fallback).
+ */
+
+public enum SttRouting {
+    
+    /**
+     * Direct to the provider with an ephemeral token; on repeated failure a channel switches
+     * to the server (`stt_fallback`), and direct is retried periodically.
+     */
+    case auto
+    /**
+     * Direct only (no fallback).
+     */
+    case direct
+    /**
+     * Always through the server socket (audio is uploaded; the server posts the segments).
+     */
+    case server
+}
+
+
+#if compiler(>=6)
+extension SttRouting: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSttRouting: FfiConverterRustBuffer {
+    typealias SwiftType = SttRouting
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SttRouting {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .auto
+        
+        case 2: return .direct
+        
+        case 3: return .server
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SttRouting, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .auto:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .direct:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .server:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSttRouting_lift(_ buf: RustBuffer) throws -> SttRouting {
+    return try FfiConverterTypeSttRouting.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSttRouting_lower(_ value: SttRouting) -> RustBuffer {
+    return FfiConverterTypeSttRouting.lower(value)
+}
+
+
+extension SttRouting: Equatable, Hashable {}
 
 
 
@@ -2363,6 +2683,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_warptalk_copilot_core_checksum_method_copilothandle_stop() != 15615) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_warptalk_copilot_core_checksum_method_copilothandle_stt_mode() != 22135) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_warptalk_copilot_core_checksum_method_copilothandle_update_bearer() != 13008) {

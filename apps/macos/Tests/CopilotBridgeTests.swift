@@ -117,6 +117,14 @@ final class CopilotBridgeTests: XCTestCase {
         let fake = try parse(CopilotConfigBuilder.json(useFakeStt: true, languages: ["vi", "en"]))
         XCTAssertEqual((fake["stt"] as? [String: Any])?["backend"] as? String, "fake")
         XCTAssertEqual((fake["stt"] as? [String: Any])?["language_hint"] as? String, "vi")
+        // Code-switching + routing (VERIFY: not run on Linux).
+        XCTAssertEqual((fake["language"] as? [String: Any])?["mode"] as? String, "auto")
+        XCTAssertEqual((fake["language"] as? [String: Any])?["languages"] as? [String], ["vi", "en"])
+        XCTAssertNil((real["language"]))
+        let server = try parse(CopilotConfigBuilder.json(useFakeStt: false, languages: nil, sttMode: "server"))
+        XCTAssertEqual((server["stt"] as? [String: Any])?["mode"] as? String, "server")
+        let bad = try parse(CopilotConfigBuilder.json(useFakeStt: false, languages: nil, sttMode: "nonsense"))
+        XCTAssertNil((bad["stt"] as? [String: Any])?["mode"])
     }
 
     func testBridgeScriptExposesCopilotMethods() {

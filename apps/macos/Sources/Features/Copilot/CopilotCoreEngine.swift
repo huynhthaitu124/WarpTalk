@@ -73,6 +73,8 @@ final class CopilotCoreEngine: CopilotEngineType, @unchecked Sendable {
         case .sinkOnline: return .sinkOnline
         case .sinkOffline: return .sinkOffline
         case .audioDropped: return .audioDropped
+        case .sttFallback: return .sttFallback       // VERIFY: generated case names after regenerating the bindings
+        case .sttRecovered: return .sttRecovered
         }
     }
 

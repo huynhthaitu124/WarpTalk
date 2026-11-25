@@ -5,6 +5,7 @@ use uuid::Uuid;
 use super::config::SummaryConfig;
 use super::model::{ActionItemDraft, PreviousItemUpdate, RawOutput, SummaryContent};
 use super::ports::{LiveFollowUp, RoomContext, RoomMeta, TranscriptSegment};
+use crate::safety::Fence;
 
 const SYSTEM: &str = include_str!("prompts/system.md");
 const MAP: &str = include_str!("prompts/map.md");
@@ -209,7 +210,12 @@ pub fn windows(lines: &[String], window_tokens: u32, chars_per_token: f32) -> Ve
 }
 
 pub fn meta_block(meta: &RoomMeta, followups: &[LiveFollowUp]) -> String {
-    meta_block_with(meta, followups, None, "")
+    meta_block_with(meta, followups, None, "", &Fence::new())
+}
+
+/// Sanitized single-line text for names and titles.
+fn one_line(fence: &Fence, s: &str) -> String {
+    fence.sanitize(s).replace('\n', " ").trim().to_owned()
 }
 
 /// [`meta_block`] plus who the host is (copilot) and the prior-context section (may be empty).
@@ -218,50 +224,60 @@ pub fn meta_block_with(
     followups: &[LiveFollowUp],
     speakers: Option<&Speakers>,
     prior: &str,
+    fence: &Fence,
 ) -> String {
     let mut s = String::new();
     if let Some(sp) = speakers.filter(|s| s.copilot) {
         s.push_str(&format!(
             "Meeting type: copilot recording. Host (the user who recorded it): {}. Other \
              speakers: {} (unnamed).\n",
-            sp.host_label, sp.others_label
+            one_line(fence, &sp.host_label),
+            one_line(fence, &sp.others_label)
         ));
     }
-    s.push_str(&format!("Meeting title: {}\n", meta.title.trim()));
+    s.push_str(&format!(
+        "Meeting title: {}\n",
+        one_line(fence, &meta.title)
+    ));
     s.push_str(&format!("Spoken language: {}\n", meta.source_language));
     if !meta.target_languages.is_empty() {
         s.push_str(&format!(
             "Translated into: {}\n",
-            meta.target_languages.join(", ")
+            one_line(fence, &meta.target_languages.join(", "))
         ));
     }
     if !meta.participants.is_empty() {
-        s.push_str(&format!("Participants: {}\n", meta.participants.join(", ")));
+        s.push_str(&format!(
+            "Participants: {}\n",
+            one_line(fence, &meta.participants.join(", "))
+        ));
     }
     if !followups.is_empty() {
         s.push_str("Follow-ups suggested live during the meeting (hints only, may be wrong):\n");
         for f in followups {
-            s.push_str(&format!("- {}", f.task.trim()));
+            s.push_str(&format!("- {}", one_line(fence, &f.task)));
             if let Some(o) = &f.owner {
-                s.push_str(&format!(" (owner: {o})"));
+                s.push_str(&format!(" (owner: {})", one_line(fence, o)));
             }
             if let Some(d) = &f.due {
-                s.push_str(&format!(" (due: {d})"));
+                s.push_str(&format!(" (due: {})", one_line(fence, d)));
             }
             s.push('\n');
         }
     }
     if !prior.is_empty() {
         s.push('\n');
-        s.push_str(prior);
+        s.push_str(&fence.wrap("prior", prior));
+        s.push('\n');
     }
     s
 }
 
-pub fn transcript_block(lines: &[&str]) -> String {
+/// The transcript window between this call's fence markers (content sanitized).
+pub fn transcript_block(fence: &Fence, lines: &[&str]) -> String {
     format!(
-        "Transcript:\n<transcript>\n{}\n</transcript>",
-        lines.join("\n")
+        "Transcript:\n{}",
+        fence.wrap("transcript", &lines.join("\n"))
     )
 }
 

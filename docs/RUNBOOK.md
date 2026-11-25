@@ -107,6 +107,10 @@ Cột "ai dùng": **A** = `warptalk-api`, **W** = `warptalk-worker`, **P** = `wa
 | `BILLING_PORTAL_RETURN_URL` | không | `{APP_BASE_URL}/billing` | | URL quay lại từ Stripe Customer Portal |
 | `BILLING_TOPUP_USD_PER_CREDIT` | không | `0.0002` | `0.0002` | Giá USD mỗi credit khi nạp thêm |
 | `COPILOT_STT_MODEL` | không | `gpt-4o-transcribe` | | Tên model STT ghi vào usage của copilot (worker metering tính giá theo rate card) |
+| `COPILOT_SERVER_STT` | không | `openai` nếu có `OPENAI_API_KEY`, ngược lại tắt | `off`/`fake`/`openai` | STT phía server cho WebSocket dự phòng `GET /copilot/sessions/{id}/audio` (app đẩy audio lên khi STT trực tiếp lỗi). `fake` = không cần key (demo/test). Tắt thì socket và `audio-ticket` trả 503 `SERVER_STT_NOT_CONFIGURED` |
+| `COPILOT_AUDIO_MAX_SESSION_SECS` | không | `3300` | | Một socket audio bị đóng (`max_session_duration`) sau từng ấy giây (dưới giới hạn phiên 60 phút của provider); client tự nối lại ở utterance kế tiếp |
+| `COPILOT_AUDIO_MAX_CONCURRENT_PER_USER` | không | `2` | | Số socket audio mở cùng lúc mỗi user (mỗi instance API) |
+| `COPILOT_AUDIO_IDLE_TIMEOUT_SECS` / `_MAX_FRAME_BYTES` / `_MAX_UTTERANCE_MS` / `_TICKET_TTL_SECS` / `_FEED_TIMEOUT_MS` | không | `120` / `64000` / `300000` / `60` / `5000` | | Giới hạn của socket audio (idle, kích thước frame, audio tối đa giữa hai commit, tuổi thọ ticket một lần, ngưỡng provider chậm) |
 
 Ngoài ra A và W còn đọc nhóm AI/Qdrant ở 3.3 và 3.4.
 

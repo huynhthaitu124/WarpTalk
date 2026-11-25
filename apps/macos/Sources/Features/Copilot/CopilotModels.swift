@@ -14,6 +14,9 @@ enum CopilotPushStatus: Equatable, Sendable {
 
 enum CopilotStatusKind: String, Equatable, Sendable {
     case started, stopped, speechStart, speechEnd, sttConnected, sttUnavailable, sinkOnline, sinkOffline, audioDropped
+    /// A channel switched from direct STT to the server socket (`detail`: `direct->server: <reason>`) and back (`server->direct`).
+    /// Core-side `StatusKind.sttFallback` / `.sttRecovered` (VERIFY after `make core`; also `sttConnected.detail` = `direct` | `server`).
+    case sttFallback, sttRecovered
 }
 
 struct CopilotSegment: Equatable, Sendable {
@@ -93,10 +96,16 @@ enum CopilotEngines {
 /// JSON handed to `CopilotHandle(configJson:)` (`CopilotConfig::from_json`: all fields optional, snake_case; see
 /// crates/pipeline/copilot-core/src/config.rs). Real STT by default; `fake` is a hidden demo setting.
 enum CopilotConfigBuilder {
-    static func json(useFakeStt: Bool, languages: [String]?) -> String {
+    /// `sttMode`: `auto` (core default: direct, falling back to the server socket) | `direct` | `server`.
+    /// `languages` with 2+ entries (e.g. `["vi","en"]`) turns on the core's code-switching handling (`language.mode = auto`:
+    /// primary hinted, others expected, per-segment vi/en correction); VERIFY the product default with real meetings.
+    static func json(useFakeStt: Bool, languages: [String]?, sttMode: String? = nil) -> String {
         var stt: [String: Any] = ["backend": useFakeStt ? "fake" : "realtime"]
-        if let first = languages?.first(where: { !$0.isEmpty }) { stt["language_hint"] = first }
-        let obj: [String: Any] = ["stt": stt]
+        let langs = (languages ?? []).filter { !$0.isEmpty }
+        if let first = langs.first { stt["language_hint"] = first }
+        if let m = sttMode, ["auto", "direct", "server"].contains(m) { stt["mode"] = m }
+        var obj: [String: Any] = ["stt": stt]
+        if langs.count >= 2 { obj["language"] = ["mode": "auto", "languages": langs] }
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
               let s = String(data: data, encoding: .utf8) else { return "{}" }
         return s

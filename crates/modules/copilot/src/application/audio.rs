@@ -43,7 +43,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            max_session_secs: 4 * 3600,
+            max_session_secs: 3300, // below the provider's 60 min session cap; clients reconnect
             idle_timeout_secs: 120,
             max_concurrent_per_user: 2,
             max_frame_bytes: 64_000,

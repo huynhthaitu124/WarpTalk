@@ -93,8 +93,14 @@ fn default_responder(req: &Request) -> Result<Value, LlmError> {
     let text = user_text(req);
     let stage = req.metadata.get("stage").cloned().unwrap_or_default();
     if stage == "reduce" {
-        let json_part = text.split("Partial records:\n").nth(1).unwrap();
-        let parts: Vec<Value> = serde_json::from_str(json_part).unwrap();
+        // Each partial record sits in its own `<<DATA-n:partial_i>> .. <<END-n:partial_i>>` fence.
+        let tail = text.split("Partial records:\n").nth(1).unwrap();
+        let mut parts: Vec<Value> = Vec::new();
+        for chunk in tail.split("<<DATA-").skip(1) {
+            let body = chunk.split_once(">>\n").unwrap().1;
+            let body = body.split("\n<<END-").next().unwrap();
+            parts.extend(serde_json::from_str::<Vec<Value>>(body).unwrap());
+        }
         let items: Vec<Value> = parts
             .iter()
             .flat_map(|p| p["action_items"].as_array().unwrap().clone())
@@ -490,7 +496,14 @@ async fn prompts_are_overridable_through_settings() {
     };
     h.end_meeting().await;
     let calls = h.llm.calls.lock().unwrap().clone();
-    assert_eq!(calls[0].system.as_deref(), Some("CUSTOM SYSTEM in vi"));
+    // The override is followed by the per-call untrusted-data rule.
+    assert!(
+        calls[0]
+            .system
+            .as_deref()
+            .unwrap()
+            .starts_with("CUSTOM SYSTEM in vi\n\n")
+    );
     assert_eq!(
         calls[0].metadata.get("purpose").map(String::as_str),
         Some("summary")
