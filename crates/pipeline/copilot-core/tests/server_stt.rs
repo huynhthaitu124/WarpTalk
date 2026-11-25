@@ -204,7 +204,7 @@ impl Rig {
         self.e.push_audio(ch, &audio, 16_000);
         let want = segments(&self.seen).len() + 1;
         let ev = collect_until(&mut self.rx, Duration::from_secs(5), |ev| {
-            segments(ev).len() >= 1
+            !segments(ev).is_empty()
         })
         .await;
         self.seen.extend(ev);

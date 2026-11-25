@@ -75,7 +75,7 @@ impl Rig {
         let audio = track(16_000, 0.3, &[600, -1500]);
         self.e.push_audio(Channel::Me, &audio, 16_000);
         let ev = collect_until(&mut self.rx, Duration::from_secs(5), |ev| {
-            segments(ev).len() > 0
+            !segments(ev).is_empty()
         })
         .await;
         self.seen.extend(ev);

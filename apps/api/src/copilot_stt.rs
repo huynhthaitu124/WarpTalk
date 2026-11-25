@@ -20,7 +20,9 @@ use warptalk_kernel::{UserId, WorkspaceId};
 use warptalk_pipeline_runtime::{
     CommitRequest, SessionParams, SpeechToText, Stamps, SttEvent, SttSession, Utterance,
 };
-use warptalk_stt::{LangDetectConfig, OpenAiRealtimeStt, OpenAiSttConfig, SessionHints, resolve_language};
+use warptalk_stt::{
+    LangDetectConfig, OpenAiRealtimeStt, OpenAiSttConfig, SessionHints, resolve_language,
+};
 use warptalk_transcript::application::glossary_service::GlossaryService;
 
 enum Backend {
@@ -89,7 +91,10 @@ pub fn server_stt_from_env() -> Option<Arc<dyn ServerStt>> {
             Some(Arc::new(PipelineServerStt::openai(cfg)))
         }
         Some(other) => {
-            tracing::warn!(mode = other, "unknown COPILOT_SERVER_STT; server fallback disabled");
+            tracing::warn!(
+                mode = other,
+                "unknown COPILOT_SERVER_STT; server fallback disabled"
+            );
             None
         }
     }
