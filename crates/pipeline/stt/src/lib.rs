@@ -36,7 +36,7 @@ pub mod sentence;
 mod session;
 pub mod turns;
 
-pub use lang::{Detected, Dominant, LangDetectConfig, detect, resolve_language};
 pub use config::{LogprobFilter, OpenAiSttConfig, base_language};
+pub use lang::{Detected, Dominant, LangDetectConfig, detect, resolve_language};
 pub use pool::{PoolStats, WarmPool, WarmSocket, connect};
 pub use session::{OpenAiRealtimeStt, SessionHints, encode_pcm16_24k};

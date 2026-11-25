@@ -118,10 +118,10 @@ fn is_vi_marked(c: char) -> bool {
 /// Frequent Vietnamese words that are plain ASCII (text without diacritics, or with them
 /// stripped by an upstream step).
 const VI_ASCII: &[&str] = &[
-    "toi", "ta", "anh", "chi", "em", "ban", "minh", "la", "va", "cua", "cho", "khong", "co", "duoc",
-    "nhung", "mot", "cac", "nay", "do", "nhu", "voi", "trong", "de", "se", "da", "dang", "rat",
-    "roi", "thi", "ma", "nen", "vi", "neu", "can", "phai", "lam", "gi", "sao", "nao", "ai", "hay",
-    "cung", "con", "nguoi", "ngay", "nam", "xin", "chao", "cam", "on", "vang", "oi",
+    "toi", "ta", "anh", "chi", "em", "ban", "minh", "la", "va", "cua", "cho", "khong", "co",
+    "duoc", "nhung", "mot", "cac", "nay", "do", "nhu", "voi", "trong", "de", "se", "da", "dang",
+    "rat", "roi", "thi", "ma", "nen", "vi", "neu", "can", "phai", "lam", "gi", "sao", "nao", "ai",
+    "hay", "cung", "con", "nguoi", "ngay", "nam", "xin", "chao", "cam", "on", "vang", "oi",
 ];
 
 /// Frequent English function words.
@@ -313,7 +313,13 @@ mod tests {
     #[test]
     fn resolve_fills_in_a_missing_language() {
         assert_eq!(
-            resolve_language("see you tomorrow then", Some("auto"), &vi_en(), false, &cfg()),
+            resolve_language(
+                "see you tomorrow then",
+                Some("auto"),
+                &vi_en(),
+                false,
+                &cfg()
+            ),
             "en"
         );
         assert_eq!(

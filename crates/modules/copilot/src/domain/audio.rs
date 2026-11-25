@@ -65,7 +65,10 @@ pub enum FrameError {
 }
 
 /// Parse a binary audio frame into its channel and PCM16 samples.
-pub fn parse_audio_frame(bytes: &[u8], max_bytes: usize) -> Result<(Channel, Vec<i16>), FrameError> {
+pub fn parse_audio_frame(
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<(Channel, Vec<i16>), FrameError> {
     let (&tag, payload) = bytes.split_first().ok_or(FrameError::Empty)?;
     let channel = Channel::from_tag(tag).ok_or(FrameError::UnknownChannel(tag))?;
     if bytes.len() > max_bytes {
@@ -98,7 +101,11 @@ pub fn encode_audio_frame(channel: Channel, pcm: &[i16]) -> Vec<u8> {
 
 /// Client -> server control messages.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ClientMsg {
     /// Optional, before the first audio. `run_id` makes server-generated segment ids stable
     /// across reconnects of the same client run (resending a commit is then idempotent).
@@ -121,15 +128,23 @@ pub enum ClientMsg {
         end_ms: i64,
     },
     /// Throw away the audio sent since the last commit on `channel`.
-    Discard { channel: Channel },
+    Discard {
+        channel: Channel,
+    },
     /// Finish the provider session of `channel` (the client rotates its sessions).
-    CloseChannel { channel: Channel },
+    CloseChannel {
+        channel: Channel,
+    },
     Ping,
 }
 
 /// Server -> client messages.
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ServerMsg {
     Ready {
         connection_id: String,
@@ -138,7 +153,10 @@ pub enum ServerMsg {
         max_session_secs: u64,
     },
     /// Accumulated text of the utterance in progress; empty text clears it.
-    Partial { channel: Channel, text: String },
+    Partial {
+        channel: Channel,
+        text: String,
+    },
     /// A segment was written to the transcript (or was a duplicate of one that already was).
     Segment {
         channel: Channel,
@@ -155,7 +173,11 @@ pub enum ServerMsg {
         duplicate: bool,
         insufficient_credits: bool,
     },
-    UtteranceDone { channel: Channel, seq: u64, ok: bool },
+    UtteranceDone {
+        channel: Channel,
+        seq: u64,
+        ok: bool,
+    },
     /// `fatal`: the server closes the socket right after.
     Error {
         code: String,
@@ -164,14 +186,18 @@ pub enum ServerMsg {
         channel: Option<Channel>,
         fatal: bool,
     },
-    Closing { reason: String },
+    Closing {
+        reason: String,
+    },
     Pong,
 }
 
 /// Deterministic id of a server-produced segment: stable under resends of the same commit.
 pub fn server_segment_id(run: &str, channel: Channel, seq: u64, n: u32) -> String {
     let id = format!("srv-{run}-{}-{seq}-{n}", channel.as_str());
-    id.chars().take(super::MAX_CLIENT_SEGMENT_ID_CHARS).collect()
+    id.chars()
+        .take(super::MAX_CLIENT_SEGMENT_ID_CHARS)
+        .collect()
 }
 
 /// Times of the segments of one utterance (the model returns none): early sentences get an
@@ -231,7 +257,11 @@ pub struct LanguagePlan {
 }
 
 /// Mode + channel language + extra declared languages -> what to hint.
-pub fn plan_languages(mode: LanguageMode, channel_language: &str, extra: &[String]) -> LanguagePlan {
+pub fn plan_languages(
+    mode: LanguageMode,
+    channel_language: &str,
+    extra: &[String],
+) -> LanguagePlan {
     let primary = super::base_language(channel_language);
     let mut languages = vec![primary.clone()];
     for l in extra {
@@ -309,13 +339,24 @@ mod tests {
         .unwrap();
         assert!(matches!(
             m,
-            ClientMsg::Commit { channel: Channel::Me, seq: 3, start_ms: 1000, end_ms: 2500 }
+            ClientMsg::Commit {
+                channel: Channel::Me,
+                seq: 3,
+                start_ms: 1000,
+                end_ms: 2500
+            }
         ));
         assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"commit","channel":"x"}"#).is_err());
         let h: ClientMsg =
             serde_json::from_str(r#"{"type":"hello","runId":"r1","vocabulary":["Kubernetes"]}"#)
                 .unwrap();
-        assert!(matches!(h, ClientMsg::Hello { run_id: Some(_), .. }));
+        assert!(matches!(
+            h,
+            ClientMsg::Hello {
+                run_id: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]

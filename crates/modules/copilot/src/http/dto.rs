@@ -9,8 +9,8 @@ use crate::application::ports::SttToken;
 use crate::application::service::{
     AudioTicket, CreateSession, IngestOutcome, LanguagePrefs, SessionView,
 };
-use warptalk_kernel::{AppError, AppResult};
 use crate::domain::{Channel, LanguageMode, Segment};
+use warptalk_kernel::{AppError, AppResult};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,7 +244,10 @@ impl SttTokenBody {
             })?),
         };
         if self.languages.len() > 8
-            || self.languages.iter().any(|l| !crate::domain::valid_language(l))
+            || self
+                .languages
+                .iter()
+                .any(|l| !crate::domain::valid_language(l))
         {
             return Err(AppError::validation(
                 "INVALID_LANGUAGE",

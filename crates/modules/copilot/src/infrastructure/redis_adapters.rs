@@ -149,7 +149,12 @@ impl AudioTicketStore for RedisTicketStore {
     ) -> AppResult<()> {
         let mut conn = self.conn.clone();
         let ttl = (expires_at - Utc::now()).num_seconds().max(1);
-        let value = format!("{}:{}:{}", claims.user, claims.session, expires_at.timestamp());
+        let value = format!(
+            "{}:{}:{}",
+            claims.user,
+            claims.session,
+            expires_at.timestamp()
+        );
         redis::cmd("SET")
             .arg(format!("copilot:audio-ticket:{key}"))
             .arg(value)

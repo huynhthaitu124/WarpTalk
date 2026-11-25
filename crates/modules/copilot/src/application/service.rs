@@ -453,7 +453,10 @@ impl CopilotService {
     }
 
     /// Languages to expect in a session: client preference, else the declared ones.
-    fn language_inputs(record: &SessionRecord, prefs: &LanguagePrefs) -> (LanguageMode, Vec<String>) {
+    fn language_inputs(
+        record: &SessionRecord,
+        prefs: &LanguagePrefs,
+    ) -> (LanguageMode, Vec<String>) {
         let mode = prefs.mode.unwrap_or_default();
         let mut extra: Vec<String> = prefs.languages.clone();
         if extra.is_empty() {

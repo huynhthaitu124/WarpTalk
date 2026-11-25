@@ -132,7 +132,10 @@ impl ServerSttSession for Session {
                 early: false,
             })
             .await;
-        let _ = self.events.send(ServerSttEvent::UtteranceDone { ok: true }).await;
+        let _ = self
+            .events
+            .send(ServerSttEvent::UtteranceDone { ok: true })
+            .await;
         self.n += 1;
         self.fed = 0;
         self.shared.commits.fetch_add(1, Ordering::SeqCst);

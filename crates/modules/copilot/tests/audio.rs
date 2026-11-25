@@ -170,7 +170,13 @@ impl Env {
             .0
     }
 
-    async fn http(&self, method: &str, uri: &str, tok: &str, body: Option<Value>) -> (StatusCode, Value) {
+    async fn http(
+        &self,
+        method: &str,
+        uri: &str,
+        tok: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let b = Request::builder()
             .method(method)
             .uri(uri)
@@ -184,8 +190,13 @@ impl Env {
         };
         let resp = self.app.clone().oneshot(req).await.unwrap();
         let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     async fn session(&self, user: UserId) -> String {
@@ -215,7 +226,9 @@ impl Env {
             .unwrap();
         req.headers_mut()
             .insert("authorization", format!("Bearer {tok}").parse().unwrap());
-        tokio_tungstenite::connect_async(req).await.map(|(w, _)| Ws(w))
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map(|(w, _)| Ws(w))
     }
 
     async fn connect_ticket(
@@ -223,8 +236,13 @@ impl Env {
         session: &str,
         ticket: &str,
     ) -> Result<Ws, tokio_tungstenite::tungstenite::Error> {
-        let url = format!("ws://{}/copilot/sessions/{session}/audio?token={ticket}", self.addr);
-        tokio_tungstenite::connect_async(url).await.map(|(w, _)| Ws(w))
+        let url = format!(
+            "ws://{}/copilot/sessions/{session}/audio?token={ticket}",
+            self.addr
+        );
+        tokio_tungstenite::connect_async(url)
+            .await
+            .map(|(w, _)| Ws(w))
     }
 }
 
@@ -235,22 +253,32 @@ fn status_of(e: tokio_tungstenite::tungstenite::Error) -> u16 {
     }
 }
 
-struct Ws(tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>);
+struct Ws(
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+);
 
 impl Ws {
     async fn send_json(&mut self, v: Value) {
-        self.0.send(Message::Text(v.to_string().into())).await.unwrap();
+        self.0
+            .send(Message::Text(v.to_string().into()))
+            .await
+            .unwrap();
     }
 
     async fn send_audio(&mut self, ch: Channel, ms: usize) {
         let pcm = vec![1000i16; 16 * ms];
-        self.0.send(Message::Binary(encode_audio_frame(ch, &pcm).into())).await.unwrap();
+        self.0
+            .send(Message::Binary(encode_audio_frame(ch, &pcm).into()))
+            .await
+            .unwrap();
     }
 
     async fn next_json(&mut self) -> Option<Value> {
         loop {
             match tokio::time::timeout(Duration::from_secs(5), self.0.next()).await {
-                Ok(Some(Ok(Message::Text(t)))) => return Some(serde_json::from_str(t.as_str()).unwrap()),
+                Ok(Some(Ok(Message::Text(t)))) => {
+                    return Some(serde_json::from_str(t.as_str()).unwrap());
+                }
                 Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => return None,
                 Ok(Some(Ok(_))) => continue,
                 Err(_) => panic!("timed out waiting for a server message"),
@@ -273,38 +301,72 @@ impl Ws {
 
     async fn utterance(&mut self, ch: &str, tag: Channel, seq: u64) {
         self.send_audio(tag, 200).await;
-        self.send_json(json!({"type":"commit","channel":ch,"seq":seq,"startMs":1000,"endMs":1200})).await;
+        self.send_json(json!({"type":"commit","channel":ch,"seq":seq,"startMs":1000,"endMs":1200}))
+            .await;
     }
 }
 
 #[tokio::test]
 async fn auth_is_required_before_the_upgrade() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
-    assert_eq!(status_of(e.connect_bearer(&id, "garbage").await.err().unwrap()), 401);
+    assert_eq!(
+        status_of(e.connect_bearer(&id, "garbage").await.err().unwrap()),
+        401
+    );
     let no_auth = format!("ws://{}/copilot/sessions/{id}/audio", e.addr);
-    assert_eq!(status_of(tokio_tungstenite::connect_async(no_auth).await.err().unwrap()), 401);
-    assert_eq!(status_of(e.connect_ticket(&id, "nope").await.err().unwrap()), 401);
+    assert_eq!(
+        status_of(
+            tokio_tungstenite::connect_async(no_auth)
+                .await
+                .err()
+                .unwrap()
+        ),
+        401
+    );
+    assert_eq!(
+        status_of(e.connect_ticket(&id, "nope").await.err().unwrap()),
+        401
+    );
     // Somebody else's bearer: not the host.
     let other = e.token(UserId::new());
-    assert_eq!(status_of(e.connect_bearer(&id, &other).await.err().unwrap()), 403);
+    assert_eq!(
+        status_of(e.connect_bearer(&id, &other).await.err().unwrap()),
+        403
+    );
 }
 
 #[tokio::test]
 async fn not_configured_answers_503() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), false).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), false).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
-    let (s, b) = e.http("POST", &format!("/copilot/sessions/{id}/audio-ticket"), &e.token(host), None).await;
+    let (s, b) = e
+        .http(
+            "POST",
+            &format!("/copilot/sessions/{id}/audio-ticket"),
+            &e.token(host),
+            None,
+        )
+        .await;
     assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(b["code"], "SERVER_STT_NOT_CONFIGURED");
-    assert_eq!(status_of(e.connect_bearer(&id, &e.token(host)).await.err().unwrap()), 503);
+    assert_eq!(
+        status_of(e.connect_bearer(&id, &e.token(host)).await.err().unwrap()),
+        503
+    );
 }
 
 #[tokio::test]
 async fn tickets_are_single_use_session_bound_and_expire() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let tok = e.token(host);
     let id = e.session(host).await;
@@ -316,26 +378,45 @@ async fn tickets_are_single_use_session_bound_and_expire() {
     assert_eq!(b["ttlSeconds"], 60);
     let t1 = b["ticket"].as_str().unwrap().to_owned();
     // Bound to its session.
-    assert_eq!(status_of(e.connect_ticket(&id2, &t1).await.err().unwrap()), 401);
+    assert_eq!(
+        status_of(e.connect_ticket(&id2, &t1).await.err().unwrap()),
+        401
+    );
     // (that failed attempt consumed it; ask again)
-    let t1 = e.http("POST", &ticket_uri, &tok, None).await.1["ticket"].as_str().unwrap().to_owned();
+    let t1 = e.http("POST", &ticket_uri, &tok, None).await.1["ticket"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let mut ws = e.connect_ticket(&id, &t1).await.unwrap();
     assert_eq!(ws.next_json().await.unwrap()["type"], "ready");
     // Single use.
-    assert_eq!(status_of(e.connect_ticket(&id, &t1).await.err().unwrap()), 401);
+    assert_eq!(
+        status_of(e.connect_ticket(&id, &t1).await.err().unwrap()),
+        401
+    );
 
     // Expiry.
-    let t2 = e.http("POST", &ticket_uri, &tok, None).await.1["ticket"].as_str().unwrap().to_owned();
+    let t2 = e.http("POST", &ticket_uri, &tok, None).await.1["ticket"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     *e.clock.0.lock().unwrap() += chrono::Duration::seconds(61);
-    assert_eq!(status_of(e.connect_ticket(&id, &t2).await.err().unwrap()), 401);
+    assert_eq!(
+        status_of(e.connect_ticket(&id, &t2).await.err().unwrap()),
+        401
+    );
     // Only the host may ask.
-    let (s, _) = e.http("POST", &ticket_uri, &e.token(UserId::new()), None).await;
+    let (s, _) = e
+        .http("POST", &ticket_uri, &e.token(UserId::new()), None)
+        .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let tok = e.token(host);
     let id = e.session(host).await;
@@ -343,7 +424,8 @@ async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
     let ready = ws.next_json().await.unwrap();
     assert_eq!(ready["type"], "ready");
     assert_eq!(ready["sampleRate"], 16000);
-    ws.send_json(json!({"type":"hello","runId":"run-1","languageMode":"auto"})).await;
+    ws.send_json(json!({"type":"hello","runId":"run-1","languageMode":"auto"}))
+        .await;
 
     ws.utterance("me", Channel::Me, 0).await;
     let got = ws.until("utterance_done").await;
@@ -351,7 +433,10 @@ async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
     assert_eq!(seg["channel"], "me");
     assert_eq!(seg["text"], "utterance 0 on me");
     assert_eq!(seg["language"], "vi");
-    assert_eq!((seg["startMs"].as_i64(), seg["endMs"].as_i64()), (Some(1000), Some(1200)));
+    assert_eq!(
+        (seg["startMs"].as_i64(), seg["endMs"].as_i64()),
+        (Some(1000), Some(1200))
+    );
     assert_eq!(seg["duplicate"], false);
     assert_eq!(seg["insufficientCredits"], false);
 
@@ -364,11 +449,18 @@ async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
     {
         let results = e.sink.results.lock().unwrap();
         assert_eq!(results.len(), 2);
-        let me = results.iter().find(|r| r.channel.as_deref() == Some("me")).unwrap();
+        let me = results
+            .iter()
+            .find(|r| r.channel.as_deref() == Some("me"))
+            .unwrap();
         assert_eq!(me.text, "utterance 0 on me");
         assert_eq!(me.language, "vi");
         assert!(me.is_final_chunk);
-        assert!(results.iter().any(|r| r.channel.as_deref() == Some("others")));
+        assert!(
+            results
+                .iter()
+                .any(|r| r.channel.as_deref() == Some("others"))
+        );
     }
     assert_eq!(e.usage.events.lock().unwrap().len(), 2);
     assert_eq!(e.usage.events.lock().unwrap()[0]["feature"], "stt");
@@ -379,7 +471,10 @@ async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
     ws2.send_json(json!({"type":"hello","runId":"run-1"})).await;
     ws2.utterance("me", Channel::Me, 0).await;
     let got = ws2.until("utterance_done").await;
-    assert_eq!(got.iter().find(|m| m["type"] == "segment").unwrap()["duplicate"], true);
+    assert_eq!(
+        got.iter().find(|m| m["type"] == "segment").unwrap()["duplicate"],
+        true
+    );
     assert_eq!(e.sink.results.lock().unwrap().len(), 2, "no double write");
     assert_eq!(e.usage.events.lock().unwrap().len(), 2, "no double charge");
 
@@ -393,7 +488,15 @@ async fn audio_becomes_idempotent_segments_with_channel_and_usage() {
 
 #[tokio::test]
 async fn partials_and_early_segments_flow_back() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new().with_early_sentences(2), true).await else { return };
+    let Some(e) = env(
+        fast_cfg(),
+        FakeServerStt::new().with_early_sentences(2),
+        true,
+    )
+    .await
+    else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
@@ -404,26 +507,50 @@ async fn partials_and_early_segments_flow_back() {
     assert_eq!(segs.len(), 3);
     assert_eq!(segs[0]["early"], true);
     assert_eq!(segs[2]["early"], false);
-    assert_eq!(segs[2]["endMs"], 1200, "the last segment runs to the utterance end");
-    let ids: std::collections::HashSet<_> = segs.iter().map(|s| s["clientSegmentId"].as_str().unwrap()).collect();
+    assert_eq!(
+        segs[2]["endMs"], 1200,
+        "the last segment runs to the utterance end"
+    );
+    let ids: std::collections::HashSet<_> = segs
+        .iter()
+        .map(|s| s["clientSegmentId"].as_str().unwrap())
+        .collect();
     assert_eq!(ids.len(), 3);
     let partials: Vec<_> = got.iter().filter(|m| m["type"] == "partial").collect();
-    assert!(partials.iter().any(|p| p["text"].as_str().unwrap().contains("early 0")));
-    assert!(partials.iter().any(|p| p["text"] == ""), "cleared at the end");
+    assert!(
+        partials
+            .iter()
+            .any(|p| p["text"].as_str().unwrap().contains("early 0"))
+    );
+    assert!(
+        partials.iter().any(|p| p["text"] == ""),
+        "cleared at the end"
+    );
     assert_eq!(e.sink.results.lock().unwrap().len(), 3);
 }
 
 #[tokio::test]
 async fn bad_frames_are_reported_not_fatal_until_the_limit() {
-    let cfg = AudioConfig { max_frame_bytes: 1_000, max_bad_messages: 2, ..fast_cfg() };
-    let Some(e) = env(cfg, FakeServerStt::new(), true).await else { return };
+    let cfg = AudioConfig {
+        max_frame_bytes: 1_000,
+        max_bad_messages: 2,
+        ..fast_cfg()
+    };
+    let Some(e) = env(cfg, FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
     ws.next_json().await.unwrap();
-    ws.0.send(Message::Binary(vec![9, 0, 0].into())).await.unwrap();
+    ws.0.send(Message::Binary(vec![9, 0, 0].into()))
+        .await
+        .unwrap();
     let m = ws.next_json().await.unwrap();
-    assert_eq!((m["type"].as_str(), m["code"].as_str(), m["fatal"].as_bool()), (Some("error"), Some("bad_frame"), Some(false)));
+    assert_eq!(
+        (m["type"].as_str(), m["code"].as_str(), m["fatal"].as_bool()),
+        (Some("error"), Some("bad_frame"), Some(false))
+    );
     ws.send_audio(Channel::Me, 100).await; // 3201 bytes > 1000
     assert_eq!(ws.next_json().await.unwrap()["code"], "bad_frame");
     ws.send_json(json!({"type":"nonsense"})).await;
@@ -436,12 +563,15 @@ async fn bad_frames_are_reported_not_fatal_until_the_limit() {
 
 #[tokio::test]
 async fn commit_without_audio_is_rejected() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
     ws.next_json().await.unwrap();
-    ws.send_json(json!({"type":"commit","channel":"me","seq":0,"startMs":0,"endMs":10})).await;
+    ws.send_json(json!({"type":"commit","channel":"me","seq":0,"startMs":0,"endMs":10}))
+        .await;
     let got = ws.until("error").await;
     assert_eq!(got[0]["type"], "utterance_done");
     assert_eq!(got[0]["ok"], false);
@@ -451,14 +581,22 @@ async fn commit_without_audio_is_rejected() {
 
 #[tokio::test]
 async fn per_user_concurrency_limit_and_release() {
-    let cfg = AudioConfig { max_concurrent_per_user: 1, ..fast_cfg() };
-    let Some(e) = env(cfg, FakeServerStt::new(), true).await else { return };
+    let cfg = AudioConfig {
+        max_concurrent_per_user: 1,
+        ..fast_cfg()
+    };
+    let Some(e) = env(cfg, FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let tok = e.token(host);
     let id = e.session(host).await;
     let mut a = e.connect_bearer(&id, &tok).await.unwrap();
     a.next_json().await.unwrap();
-    assert_eq!(status_of(e.connect_bearer(&id, &tok).await.err().unwrap()), 429);
+    assert_eq!(
+        status_of(e.connect_bearer(&id, &tok).await.err().unwrap()),
+        429
+    );
     a.0.close(None).await.unwrap();
     drop(a);
     // The slot frees once the server notices the close.
@@ -475,8 +613,13 @@ async fn per_user_concurrency_limit_and_release() {
 
 #[tokio::test]
 async fn max_session_duration_closes_with_a_reason() {
-    let cfg = AudioConfig { max_session_secs: 1, ..fast_cfg() };
-    let Some(e) = env(cfg, FakeServerStt::new(), true).await else { return };
+    let cfg = AudioConfig {
+        max_session_secs: 1,
+        ..fast_cfg()
+    };
+    let Some(e) = env(cfg, FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
@@ -487,8 +630,13 @@ async fn max_session_duration_closes_with_a_reason() {
 
 #[tokio::test]
 async fn idle_socket_is_closed() {
-    let cfg = AudioConfig { idle_timeout_secs: 1, ..fast_cfg() };
-    let Some(e) = env(cfg, FakeServerStt::new(), true).await else { return };
+    let cfg = AudioConfig {
+        idle_timeout_secs: 1,
+        ..fast_cfg()
+    };
+    let Some(e) = env(cfg, FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
@@ -498,7 +646,9 @@ async fn idle_socket_is_closed() {
 
 #[tokio::test]
 async fn insufficient_credits_refuses_open_but_never_drops_a_running_transcript() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let tok = e.token(host);
     let id = e.session(host).await;
@@ -511,13 +661,23 @@ async fn insufficient_credits_refuses_open_but_never_drops_a_running_transcript(
     let got = ws.until("utterance_done").await;
     let seg = got.iter().find(|m| m["type"] == "segment").unwrap();
     assert_eq!(seg["insufficientCredits"], true);
-    assert!(got.iter().any(|m| m["code"] == "insufficient_credits" && m["fatal"] == false));
+    assert!(
+        got.iter()
+            .any(|m| m["code"] == "insufficient_credits" && m["fatal"] == false)
+    );
     assert_eq!(e.sink.results.lock().unwrap().len(), 1);
 
     // A new socket / ticket is refused like `stt-token`.
     let err = e.connect_bearer(&id, &tok).await.err().unwrap();
     assert_eq!(status_of(err), 402);
-    let (s, b) = e.http("POST", &format!("/copilot/sessions/{id}/audio-ticket"), &tok, None).await;
+    let (s, b) = e
+        .http(
+            "POST",
+            &format!("/copilot/sessions/{id}/audio-ticket"),
+            &tok,
+            None,
+        )
+        .await;
     assert_eq!(s.as_u16(), 402);
     assert_eq!(b["code"], "INSUFFICIENT_CREDITS");
 }
@@ -526,14 +686,19 @@ async fn insufficient_credits_refuses_open_but_never_drops_a_running_transcript(
 async fn provider_open_failure_is_reported_and_recovers() {
     let stt = FakeServerStt::new();
     stt.fail_next_opens(1);
-    let Some(e) = env(fast_cfg(), stt, true).await else { return };
+    let Some(e) = env(fast_cfg(), stt, true).await else {
+        return;
+    };
     let host = UserId::new();
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &e.token(host)).await.unwrap();
     ws.next_json().await.unwrap();
     ws.send_audio(Channel::Me, 100).await;
     let m = ws.next_json().await.unwrap();
-    assert_eq!((m["code"].as_str(), m["channel"].as_str()), (Some("stt_unavailable"), Some("me")));
+    assert_eq!(
+        (m["code"].as_str(), m["channel"].as_str()),
+        (Some("stt_unavailable"), Some("me"))
+    );
     // The next audio opens a fresh session.
     ws.utterance("me", Channel::Me, 0).await;
     ws.until("utterance_done").await;
@@ -542,19 +707,29 @@ async fn provider_open_failure_is_reported_and_recovers() {
 
 #[tokio::test]
 async fn ended_session_stops_the_socket() {
-    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else { return };
+    let Some(e) = env(fast_cfg(), FakeServerStt::new(), true).await else {
+        return;
+    };
     let host = UserId::new();
     let tok = e.token(host);
     let id = e.session(host).await;
     let mut ws = e.connect_bearer(&id, &tok).await.unwrap();
     ws.next_json().await.unwrap();
-    let (s, _) = e.http("POST", &format!("/copilot/sessions/{id}/end"), &tok, None).await;
+    let (s, _) = e
+        .http("POST", &format!("/copilot/sessions/{id}/end"), &tok, None)
+        .await;
     assert_eq!(s, StatusCode::OK);
     ws.utterance("me", Channel::Me, 0).await;
     let got = ws.until("closing").await;
-    assert!(got.iter().any(|m| m["code"] == "session_ended" && m["fatal"] == true));
+    assert!(
+        got.iter()
+            .any(|m| m["code"] == "session_ended" && m["fatal"] == true)
+    );
     assert!(e.sink.results.lock().unwrap().is_empty());
     // And new sockets are refused (409).
-    assert_eq!(status_of(e.connect_bearer(&id, &tok).await.err().unwrap()), 409);
+    assert_eq!(
+        status_of(e.connect_bearer(&id, &tok).await.err().unwrap()),
+        409
+    );
     let _ = SystemClock;
 }

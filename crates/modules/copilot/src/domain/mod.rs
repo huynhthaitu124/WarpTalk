@@ -114,7 +114,10 @@ impl LanguageMode {
 
 /// Base ISO code of a language tag (`vi-VN` -> `vi`), lowercase.
 pub fn base_language(tag: &str) -> String {
-    tag.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase()
+    tag.split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
 }
 
 /// A language tag is 1..=15 ASCII letters, digits or `-`.

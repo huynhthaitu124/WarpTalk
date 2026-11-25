@@ -67,7 +67,9 @@ pub async fn audio_ws(
         (Some(a), _) => a.user_id(),
         (None, Some(t)) => s.service.redeem_audio_ticket(id, &t).await?,
         (None, None) => {
-            return Err(AppError::unauthorized("missing bearer token or audio ticket"));
+            return Err(AppError::unauthorized(
+                "missing bearer token or audio ticket",
+            ));
         }
     };
     let (ctx, permit) = s.service.open_audio(id, user).await?;
@@ -137,7 +139,13 @@ impl Conn {
         let _ = self.out.try_send(m);
     }
 
-    async fn error(&mut self, code: &str, message: impl Into<String>, ch: Option<Channel>, fatal: bool) {
+    async fn error(
+        &mut self,
+        code: &str,
+        message: impl Into<String>,
+        ch: Option<Channel>,
+        fatal: bool,
+    ) {
         self.send(ServerMsg::Error {
             code: code.into(),
             message: message.into(),
@@ -281,7 +289,9 @@ impl Conn {
                     return;
                 }
                 if let Some(r) = run_id.filter(|r| {
-                    !r.is_empty() && r.len() <= 64 && r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    !r.is_empty()
+                        && r.len() <= 64
+                        && r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
                 }) {
                     self.run = r;
                 }
@@ -321,12 +331,18 @@ impl Conn {
                         ok: false,
                     })
                     .await;
-                    self.error("empty_utterance", "commit without audio", Some(channel), false)
-                        .await;
+                    self.error(
+                        "empty_utterance",
+                        "commit without audio",
+                        Some(channel),
+                        false,
+                    )
+                    .await;
                     return;
                 }
                 c.fed = 0;
-                c.pending.push_back(UtteranceClock::new(seq, start_ms, end_ms));
+                c.pending
+                    .push_back(UtteranceClock::new(seq, start_ms, end_ms));
                 let res = match c.session.as_mut() {
                     Some(s) => s.commit().await,
                     None => return,
@@ -363,8 +379,13 @@ impl Conn {
                     .await;
                 }
                 if !ok {
-                    self.error("stt_failed", "transcription failed for an utterance", Some(ch), false)
-                        .await;
+                    self.error(
+                        "stt_failed",
+                        "transcription failed for an utterance",
+                        Some(ch),
+                        false,
+                    )
+                    .await;
                 }
             }
         }
@@ -386,7 +407,9 @@ impl Conn {
         let c = &mut self.chans[ch.index()];
         let clock = match c.pending.front_mut() {
             Some(u) => u,
-            None => c.orphan.get_or_insert_with(|| UtteranceClock::new(u64::MAX, 0, 0)),
+            None => c
+                .orphan
+                .get_or_insert_with(|| UtteranceClock::new(u64::MAX, 0, 0)),
         };
         let (start, end) = clock.next(&text, early, est);
         let (seq, n, partial) = (clock.seq, clock.emitted - 1, clock.text.clone());
@@ -438,13 +461,23 @@ impl Conn {
                 }
             }
             Err(AppError::Conflict { .. }) => {
-                self.error("session_ended", "the session is no longer in progress", None, true)
-                    .await;
+                self.error(
+                    "session_ended",
+                    "the session is no longer in progress",
+                    None,
+                    true,
+                )
+                .await;
             }
             Err(e) => {
                 tracing::warn!(session = %self.ctx.session, error = %e, "audio segment ingest failed");
-                self.error("ingest_failed", "could not store the segment", Some(ch), false)
-                    .await;
+                self.error(
+                    "ingest_failed",
+                    "could not store the segment",
+                    Some(ch),
+                    false,
+                )
+                .await;
             }
         }
         if early {

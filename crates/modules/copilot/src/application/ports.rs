@@ -341,7 +341,9 @@ pub enum ServerSttEvent {
         /// More of the same utterance follows.
         early: bool,
     },
-    UtteranceDone { ok: bool },
+    UtteranceDone {
+        ok: bool,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -391,8 +393,12 @@ pub struct AudioTicketClaims {
 /// `Authorization` header on a WebSocket. The key is a hash of the ticket (never the ticket).
 #[async_trait]
 pub trait AudioTicketStore: Send + Sync {
-    async fn put(&self, key: &str, claims: AudioTicketClaims, expires_at: DateTime<Utc>)
-    -> AppResult<()>;
+    async fn put(
+        &self,
+        key: &str,
+        claims: AudioTicketClaims,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()>;
     /// Remove and return the claims; `None` when unknown, used or expired at `now`.
     async fn take(&self, key: &str, now: DateTime<Utc>) -> AppResult<Option<AudioTicketClaims>>;
 }

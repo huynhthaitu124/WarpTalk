@@ -86,7 +86,11 @@ fn request_body(model: &str, req: &SttTokenRequest) -> (Value, Value) {
     match req.language_mode {
         LanguageMode::Multi => {
             if PLURAL_LANGUAGE_MODELS.contains(&model) {
-                let list: Vec<String> = req.languages.iter().filter_map(|l| language_hint(l)).collect();
+                let list: Vec<String> = req
+                    .languages
+                    .iter()
+                    .filter_map(|l| language_hint(l))
+                    .collect();
                 if !list.is_empty() {
                     transcription["languages"] = json!(list);
                 }
@@ -290,6 +294,41 @@ mod tests {
             .mount(&server)
             .await;
         assert!(issuer(&server).issue(req("en")).await.is_err());
+    }
+
+    fn req_with(mode: LanguageMode, prompt: Option<&str>) -> SttTokenRequest {
+        SttTokenRequest {
+            session: RoomId::new(),
+            language: Some("vi".into()),
+            language_mode: mode,
+            languages: vec!["vi".into(), "en".into()],
+            prompt: prompt.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn language_modes_shape_the_transcription_config() {
+        let tx = |model: &str, r: &SttTokenRequest| {
+            request_body(model, r).1["audio"]["input"]["transcription"].clone()
+        };
+        // fixed: one language, no prompt.
+        let t = tx("gpt-4o-transcribe", &req_with(LanguageMode::Fixed, None));
+        assert_eq!(t["language"], "vi");
+        assert!(t.get("prompt").is_none());
+        // auto on a single-hint model: primary hint + glossary prompt.
+        let t = tx(
+            "gpt-4o-transcribe",
+            &req_with(LanguageMode::Auto, Some("Glossary: OKR.")),
+        );
+        assert_eq!(t["language"], "vi");
+        assert_eq!(t["prompt"], "Glossary: OKR.");
+        // auto on a plural-hint model: the list, primary first.
+        let t = tx("gpt-live-transcribe", &req_with(LanguageMode::Auto, None));
+        assert_eq!(t["languages"], json!(["vi", "en"]));
+        assert!(t.get("language").is_none());
+        // multi: no single hint on any model.
+        let t = tx("gpt-4o-transcribe", &req_with(LanguageMode::Multi, None));
+        assert!(t.get("language").is_none() && t.get("languages").is_none());
     }
 
     #[test]
