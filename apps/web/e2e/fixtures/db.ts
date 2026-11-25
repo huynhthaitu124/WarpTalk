@@ -55,3 +55,34 @@ export function expireBridgeLease(roomId: string, secondsAgo = 600) {
   );
   if (n !== '1') throw new Error(`bridge room not found: ${roomId}`);
 }
+
+const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
+
+/** TEST-ONLY: an action item as the summary job leaves it (the job needs an LLM, absent in e2e). */
+export function seedActionItem(o: { workspaceId: string; roomId: string; task: string; assigneeUserId?: string; status?: 'open' | 'done'; owner?: string; due?: string }): string {
+  const id = randomUUID();
+  psql(
+    `INSERT INTO assistant.action_items (id, workspace_id, room_id, summary_id, task, owner, due, status, assignee_user_id) VALUES ('${id}', '${assertUuid(o.workspaceId)}', '${assertUuid(o.roomId)}', '${randomUUID()}', ${q(o.task)}, ${o.owner ? q(o.owner) : 'NULL'}, ${o.due ? q(o.due) : 'NULL'}, '${o.status ?? 'open'}', ${o.assigneeUserId ? `'${assertUuid(o.assigneeUserId)}'` : 'NULL'})`,
+  );
+  return id;
+}
+
+/** TEST-ONLY: a completed summary version of a room (what the summary job stores), optionally with `previousItems`. */
+export function seedSummary(o: { workspaceId: string; roomId: string; short: string; decisions?: string[]; previousItems?: { task: string; status: 'done' | 'open' }[]; completedAt?: string }) {
+  const content = JSON.stringify({
+    summaryShort: o.short, summaryDetailed: '', decisions: o.decisions ?? [], actionItems: [], openQuestions: [], topics: [], language: 'en',
+    previousItems: (o.previousItems ?? []).map((p) => ({ ...p, sourceSegmentIds: [] })), meta: {},
+  });
+  psql(
+    `INSERT INTO assistant.meeting_summaries (id, workspace_id, room_id, version, trigger, status, content, completed_at, created_at) VALUES ('${randomUUID()}', '${assertUuid(o.workspaceId)}', '${assertUuid(o.roomId)}', 1, 'manual', 'completed', ${q(content)}::jsonb, ${o.completedAt ? `${q(o.completedAt)}::timestamptz` : 'now()'}, ${o.completedAt ? `${q(o.completedAt)}::timestamptz` : 'now()'})`,
+  );
+}
+
+/** TEST-ONLY: a published live suggestion snapshot (rows normally come from the suggestion pipeline, which needs an LLM). */
+export function seedSuggestion(o: { workspaceId: string; roomId: string; category: string; content?: string }): string {
+  const id = randomUUID();
+  psql(
+    `INSERT INTO assistant.suggestions (id, workspace_id, room_id, segment_id, category, content) VALUES ('${id}', '${assertUuid(o.workspaceId)}', '${assertUuid(o.roomId)}', 'seg-${id.slice(0, 8)}', ${q(o.category)}, ${q(o.content ?? 'Suggested text')})`,
+  );
+  return id;
+}

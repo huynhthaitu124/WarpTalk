@@ -10,8 +10,10 @@ import { CaptionList } from '../MeetingParts';
 import type { ChatMessage } from './protocol';
 import { speakerColor } from './speakers';
 import { SuggestionsTab, type SuggestionsView } from './Suggestions';
+import { AskPanel } from './AskPanel';
+import { ASK } from '@/lib/strings';
 
-export type PanelTab = 'transcript' | 'people' | 'chat' | 'suggestions';
+export type PanelTab = 'transcript' | 'people' | 'chat' | 'suggestions' | 'ask';
 
 export interface PersonRow {
   p: Participant;
@@ -161,7 +163,7 @@ function ChatTab({ chat }: { chat: ChatView }) {
 }
 
 export function SidePanel({
-  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, suggestions, className,
+  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, suggestions, askRoomId, onCitation, className,
 }: {
   tab: PanelTab;
   onTab(t: PanelTab): void;
@@ -178,6 +180,10 @@ export function SidePanel({
   unread: number;
   /** Undefined when the backend has no suggestions endpoint: the tab is not shown. */
   suggestions?: SuggestionsView;
+  /** Room whose assistant the "Ask AI" tab talks to; the tab is hidden without it. */
+  askRoomId?: string;
+  /** A transcript citation was clicked in the Ask AI tab. */
+  onCitation?(c: import('@/lib/ask').Citation): void;
   className?: string;
 }) {
   const lobby = rows.filter((r) => r.p.status === 'WAITING').length;
@@ -189,6 +195,7 @@ export function SidePanel({
         <TabsTrigger value="people" className="flex items-center gap-1.5">People<span className="text-caption text-ink-tertiary">{inRoom}<span className="sr-only"> in the meeting</span></span>{lobby > 0 && <Badge tone="warning" data-testid="lobby-badge">{lobby}<span className="sr-only"> waiting</span></Badge>}</TabsTrigger>
         <TabsTrigger value="chat" className="flex items-center gap-1.5">Chat{unread > 0 && <Badge tone="primary" data-testid="chat-unread">{unread}<span className="sr-only"> unread</span></Badge>}</TabsTrigger>
         {suggestions && <TabsTrigger value="suggestions" className="flex items-center gap-1.5">Suggestions{suggestions.items.length > 0 && <Badge tone="primary" data-testid="suggestions-badge">{suggestions.items.length}<span className="sr-only"> new</span></Badge>}</TabsTrigger>}
+        {askRoomId && <TabsTrigger value="ask">{ASK.title}</TabsTrigger>}
       </TabsList>
       <TabsContent value="transcript" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
         <CaptionList lines={lines} translationLang={translationLang} placeholder={transcriptPlaceholder} className="min-h-0 flex-1" />
@@ -202,6 +209,11 @@ export function SidePanel({
       {suggestions && (
         <TabsContent value="suggestions" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
           <SuggestionsTab view={suggestions} />
+        </TabsContent>
+      )}
+      {askRoomId && (
+        <TabsContent value="ask" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
+          <AskPanel roomId={askRoomId} onCitation={onCitation} className="min-h-0 flex-1" />
         </TabsContent>
       )}
     </Tabs>

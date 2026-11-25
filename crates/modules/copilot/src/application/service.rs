@@ -8,7 +8,7 @@ use warptalk_kernel::{
     AppError, AppResult, Clock, Page, PageRequest, RoomId, UserId, WorkspaceId, WorkspaceRole,
 };
 
-use super::audio::{AudioConfig, AudioPermit, ConnectionGuard, ServerAudio};
+use super::audio::{AudioConfig, AudioPermit, ServerAudio};
 use super::ports::{
     AudioTicketClaims, GlossaryTerms, Metering, NewSessionRoom, NoGlossary, Published, RateLimiter,
     RoomState, SegmentSink, ServerSttParams, SessionRecord, SessionRepo, SessionRooms,
@@ -95,7 +95,6 @@ pub struct CopilotService {
     clock: Arc<dyn Clock>,
     metering: Option<Metering>,
     audio: Option<ServerAudio>,
-    guard: ConnectionGuard,
     glossary: Arc<dyn GlossaryTerms>,
 }
 
@@ -139,7 +138,6 @@ impl CopilotService {
             clock,
             metering: None,
             audio: None,
-            guard: ConnectionGuard::default(),
             glossary: Arc::new(NoGlossary),
         }
     }
@@ -634,16 +632,32 @@ impl CopilotService {
         let audio = self.audio_deps()?;
         let (record, room) = self.load_host_running(id, user).await?;
         self.require_credits(record.workspace_id, id).await?;
-        let permit = self
-            .guard
-            .try_acquire(user, audio.config.max_concurrent_per_user)
-            .ok_or_else(|| {
-                AppError::coded(
+        let lease = std::time::Duration::from_secs(audio.config.limit_lease_secs);
+        let conn_id = uuid::Uuid::new_v4().to_string();
+        let permit = match audio
+            .limiter
+            .acquire(user, &conn_id, audio.config.max_concurrent_per_user, lease)
+            .await
+        {
+            Ok(Some(())) => AudioPermit::tracked(audio.limiter.clone(), user, conn_id, lease),
+            Ok(None) => {
+                return Err(AppError::coded(
                     429,
                     "TOO_MANY_AUDIO_STREAMS",
                     "Too many open audio streams for this user",
-                )
-            })?;
+                ));
+            }
+            Err(e) if audio.config.limit_fail_open => {
+                tracing::warn!(error = %e, "audio connection limiter unavailable; admitting (fail-open)");
+                AudioPermit::untracked()
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "audio connection limiter unavailable; rejecting (fail-closed)");
+                return Err(AppError::unavailable(
+                    "audio connection limiter unavailable; try again shortly",
+                ));
+            }
+        };
         let started_at = room.started_at.unwrap_or(record.created_at);
         Ok((
             AudioContext {

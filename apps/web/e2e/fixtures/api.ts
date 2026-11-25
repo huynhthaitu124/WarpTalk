@@ -87,3 +87,12 @@ export async function inviteAndAccept(ownerToken: string, workspaceId: string, u
   const { accessToken } = await login(user);
   await ok(call('/invitations/accept', { token: accessToken, body: { token } }));
 }
+
+export interface CopilotSessionDto { id: string; roomId: string; workspaceId: string; hostId: string; title: string; status: string }
+/** A real copilot session (a room of type COPILOT_SESSION) hosted by the owner of `token`. */
+export const createCopilotSession = (token: string, workspaceId: string, title = `Session ${rnd()}`) =>
+  ok(call<CopilotSessionDto>('/copilot/sessions', { token, body: { workspaceId, title, platform: 'zoom', languages: { me: 'en', others: 'en' } } }));
+
+/** Quality report as the backend serves it (owner/admin). */
+export const getQuality = (token: string, workspaceId: string) =>
+  call<{ total: Record<string, number | string>; categories: Record<string, number | string>[] }>(`/workspaces/${workspaceId}/suggestions/quality`, { token });

@@ -9,7 +9,13 @@ import {
 } from './native';
 
 export type ChannelKind = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error';
-export interface ChannelState { kind: ChannelKind; level: number; detail?: string }
+export interface ChannelState {
+  kind: ChannelKind;
+  level: number;
+  detail?: string;
+  /** `server` after `stt_fallback` (direct speech recognition failed, the server transcribes); cleared by `stt_recovered`. */
+  route?: 'server';
+}
 export interface LiveSegment { clientSegmentId: string; channel: CopilotChannel; text: string; startMs?: number }
 
 export const SILENT_DB = -120;
@@ -172,11 +178,25 @@ export function useCopilotLive(native: WarptalkNative | undefined) {
           break;
         }
         case 'copilot.status': {
+          const raw = String(d.kind ?? '').toLowerCase();
+          if (raw === 'stt_fallback' || raw === 'stt_recovered') {
+            // A route change, not a connection change: the channel keeps its state and level.
+            const only = isChannel(d.channel) ? [d.channel] : CHANNELS;
+            setLive((l) => {
+              const channels = { ...l.channels };
+              for (const c of only) {
+                const rest: ChannelState = { kind: channels[c].kind, level: channels[c].level, detail: channels[c].detail };
+                channels[c] = raw === 'stt_fallback' ? { ...rest, route: 'server', ...(d.detail ? { detail: d.detail } : {}) } : { ...rest, ...(d.detail ? { detail: d.detail } : { detail: undefined }) };
+              }
+              return { ...l, channels };
+            });
+            break;
+          }
           const kind = channelKind(String(d.kind ?? ''));
           const targets = isChannel(d.channel) ? [d.channel] : CHANNELS;
           setLive((l) => {
             const channels = { ...l.channels };
-            for (const c of targets) channels[c] = { kind, level: kind === 'connected' || kind === 'reconnecting' ? channels[c].level : SILENT_DB, detail: d.detail };
+            for (const c of targets) channels[c] = { kind, level: kind === 'connected' || kind === 'reconnecting' ? channels[c].level : SILENT_DB, detail: d.detail, ...(channels[c].route && kind !== 'idle' ? { route: channels[c].route } : {}) };
             const stopped = !isChannel(d.channel) && kind === 'idle';
             return stopped ? { ...INITIAL, errors: l.errors } : { ...l, channels };
           });

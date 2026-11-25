@@ -324,6 +324,15 @@ pub trait RoomRepo: Send + Sync {
         page: &PageRequest,
     ) -> AppResult<Page<RoomRecord>>;
     async fn get(&self, id: RoomId) -> AppResult<Option<RoomRecord>>;
+    /// Recurring-meeting series of a room (`None` when standalone or unknown).
+    async fn series_of(&self, id: RoomId) -> AppResult<Option<uuid::Uuid>>;
+    /// Rooms of `workspace` the user hosts or took part in, plus the display names the user
+    /// used in the workspace's rooms (distinct).
+    async fn user_scope(
+        &self,
+        workspace: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<(Vec<RoomId>, Vec<String>)>;
     async fn find_by_code(&self, code: &str) -> AppResult<Option<RoomRecord>>;
     async fn has_participant(&self, room: RoomId, user: UserId) -> AppResult<bool>;
     async fn participants(&self, room: RoomId) -> AppResult<Vec<ParticipantRecord>>;

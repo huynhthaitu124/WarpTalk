@@ -13,6 +13,9 @@ pub enum Purpose {
     SuggestionGenerate,
     /// Post-session summary / minutes / action items.
     Summary,
+    /// WarpBot "ask the meeting" Q&A / recap. Resolves a workspace `assistant` override first and
+    /// falls back to the `summary` override (configs predating this purpose keep working).
+    Chat,
 }
 
 impl Purpose {
@@ -21,6 +24,7 @@ impl Purpose {
             Self::SuggestionDecide => "suggestion_decide",
             Self::SuggestionGenerate => "suggestion_generate",
             Self::Summary => "summary",
+            Self::Chat => "chat",
         }
     }
 }

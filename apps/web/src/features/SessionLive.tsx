@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
-import { Badge } from '@/ui';
+import { Badge, Tooltip } from '@/ui';
 import { useWorkspaceOptional } from '@/lib/workspace';
 import { session } from '@/lib/session';
 import type { Suggestion } from '@/lib/suggestions';
 import { nativeErrorCode, nativeErrorMessage, type AudioApp, type NativeError, type PermissionKind, type Permissions, type WarptalkNative } from '@/lib/native';
 import type { ChannelKind, CopilotLive } from '@/lib/copilotLive';
+import { STT } from '@/lib/strings';
 import { ErrorRow, LevelMeter, type Recovery } from './ExternalParts';
 
 
@@ -26,10 +27,18 @@ export function LiveCapturePanel({ live }: { live: CopilotLive }) {
             <div className="flex items-center gap-2">
               <Icon size={16} aria-hidden className="shrink-0 text-ink-subtle" />
               <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-ink">{label}</span>
+              {c.route === 'server' && (
+                <Tooltip content={STT.hint}>
+                  <span tabIndex={0} className="inline-flex rounded-pill focus-ring" data-testid={`channel-${ch}-route`} data-route="server">
+                    <Badge tone="info" size="sm">{STT.badge}</Badge>
+                    <span className="sr-only">. {STT.hint}</span>
+                  </span>
+                </Tooltip>
+              )}
               <Badge tone={KIND_TONE[c.kind]} size="sm" data-testid={`channel-${ch}-status`}>{KIND_LABEL[c.kind]}</Badge>
             </div>
             <LevelMeter dbfs={c.level} label={`${ch === 'me' ? 'Microphone' : 'Meeting audio'} level`} testId={`meter-${ch}`} />
-            {c.detail && <p className="truncate text-caption text-ink-subtle" title={c.detail}>{c.detail}</p>}
+            {c.detail && <p className="truncate text-caption text-ink-subtle" title={c.detail} data-testid={`channel-${ch}-detail`}>{c.detail}</p>}
           </div>
         );
       })}

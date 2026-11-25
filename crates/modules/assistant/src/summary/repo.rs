@@ -423,16 +423,19 @@ impl PgSummaryRepository {
         stale: Duration,
         now: DateTime<Utc>,
         limit: i64,
+        workspace: Option<WorkspaceId>,
     ) -> AppResult<Vec<SummaryJob>> {
         let rows = sqlx::query_as::<_, JobRow>(&format!(
             "SELECT {JOB_COLS} FROM assistant.meeting_summaries \
-             WHERE (status = 'pending' AND updated_at < $1) \
-                OR (status = 'running' AND updated_at < $2) \
+             WHERE ((status = 'pending' AND updated_at < $1) \
+                OR (status = 'running' AND updated_at < $2)) \
+               AND ($4::uuid IS NULL OR workspace_id = $4) \
              ORDER BY created_at LIMIT $3"
         ))
         .bind(now - quiet)
         .bind(now - stale)
         .bind(limit)
+        .bind(workspace.map(|w| w.as_uuid()))
         .fetch_all(&self.pool)
         .await
         .map_err(map_sqlx_error)?;

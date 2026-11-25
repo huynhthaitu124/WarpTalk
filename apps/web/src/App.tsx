@@ -18,6 +18,8 @@ import { ExternalPage } from '@/features/External';
 import { BillingPage } from '@/features/Billing';
 import { SettingsPage } from '@/features/Settings';
 import { WorkspacesPage } from '@/features/Workspaces';
+import { MyTasksPage } from '@/features/MyTasks';
+import { QualityPage } from '@/features/Quality';
 import { SessionDetailPage, SessionsPage } from '@/features/Sessions';
 import { FeatureRoute } from '@/lib/features';
 
@@ -69,6 +71,8 @@ export function App() {
             <Route path="/:workspaceSlug/home" element={<HomePage />} />
             <Route path="/:workspaceSlug/meetings" element={<FeatureRoute name="translationMeetings"><MeetingsPage /></FeatureRoute>} />
             <Route path="/:workspaceSlug/sessions" element={<FeatureRoute name="copilot"><SessionsPage /></FeatureRoute>} />
+            <Route path="/:workspaceSlug/tasks" element={<MyTasksPage />} />
+            <Route path="/:workspaceSlug/quality" element={<QualityPage />} />
             <Route path="/:workspaceSlug/members" element={<MembersPage />} />
             <Route path="/:workspaceSlug/glossary" element={<GlossaryListPage />} />
             <Route path="/:workspaceSlug/glossary/:glossaryId" element={<GlossaryDetailPage />} />

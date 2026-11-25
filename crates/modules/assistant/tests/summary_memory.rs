@@ -189,7 +189,7 @@ fn copilot_ctx(host: UserId) -> RoomContext {
 
 async fn harness(segs: Vec<TranscriptSegment>, ctx: Option<RoomContext>) -> Option<H> {
     let db = std::env::var("DATABASE_URL").ok()?;
-    let pool = warptalk_db::connect(&db, 5).await.unwrap();
+    let pool = warptalk_db::connect(&db, 2).await.unwrap();
     warptalk_db::run_migrations(
         &pool,
         &[

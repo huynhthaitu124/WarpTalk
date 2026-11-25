@@ -4,6 +4,7 @@ import * as RD from '@radix-ui/react-dialog';
 import {
   ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, CreditCard, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
   SquaresFour, Sparkle, Sun, Users, X,
+  ListChecks, ChartBar,
 } from '@phosphor-icons/react';
 import {
   Avatar, Brand, Button, CommandMenuProvider, Dropdown, DropdownContent, DropdownItem, DropdownLabel, DropdownSeparator,
@@ -17,6 +18,7 @@ import { usePendingInvitations, useRoom } from '@/lib/queries';
 import { useFeatures } from '@/lib/features';
 import { useSession } from '@/lib/copilot';
 import { cn } from '@/lib/cn';
+import { QUALITY, TASKS } from '@/lib/strings';
 import { visibleSettingsSections } from './settingsNav';
 import { BillingBanner } from './Billing';
 
@@ -133,7 +135,7 @@ function SettingsSidebar() {
 }
 
 function Sidebar() {
-  const { workspaces, loading, wsPath } = useWorkspace();
+  const { workspaces, loading, wsPath, current } = useWorkspace();
   const { userId } = useAuth();
   const loc = useLocation();
   const pending = usePendingInvitations(userId);
@@ -169,6 +171,7 @@ function Sidebar() {
                       Copilot
                     </SidebarLink>
                   )}
+                  <SidebarLink to={wsPath('/tasks')} icon={ico(ListChecks)}>{TASKS.nav}</SidebarLink>
                   {features.translationMeetings && (
                     <SidebarLink
                       to={wsPath('/meetings')}
@@ -188,6 +191,7 @@ function Sidebar() {
                   <SidebarLink to={wsPath('/knowledge')} icon={ico(Brain)}>Knowledge</SidebarLink>
                   <SidebarLink to={wsPath('/documents')} icon={ico(FileText)}>Documents</SidebarLink>
                   <SidebarLink to={wsPath('/glossary')} icon={ico(BookBookmark)}>Glossary</SidebarLink>
+                  {canAdmin(current) && <SidebarLink to={wsPath('/quality')} icon={ico(ChartBar)}>{QUALITY.nav}</SidebarLink>}
                   <SidebarLink to={wsPath('/billing')} icon={ico(CreditCard)}>Billing</SidebarLink>
                   <SidebarLink to={wsPath('/settings')} icon={ico(GearSix)}>Settings</SidebarLink>
                 </SidebarNav>
@@ -237,7 +241,7 @@ function Breadcrumb() {
     items.push({ label: 'Settings', to: rest[1] ? wsPath('/settings') : undefined });
     if (rest[1]) items.push({ label: SETTINGS_LABEL[rest[1]] ?? rest[1] });
   } else {
-    const label = { home: 'Home', sessions: 'Sessions', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', billing: 'Billing', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
+    const label = { home: 'Home', sessions: 'Sessions', meetings: 'Meetings', rooms: 'Meetings', members: 'Members', billing: 'Billing', knowledge: 'Knowledge', documents: 'Documents', glossary: 'Glossary', tasks: TASKS.nav, quality: QUALITY.nav, external: 'External meeting', join: 'Join by code', workspaces: 'Workspaces' }[top] ?? top;
     items.push({ label });
   }
   const pageTitle = items.map((i) => (typeof i.label === 'string' ? i.label : '')).filter(Boolean).at(-1)
@@ -338,6 +342,8 @@ export function Shell() {
         nav('go-home', 'Go to Home', <House className="size-4" />, wsPath('/home'), 'G H'),
         ...(features.copilot ? [nav('go-sessions', 'Go to Copilot sessions', <Sparkle className="size-4" />, wsPath('/sessions'), 'G C')] : []),
         ...(features.translationMeetings ? [nav('go-meetings', 'Go to Meetings', <SquaresFour className="size-4" />, wsPath('/meetings'), 'G M')] : []),
+        nav('go-tasks', 'Go to My tasks', <ListChecks className="size-4" />, wsPath('/tasks'), 'G T'),
+        ...(admin ? [nav('go-quality', 'Go to Suggestion quality', <ChartBar className="size-4" />, wsPath('/quality'))] : []),
         nav('go-members', 'Go to Members', <Users className="size-4" />, wsPath('/members'), 'G P'),
         nav('go-knowledge', 'Go to Knowledge', <Brain className="size-4" />, wsPath('/knowledge'), 'G K'),
         nav('go-documents', 'Go to Documents', <FileText className="size-4" />, wsPath('/documents')),

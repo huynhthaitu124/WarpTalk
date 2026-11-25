@@ -136,6 +136,24 @@ impl IdentityModule {
     }
 }
 
+/// Pool-only read facade for workers that need display names (no mailer/policy/voice wiring).
+#[derive(Clone)]
+pub struct UserDirectory {
+    repo: Arc<dyn IdentityRepository>,
+}
+
+impl UserDirectory {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            repo: Arc::new(infrastructure::PgIdentityRepository::new(pool)),
+        }
+    }
+
+    pub async fn user_summary(&self, id: UserId) -> AppResult<Option<UserSummary>> {
+        self.repo.find_summary_by_id(id).await
+    }
+}
+
 #[derive(Clone)]
 pub struct IdentityQueries {
     repo: Arc<dyn IdentityRepository>,

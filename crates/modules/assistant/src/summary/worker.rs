@@ -16,6 +16,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use warptalk_bus::{ConsumerConfig, HandlerError, StreamHandler, StreamMessage};
 use warptalk_contracts::events::{MEETING_END_MARKER, SttResult};
 use warptalk_contracts::streams::{ASSISTANT_SUMMARY_REQUESTS, STT_RESULTS};
+use warptalk_kernel::WorkspaceId;
 
 use super::model::{SUMMARY_GROUP, SummaryRequest};
 use super::service::SummaryService;
@@ -91,10 +92,15 @@ impl SummaryWorker {
 
     /// One sweep: start every job nobody works on. Returns how many were started.
     pub async fn sweep(&self, quiet: Duration) -> usize {
+        self.sweep_scoped(quiet, None).await
+    }
+
+    /// Like [`Self::sweep`] but limited to one workspace (`None` = all).
+    pub async fn sweep_scoped(&self, quiet: Duration, workspace: Option<WorkspaceId>) -> usize {
         // Silent `running` rows count as stale per room config; the listing uses the platform
         // default and `claim` re-checks with the room's own value.
         let stale = Duration::from_secs(super::config::SummaryConfig::default().stale_running_secs);
-        let jobs = self.service.open_jobs(quiet, stale).await;
+        let jobs = self.service.open_jobs(quiet, stale, workspace).await;
         let n = jobs.len();
         for j in jobs {
             self.spawn_job(j.id).await;

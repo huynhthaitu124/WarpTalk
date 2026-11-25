@@ -30,6 +30,8 @@ warptalk-qdrant = { workspace = true }
 warptalk-settings = { workspace = true }
 warptalk-workspace = { workspace = true }
 warptalk-room = { workspace = true }
+warptalk-identity = { workspace = true }
+warptalk-copilot = { workspace = true }
 warptalk-contracts = { workspace = true }
 warptalk-billing = { workspace = true }
 redis = { workspace = true }

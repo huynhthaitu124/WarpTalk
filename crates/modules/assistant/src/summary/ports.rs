@@ -34,6 +34,12 @@ pub struct TranscriptData {
 pub trait TranscriptSource: Send + Sync {
     /// `None` when the room has no transcript. `limit` caps the segments returned (oldest first).
     async fn load(&self, room: RoomId, limit: u32) -> AppResult<Option<TranscriptData>>;
+
+    /// Like [`Self::load`] but keeps the NEWEST `limit` segments (still returned oldest first).
+    /// Live Q&A cares about the end of a long meeting; the default delegates to `load`.
+    async fn load_recent(&self, room: RoomId, limit: u32) -> AppResult<Option<TranscriptData>> {
+        self.load(room, limit).await
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -829,6 +829,48 @@ impl RoomRepo for PgRoomRepo {
         fetch_room(&mut conn, id).await
     }
 
+    async fn series_of(&self, id: RoomId) -> AppResult<Option<Uuid>> {
+        let v: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT series_id FROM translation_room.translation_rooms \
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(v.flatten())
+    }
+
+    async fn user_scope(
+        &self,
+        workspace: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<(Vec<RoomId>, Vec<String>)> {
+        let rooms: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT r.id FROM translation_room.translation_rooms r \
+             WHERE r.workspace_id = $1 AND r.deleted_at IS NULL AND ( \
+                   r.host_id = $2 OR r.active_host_id = $2 OR EXISTS ( \
+                       SELECT 1 FROM translation_room.translation_room_participants p \
+                       WHERE p.translation_room_id = r.id AND p.user_id = $2))",
+        )
+        .bind(workspace.as_uuid())
+        .bind(user.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT p.display_name FROM translation_room.translation_room_participants p \
+             JOIN translation_room.translation_rooms r ON r.id = p.translation_room_id \
+             WHERE r.workspace_id = $1 AND p.user_id = $2",
+        )
+        .bind(workspace.as_uuid())
+        .bind(user.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok((rooms.into_iter().map(RoomId::from_uuid).collect(), names))
+    }
+
     async fn find_by_code(&self, code: &str) -> AppResult<Option<RoomRecord>> {
         let sql = format!(
             "SELECT {ROOM_COLS} FROM translation_room.translation_rooms r \

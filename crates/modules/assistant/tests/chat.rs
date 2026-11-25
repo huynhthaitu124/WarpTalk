@@ -112,11 +112,12 @@ impl LlmProvider for FakeLlm {
     }
 }
 
-struct FakeResolver(Arc<FakeLlm>, Mutex<DataBoundary>);
+struct FakeResolver(Arc<FakeLlm>, Mutex<DataBoundary>, Mutex<Vec<Purpose>>);
 
 #[async_trait]
 impl LlmResolver for FakeResolver {
-    async fn for_purpose(&self, _: WorkspaceId, _: Purpose) -> Result<ResolvedLlm, ResolveError> {
+    async fn for_purpose(&self, _: WorkspaceId, p: Purpose) -> Result<ResolvedLlm, ResolveError> {
+        self.2.lock().unwrap().push(p);
         let boundary = *self.1.lock().unwrap();
         Ok(ResolvedLlm {
             provider: self.0.clone(),
@@ -154,6 +155,21 @@ impl TranscriptSource for Transcripts {
             finalized: false,
             total_segments: segs.len() as u32,
             segments: segs.into_iter().take(limit as usize).collect(),
+        }))
+    }
+
+    async fn load_recent(&self, _: RoomId, limit: u32) -> AppResult<Option<TranscriptData>> {
+        let segs = self.0.lock().unwrap().clone();
+        if segs.is_empty() {
+            return Ok(None);
+        }
+        let skip = segs.len().saturating_sub(limit as usize);
+        Ok(Some(TranscriptData {
+            workspace_id: WorkspaceId::new(),
+            version: 1,
+            finalized: false,
+            total_segments: segs.len() as u32,
+            segments: segs.into_iter().skip(skip).collect(),
         }))
     }
 }
@@ -242,7 +258,7 @@ async fn harness(segments: Vec<TranscriptSegment>, cfg: Value) -> Option<H> {
         println!("skipping: DATABASE_URL not set");
         return None;
     };
-    let pool = warptalk_db::connect(&db, 5).await.unwrap();
+    let pool = warptalk_db::connect(&db, 2).await.unwrap();
     warptalk_db::run_migrations(
         &pool,
         &[
@@ -269,6 +285,7 @@ async fn harness(segments: Vec<TranscriptSegment>, cfg: Value) -> Option<H> {
     let resolver = Arc::new(FakeResolver(
         llm.clone(),
         Mutex::new(DataBoundary::External),
+        Mutex::default(),
     ));
     let gate = Arc::new(Gate(true.into()));
     let ids = segments.iter().map(|s| s.id).collect();
@@ -1001,4 +1018,34 @@ async fn unsafe_answer_is_withheld_and_not_stored() {
         .json(u, "GET", &format!("{}/history", h.ask_uri("")), None)
         .await;
     assert_eq!(v["items"], json!([]));
+}
+
+#[tokio::test]
+async fn long_meetings_keep_the_newest_lines_and_use_the_chat_purpose() {
+    let segs: Vec<_> = (0..10)
+        .map(|i| seg(i, "Ann", &format!("line number {i}"), (i as i64) * 1000))
+        .collect();
+    let Some(h) = harness(segs, json!({"max_segments": 3})).await else {
+        return;
+    };
+    let u = h.member();
+    let (status, v) = h
+        .json(
+            u,
+            "POST",
+            &h.ask_uri("?stream=false"),
+            Some(json!({"question": "What was said last?"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let prompt = h.llm.last_user_text();
+    assert!(prompt.contains("line number 9"), "{prompt}");
+    assert!(prompt.contains("line number 7"), "{prompt}");
+    assert!(
+        !prompt.contains("line number 6"),
+        "oldest lines are cut: {prompt}"
+    );
+    assert!(!prompt.contains("line number 0"), "{prompt}");
+    let purposes = h.resolver.2.lock().unwrap().clone();
+    assert!(!purposes.is_empty() && purposes.iter().all(|p| *p == Purpose::Chat));
 }

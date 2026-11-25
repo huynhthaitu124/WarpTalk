@@ -9,6 +9,7 @@ use warptalk_kernel::{AppError, AppResult};
 use chrono::{DateTime, Utc};
 use warptalk_kernel::{RoomId, UserId};
 
+use crate::application::audio::ConnectionLimiter;
 use crate::application::ports::{
     AudioTicketClaims, AudioTicketStore, Published, RateLimiter, SegmentSink, USAGE_STREAM,
     UsageEvent, UsageSink,
@@ -191,5 +192,97 @@ impl AudioTicketStore for RedisTicketStore {
             user: UserId::from(u),
             session: RoomId::from(s),
         }))
+    }
+}
+
+/// Per-user open-socket limit shared by all API replicas. One sorted set per user
+/// (`copilot:audio-conns:{user}`): member = connection id, score = lease expiry in epoch ms.
+/// `acquire` is one Lua script (purge expired, count, add), so the limit cannot be overshot by
+/// concurrent connects; `heartbeat` pushes the expiry out, `release` removes the member. A crashed
+/// replica's connections disappear when their leases lapse.
+pub struct RedisConnectionLimiter {
+    conn: ConnectionManager,
+}
+
+impl RedisConnectionLimiter {
+    pub fn new(conn: ConnectionManager) -> Self {
+        Self { conn }
+    }
+
+    fn key(user: UserId) -> String {
+        format!("copilot:audio-conns:{user}")
+    }
+}
+
+const ACQUIRE_LUA: &str = r#"
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then return 0 end
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4])
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+return 1
+"#;
+
+fn now_ms() -> i64 {
+    Utc::now().timestamp_millis()
+}
+
+#[async_trait]
+impl ConnectionLimiter for RedisConnectionLimiter {
+    async fn acquire(
+        &self,
+        user: UserId,
+        conn_id: &str,
+        max: usize,
+        lease: std::time::Duration,
+    ) -> AppResult<Option<()>> {
+        let mut conn = self.conn.clone();
+        let lease_ms = lease.as_millis() as i64;
+        let now = now_ms();
+        let ok: i64 = redis::Script::new(ACQUIRE_LUA)
+            .key(Self::key(user))
+            .arg(now)
+            .arg(now + lease_ms)
+            .arg(max as i64)
+            .arg(conn_id)
+            .arg(lease_ms * 2)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(bus_err)?;
+        Ok((ok == 1).then_some(()))
+    }
+
+    async fn heartbeat(
+        &self,
+        user: UserId,
+        conn_id: &str,
+        lease: std::time::Duration,
+    ) -> AppResult<()> {
+        let mut conn = self.conn.clone();
+        let lease_ms = lease.as_millis() as i64;
+        // XX: never resurrect a slot that was released or purged.
+        redis::pipe()
+            .cmd("ZADD")
+            .arg(Self::key(user))
+            .arg("XX")
+            .arg(now_ms() + lease_ms)
+            .arg(conn_id)
+            .ignore()
+            .cmd("PEXPIRE")
+            .arg(Self::key(user))
+            .arg(lease_ms * 2)
+            .ignore()
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(bus_err)
+    }
+
+    async fn release(&self, user: UserId, conn_id: &str) -> AppResult<()> {
+        let mut conn = self.conn.clone();
+        redis::cmd("ZREM")
+            .arg(Self::key(user))
+            .arg(conn_id)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(bus_err)
     }
 }

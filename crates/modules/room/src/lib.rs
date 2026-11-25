@@ -238,6 +238,121 @@ impl RoomQueries {
     }
 }
 
+/// Read-only room directory for consumers that only need facts (the assistant's summary and
+/// memory workers): constructible from a pool alone, no lifecycle services.
+#[derive(Clone)]
+pub struct RoomReader {
+    repo: Arc<dyn RoomRepo>,
+}
+
+impl RoomReader {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            repo: Arc::new(PgRoomRepo::new(
+                pool,
+                Arc::new(application::ports::NoopVoiceConsentDirectory),
+            )),
+        }
+    }
+
+    /// Everything the assistant needs to describe a room; `None` when it does not exist.
+    pub async fn room_facts(&self, room: RoomId) -> AppResult<Option<RoomFacts>> {
+        let Some(r) = self.repo.get(room).await? else {
+            return Ok(None);
+        };
+        let participants = self
+            .repo
+            .participants(room)
+            .await?
+            .into_iter()
+            .map(|p| ParticipantFact {
+                display_name: p.display_name,
+                user_id: p.user_id,
+            })
+            .collect();
+        Ok(Some(RoomFacts {
+            workspace_id: r.workspace_id,
+            host_id: r.host_id,
+            effective_host_id: r.effective_host(),
+            title: r.title.clone(),
+            room_type: r.room_type.as_str().to_owned(),
+            source_language: r.source_language.clone(),
+            target_languages: r.target_languages.clone(),
+            series_id: self.repo.series_of(room).await?,
+            participants,
+        }))
+    }
+
+    /// What `user` is to `room`; `None` when the room does not exist.
+    pub async fn user_relation(
+        &self,
+        room: RoomId,
+        user: UserId,
+    ) -> AppResult<Option<UserRoomRelation>> {
+        let Some(r) = self.repo.get(room).await? else {
+            return Ok(None);
+        };
+        let is_participant = self
+            .repo
+            .participants(room)
+            .await?
+            .iter()
+            .any(|p| p.user_id == Some(user));
+        Ok(Some(UserRoomRelation {
+            workspace_id: r.workspace_id,
+            is_host: r.host_id == user || r.active_host_id == Some(user),
+            is_participant,
+        }))
+    }
+
+    /// Rooms of `ws` the user hosts or attended, and the names they used there.
+    pub async fn user_scope(
+        &self,
+        ws: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<(Vec<RoomId>, Vec<String>)> {
+        self.repo.user_scope(ws, user).await
+    }
+}
+
+impl RoomQueries {
+    /// Pool-free read facade over the same repository.
+    pub fn reader(&self) -> RoomReader {
+        RoomReader {
+            repo: self.repo.clone(),
+        }
+    }
+}
+
+/// Descriptive facts of a room (see [`RoomReader::room_facts`]).
+#[derive(Debug, Clone)]
+pub struct RoomFacts {
+    pub workspace_id: WorkspaceId,
+    pub host_id: UserId,
+    pub effective_host_id: UserId,
+    pub title: String,
+    pub room_type: String,
+    pub source_language: String,
+    pub target_languages: Vec<String>,
+    pub series_id: Option<uuid::Uuid>,
+    /// Oldest first.
+    pub participants: Vec<ParticipantFact>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParticipantFact {
+    pub display_name: String,
+    pub user_id: Option<UserId>,
+}
+
+/// A user's relation to a room.
+#[derive(Debug, Clone, Copy)]
+pub struct UserRoomRelation {
+    pub workspace_id: WorkspaceId,
+    pub is_host: bool,
+    pub is_participant: bool,
+}
+
 /// A freshly created copilot room.
 #[derive(Debug, Clone)]
 pub struct CopilotRoom {

@@ -21,8 +21,8 @@ use warptalk_transcript::{TranscriptDeps, TranscriptModule};
 use warptalk_web::JwtKeys;
 
 use crate::adapters::{
-    AiChatTranslator, PgChatTargetLanguages, PgRoomDirectory, PgRoomMetaSource,
-    PgSuggestionRoomDirectory, PgTranscriptSource, PgWorkspaceAiPolicy,
+    AiChatTranslator, PgChatTargetLanguages, PgRoomDirectory, PgSuggestionRoomDirectory,
+    PgTranscriptSource, PgWorkspaceAiPolicy,
 };
 use redis::aio::ConnectionManager;
 use warptalk_ai_plane::ai::AiProviders;
@@ -50,8 +50,30 @@ use warptalk_workspace::{
     NoopUserDirectory, WorkspaceDeps, WorkspaceModule, document_results_consumer_config,
 };
 
-/// Model pipelines the suggestion worker runs at once across rooms.
+/// Default model pipelines the suggestion worker runs at once across rooms; override with the
+/// `SUGGESTION_MAX_PIPELINES` env var (see docs/RUNBOOK.md and docs/perf/copilot-latency.md).
 const SUGGESTION_MAX_PIPELINES: usize = 8;
+/// Upper bound of the knob (a typo must not open thousands of provider calls at once).
+const SUGGESTION_MAX_PIPELINES_CAP: usize = 512;
+
+/// Parse `SUGGESTION_MAX_PIPELINES`: unset, empty, unparsable or 0 keep the default; values above
+/// the cap are clamped.
+pub fn suggestion_max_pipelines_from(raw: Option<&str>) -> usize {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        None => SUGGESTION_MAX_PIPELINES,
+        Some(v) => match v.parse::<usize>() {
+            Ok(0) | Err(_) => {
+                tracing::warn!(value = v, "invalid SUGGESTION_MAX_PIPELINES; using default");
+                SUGGESTION_MAX_PIPELINES
+            }
+            Ok(n) => n.min(SUGGESTION_MAX_PIPELINES_CAP),
+        },
+    }
+}
+
+fn suggestion_max_pipelines() -> usize {
+    suggestion_max_pipelines_from(std::env::var("SUGGESTION_MAX_PIPELINES").ok().as_deref())
+}
 
 /// Summary jobs a worker process runs at once.
 const SUMMARY_MAX_JOBS: usize = 4;
@@ -182,10 +204,9 @@ pub async fn build_ai_plane(
     .with_store(Arc::new(
         warptalk_assistant::suggestion::PgSuggestionStore::new(pool.clone()),
     ));
-    let suggestion = Arc::new(SuggestionWorker::new(
-        Arc::new(engine),
-        SUGGESTION_MAX_PIPELINES,
-    ));
+    let max_pipelines = suggestion_max_pipelines();
+    tracing::info!(max_pipelines, "suggestion worker concurrency");
+    let suggestion = Arc::new(SuggestionWorker::new(Arc::new(engine), max_pipelines));
     Ok(AiPlane {
         knowledge,
         suggestion,
@@ -208,8 +229,12 @@ pub async fn build_summary(
     let service = SummaryService::new(SummaryDeps {
         repo: PgSummaryRepository::new(pool.clone()),
         transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
-        rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
-        policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(pool)),
+        rooms: Arc::new(crate::adapters::summary_ports::room_meta_source(
+            pool.clone(),
+        )),
+        policy: Arc::new(crate::adapters::summary_ports::WorkspaceExternalLlmGate(
+            workspace_queries(pool),
+        )),
         followups: Arc::new(RedisFollowUpSource::new(redis.clone())),
         llm,
         settings: settings.clone(),
@@ -223,6 +248,17 @@ pub async fn build_summary(
         Arc::new(service),
         SUMMARY_MAX_JOBS,
     )))
+}
+
+/// Workspace query facade for read-only policy lookups (the worker mounts no HTTP routes).
+fn workspace_queries(pool: PgPool) -> warptalk_workspace::WorkspaceQueries {
+    WorkspaceModule::new(WorkspaceDeps {
+        pool,
+        jwt: dummy_jwt(),
+        clock: Arc::new(SystemClock),
+        users: Arc::new(NoopUserDirectory),
+    })
+    .queries()
 }
 
 /// Settings store for the worker: platform defaults registered, invalidation listener running.
@@ -327,4 +363,20 @@ pub async fn chat_translate_consumer(
         Arc::new(SystemClock),
     );
     Ok((cfg, Arc::new(handler)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggestion_pipeline_knob_parses_and_clamps() {
+        assert_eq!(suggestion_max_pipelines_from(None), 8);
+        assert_eq!(suggestion_max_pipelines_from(Some("  ")), 8);
+        assert_eq!(suggestion_max_pipelines_from(Some("24")), 24);
+        assert_eq!(suggestion_max_pipelines_from(Some(" 32 ")), 32);
+        assert_eq!(suggestion_max_pipelines_from(Some("0")), 8);
+        assert_eq!(suggestion_max_pipelines_from(Some("lots")), 8);
+        assert_eq!(suggestion_max_pipelines_from(Some("999999")), 512);
+    }
 }

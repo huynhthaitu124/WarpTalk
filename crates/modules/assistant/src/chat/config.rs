@@ -38,7 +38,7 @@ pub struct ChatConfig {
     /// Estimated tokens of earlier-meeting context.
     pub prior_tokens: u32,
     pub chars_per_token: f32,
-    /// Transcript segments loaded per request (oldest first).
+    /// Transcript segments loaded per request (the newest ones when the meeting is longer).
     pub max_segments: u32,
     /// One transcript line is cut to this many characters.
     pub max_line_chars: u32,

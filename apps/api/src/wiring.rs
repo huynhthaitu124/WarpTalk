@@ -28,7 +28,7 @@ use warptalk_assistant::application::ports::{
     ConfigNotifier, KeyValidator, NoopNotifier, SecretVault, WorkspaceAccess,
 };
 use warptalk_assistant::summary::{
-    FollowUpSource, NoBus, NoFollowUps, PgRoomAccess, PgRoomMetaSource, PgSummaryRepository,
+    ComposedRoomAccess, FollowUpSource, NoBus, NoFollowUps, PgSummaryRepository,
     PgTranscriptSource, RedisFollowUpSource, RedisSummaryBus, SummaryBus, SummaryDeps,
     SummaryService,
 };
@@ -787,6 +787,7 @@ pub async fn build(
     let copilot = copilot_redis.map(|conn| {
         let usage_conn = conn.clone();
         let ticket_conn = conn.clone();
+        let limiter_conn = conn.clone();
         let mut module = CopilotModule::new(CopilotDeps {
             pool: pool.clone(),
             jwt: jwt.clone(),
@@ -817,6 +818,11 @@ pub async fn build(
                     ),
                 ),
                 config: audio_config,
+                limiter: Arc::new(
+                    warptalk_copilot::infrastructure::redis_adapters::RedisConnectionLimiter::new(
+                        limiter_conn,
+                    ),
+                ),
             });
         }
         if let Some(g) = glossary_service {
@@ -870,14 +876,18 @@ pub async fn build(
     let summary_service = SummaryService::new(SummaryDeps {
         repo: PgSummaryRepository::new(pool.clone()),
         transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
-        rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
+        rooms: Arc::new(crate::assistant_adapters::room_meta_source(
+            room.queries().reader(),
+            identity.queries(),
+            warptalk_copilot::CopilotQueries::new(pool.clone()),
+        )),
         followups: match &summary_redis {
             Some(c) => Arc::new(RedisFollowUpSource::new(c.clone())) as Arc<dyn FollowUpSource>,
             None => Arc::new(NoFollowUps),
         },
         llm: ai.clone(),
-        policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(
-            pool.clone(),
+        policy: Arc::new(crate::assistant_adapters::WorkspaceExternalLlmGate(
+            workspace.queries(),
         )),
         settings: settings.clone(),
         bus: match &summary_redis {
@@ -894,8 +904,10 @@ pub async fn build(
     });
     let assistant = assistant.with_summary(SummaryHttpDeps {
         service: summary_service.clone(),
-        access: Arc::new(PgRoomAccess::new(
-            pool.clone(),
+        access: Arc::new(ComposedRoomAccess::new(
+            Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                room.queries().reader(),
+            )),
             Arc::new(AssistantWorkspaceAccess(workspace.queries())),
         )),
         clock: Arc::new(SystemClock),
@@ -905,8 +917,10 @@ pub async fn build(
             store: Arc::new(warptalk_assistant::suggestion::PgSuggestionStore::new(
                 pool.clone(),
             )),
-            access: Arc::new(PgRoomAccess::new(
-                pool.clone(),
+            access: Arc::new(ComposedRoomAccess::new(
+                Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                    room.queries().reader(),
+                )),
                 Arc::new(AssistantWorkspaceAccess(workspace.queries())),
             )),
             members: Arc::new(AssistantWorkspaceAccess(workspace.queries())),
@@ -955,7 +969,11 @@ pub async fn build(
             warptalk_assistant::chat::ChatDeps {
                 repo: warptalk_assistant::chat::PgChatRepository::new(pool.clone()),
                 transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
-                rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
+                rooms: Arc::new(crate::assistant_adapters::room_meta_source(
+                    room.queries().reader(),
+                    identity.queries(),
+                    warptalk_copilot::CopilotQueries::new(pool.clone()),
+                )),
                 knowledge: Arc::new(warptalk_ai_plane::knowledge::ServiceRetriever::new(
                     knowledge.service(),
                 )),
@@ -963,8 +981,8 @@ pub async fn build(
                     summary_service,
                 )),
                 llm: chat_llm,
-                policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(
-                    pool.clone(),
+                policy: Arc::new(crate::assistant_adapters::WorkspaceExternalLlmGate(
+                    workspace.queries(),
                 )),
                 settings: settings.clone(),
                 limiter: chat_limiter,
@@ -973,8 +991,10 @@ pub async fn build(
                 clock: Arc::new(SystemClock),
             },
         )),
-        access: Arc::new(PgRoomAccess::new(
-            pool.clone(),
+        access: Arc::new(ComposedRoomAccess::new(
+            Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                room.queries().reader(),
+            )),
             Arc::new(AssistantWorkspaceAccess(workspace.queries())),
         )),
     });

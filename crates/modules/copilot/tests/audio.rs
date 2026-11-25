@@ -135,6 +135,9 @@ async fn env(cfg: AudioConfig, stt: FakeServerStt, configured: bool) -> Option<E
             stt: Arc::new(stt.clone()),
             tickets: Arc::new(MemoryTicketStore::default()),
             config: cfg,
+            limiter: Arc::new(
+                warptalk_copilot::application::audio::MemoryConnectionLimiter::default(),
+            ),
         });
     }
     let app = module.router();

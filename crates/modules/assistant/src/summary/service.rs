@@ -288,12 +288,20 @@ impl SummaryService {
     }
 
     /// Pending or silent jobs (restart recovery, lost requests).
-    pub async fn open_jobs(&self, quiet: Duration, stale: Duration) -> Vec<SummaryJob> {
+    ///
+    /// `workspace` scopes the listing to one tenant (`None` = every workspace, the production
+    /// sweeper); tests use it so they never touch rows of other tests sharing the database.
+    pub async fn open_jobs(
+        &self,
+        quiet: Duration,
+        stale: Duration,
+        workspace: Option<WorkspaceId>,
+    ) -> Vec<SummaryJob> {
         let q = ChronoDuration::from_std(quiet).unwrap_or_default();
         let s = ChronoDuration::from_std(stale).unwrap_or_default();
         self.d
             .repo
-            .open_jobs(q, s, self.d.clock.now(), 50)
+            .open_jobs(q, s, self.d.clock.now(), 50, workspace)
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %e, "listing open summary jobs failed");

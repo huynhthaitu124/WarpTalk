@@ -204,3 +204,38 @@ export function useFollowUps(roomId: string | undefined, enabled: boolean) {
     },
   });
 }
+
+// ---- feedback (`POST /suggestions/{id}/feedback`, 204)
+export type FeedbackAction = 'used' | 'dismissed' | 'helpful' | 'not_helpful' | 'wrong';
+
+export interface FeedbackState {
+  /** Actions already sent (or being sent) per suggestion. */
+  marks: Record<string, FeedbackAction[]>;
+  /** Last failed action per suggestion (cleared by the next success). */
+  failed: Record<string, FeedbackAction | undefined>;
+  send(id: string, action: FeedbackAction, comment?: string): Promise<boolean>;
+}
+
+/**
+ * Optimistic feedback: the action is marked at once and rolled back when the request fails. Repeating an action
+ * with a comment updates the comment on the server (one verdict per user and action).
+ */
+export function useSuggestionFeedback(): FeedbackState {
+  const [marks, setMarks] = useState<Record<string, FeedbackAction[]>>({});
+  const [failed, setFailed] = useState<Record<string, FeedbackAction | undefined>>({});
+  const send = useCallback(async (id: string, action: FeedbackAction, comment?: string) => {
+    const had = (m: Record<string, FeedbackAction[]>) => m[id]?.includes(action) ?? false;
+    let already = false;
+    setMarks((m) => { already = had(m); return already ? m : { ...m, [id]: [...(m[id] ?? []), action] }; });
+    setFailed((f) => ({ ...f, [id]: undefined }));
+    try {
+      await api(`/suggestions/${id}/feedback`, { method: 'POST', body: { action, ...(comment?.trim() ? { comment: comment.trim() } : {}) } });
+      return true;
+    } catch {
+      if (!already) setMarks((m) => ({ ...m, [id]: (m[id] ?? []).filter((a) => a !== action) }));
+      setFailed((f) => ({ ...f, [id]: action }));
+      return false;
+    }
+  }, []);
+  return { marks, failed, send };
+}

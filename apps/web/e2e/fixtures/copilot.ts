@@ -8,7 +8,7 @@ export interface MockSession {
 }
 export interface MockSegment { id: string; speakerName: string; originalText: string; startTimeMs?: number; sequenceOrder: number; isFinal?: boolean }
 export interface MockActionItem { id: string; task: string; owner?: string; due?: string; status: 'open' | 'done' }
-export interface MockSummary { short: string; detailed?: string; decisions?: string[]; openQuestions?: string[]; generatedAt?: string }
+export interface MockSummary { short: string; detailed?: string; decisions?: string[]; openQuestions?: string[]; previousItems?: { task: string; status: 'done' | 'open' }[]; generatedAt?: string }
 
 export interface CopilotMock {
   sessions: MockSession[];
@@ -28,7 +28,7 @@ const json = (body: unknown, status = 200) => ({ status, contentType: 'applicati
 
 export async function mockCopilot(page: Page, init: Partial<Pick<CopilotMock, 'sessions' | 'segments' | 'summary' | 'actionItems' | 'followups'>> = {}): Promise<CopilotMock> {
   const m: CopilotMock = { sessions: [], segments: {}, summary: {}, actionItems: {}, followups: {}, calls: [], created: [], stoppedBeforeEnd: [], ...init };
-  await page.route(/\/api\/v1\/(copilot\/|transcripts\/|meetings\/[^/]+\/(summary|action-items|followups)|workspaces\/[^/]+\/action-items)/, async (route) => {
+  await page.route(/\/api\/v1\/(copilot\/|transcripts\/|meetings\/[^/]+\/(summary|action-items|followups|prior-context|ask\/history)|workspaces\/[^/]+\/action-items)/, async (route) => {
     const req = route.request();
     const u = new URL(req.url());
     const path = u.pathname.replace('/api/v1', '');
@@ -60,7 +60,7 @@ export async function mockCopilot(page: Page, init: Partial<Pick<CopilotMock, 's
     if ((x = path.match(/^\/meetings\/([^/]+)\/summary$/))) {
       const sm = m.summary[x[1]!];
       if (!sm) return route.fulfill(json({ status: 'none', latest: null, lastCompleted: null }));
-      const content = { summaryShort: sm.short, summaryDetailed: sm.detailed ?? '', decisions: sm.decisions ?? [], actionItems: [], openQuestions: sm.openQuestions ?? [], topics: [], language: 'en', meta: {} };
+      const content = { summaryShort: sm.short, summaryDetailed: sm.detailed ?? '', decisions: sm.decisions ?? [], actionItems: [], openQuestions: sm.openQuestions ?? [], previousItems: (sm.previousItems ?? []).map((p) => ({ ...p, sourceSegmentIds: [] })), topics: [], language: 'en', meta: {} };
       const job = { status: 'completed', content, completedAt: sm.generatedAt ?? null };
       return route.fulfill(json({ status: 'completed', latest: job, lastCompleted: job, content }));
     }
@@ -70,6 +70,8 @@ export async function mockCopilot(page: Page, init: Partial<Pick<CopilotMock, 's
       return route.fulfill(json({ id: x[2], status }));
     }
     if ((x = path.match(/^\/meetings\/([^/]+)\/action-items$/))) return route.fulfill(json({ items: (m.actionItems[x[1]!] ?? []).map((a) => ({ ...a, roomId: x![1] })) }));
+    if (/^\/meetings\/[^/]+\/ask\/history$/.test(path)) return route.fulfill(json({ items: [], nextBefore: null }));
+    if (/^\/meetings\/[^/]+\/prior-context$/.test(path)) return route.fulfill(json({ openActionItems: [], lastSummaries: [] }));
     if ((x = path.match(/^\/meetings\/([^/]+)\/followups$/))) return route.fulfill(json(m.followups[x[1]!] ?? []));
     if (/^\/workspaces\/[^/]+\/action-items$/.test(path)) {
       return route.fulfill(json({ items: Object.entries(m.actionItems).flatMap(([roomId, l]) => l.filter((a) => a.status === 'open').map((a) => ({ ...a, roomId }))) }));

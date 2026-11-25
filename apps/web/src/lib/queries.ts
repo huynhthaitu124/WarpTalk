@@ -475,3 +475,50 @@ export function useEnrollVoice(userId: string | null) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['voice', userId] }),
   });
 }
+
+// ---- suggestion quality (owner/admin): GET /workspaces/{id}/suggestions/quality?from&to
+const categoryQuality = z.object({
+  category: z.string(),
+  shown: z.number(),
+  used: z.number(),
+  dismissed: z.number(),
+  helpful: z.number(),
+  notHelpful: z.number(),
+  wrong: z.number(),
+  wrongRate: z.number(),
+  usedRate: z.number(),
+});
+const qualityReport = z.object({ from: z.string(), to: z.string(), total: categoryQuality, categories: z.array(categoryQuality) });
+export type CategoryQuality = z.infer<typeof categoryQuality>;
+export type QualityReport = z.infer<typeof qualityReport>;
+
+/** `from`/`to` are `YYYY-MM-DD` (RFC 3339 also works); the range is limited to 366 days by the server. */
+export function useSuggestionQuality(wsId: string | undefined, from: string, to: string, enabled = true) {
+  return useQuery({
+    queryKey: ['suggestion-quality', wsId, from, to],
+    enabled: !!wsId && enabled && !!from && !!to,
+    retry: false,
+    queryFn: () => api(`/workspaces/${wsId}/suggestions/quality`, { query: { from, to }, schema: qualityReport }),
+  });
+}
+
+// ---- document reindex (owner/admin)
+const reindexOne = z.object({ queued: z.boolean(), document: documentSchema });
+const reindexBatch = z.object({ queued: z.number(), queuedIds: z.array(z.string()), notEligible: z.number(), failedIds: z.array(z.string()), remaining: z.number() });
+export type ReindexBatchResult = z.infer<typeof reindexBatch>;
+
+export function useReindexDocument(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api(`/workspaces/${wsId}/documents/${id}/reindex`, { method: 'POST', schema: reindexOne }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', wsId] }),
+  });
+}
+export function useReindexDocuments(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { status: 'skipped' | 'failed' | 'all'; limit?: number }) =>
+      api(`/workspaces/${wsId}/documents/reindex`, { method: 'POST', query: { status: v.status, limit: v.limit }, schema: reindexBatch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', wsId] }),
+  });
+}

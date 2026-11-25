@@ -104,12 +104,25 @@ impl FakeProvider {
 
     /// Text between the first `<transcript>` and the last `</transcript>` (a spoofed closing
     /// tag inside the transcript must not cut the block short).
+    ///
+    /// Summary prompts carry no inner tag, only the nonce fence `<<DATA-n:transcript>>` ...
+    /// `<<END-n:transcript>>` (reduce prompts: one `partial_N` fence each); the block is then
+    /// the span between the first open marker and the last close marker of any such fence.
     fn transcript_block(text: &str) -> &str {
         let Some(start) = text.find("<transcript>") else {
-            return text;
+            return Self::fenced_block(text);
         };
         let rest = &text[start + "<transcript>".len()..];
         rest.rfind("</transcript>").map_or(rest, |e| &rest[..e])
+    }
+
+    fn fenced_block(text: &str) -> &str {
+        let Some(open) = text.find("<<DATA-") else {
+            return text;
+        };
+        let body = text[open..].find(">>").map_or(open, |e| open + e + 2);
+        let rest = &text[body..];
+        rest.rfind("<<END-").map_or(rest, |e| &rest[..e])
     }
 
     /// Index of the dataset line the request's latest transcript line corresponds to.

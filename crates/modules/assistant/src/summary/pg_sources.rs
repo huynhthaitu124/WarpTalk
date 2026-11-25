@@ -1,7 +1,8 @@
-//! Read-only Postgres adapters of [`TranscriptSource`] and [`RoomMetaSource`].
+//! Read-only Postgres adapter of [`TranscriptSource`].
 //!
-//! TEMPORARY cross-schema reads of `transcript.*` and `translation_room.*` (runtime SQL), like
-//! the other worker adapters; replace with ports implemented by those modules.
+//! TEMPORARY cross-schema read of `transcript.*` (runtime SQL): the transcript module has no
+//! public query facade yet. Room, identity, copilot and workspace facts go through the ports in
+//! [`super::composed`], implemented in `apps/*` over the owning modules' query APIs.
 
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -9,11 +10,7 @@ use uuid::Uuid;
 use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppResult, RoomId, WorkspaceId};
 
-use super::ports::{
-    CopilotNames, RoomContext, RoomMeta, RoomMetaSource, TranscriptData, TranscriptSegment,
-    TranscriptSource,
-};
-use warptalk_kernel::UserId;
+use super::ports::{TranscriptData, TranscriptSegment, TranscriptSource};
 
 /// Final transcript segments for the summary job. TEMPORARY cross-schema read of
 /// `transcript.*` like the adapters above (read-only).
@@ -30,6 +27,22 @@ impl PgTranscriptSource {
 #[async_trait]
 impl TranscriptSource for PgTranscriptSource {
     async fn load(&self, room: RoomId, limit: u32) -> AppResult<Option<TranscriptData>> {
+        self.load_ordered(room, limit, false).await
+    }
+
+    async fn load_recent(&self, room: RoomId, limit: u32) -> AppResult<Option<TranscriptData>> {
+        self.load_ordered(room, limit, true).await
+    }
+}
+
+impl PgTranscriptSource {
+    /// `newest`: keep the newest `limit` segments instead of the oldest (both oldest first).
+    async fn load_ordered(
+        &self,
+        room: RoomId,
+        limit: u32,
+        newest: bool,
+    ) -> AppResult<Option<TranscriptData>> {
         let head: Option<(Uuid, Uuid, i32, String)> = sqlx::query_as(
             "SELECT id, workspace_id, version, status FROM transcript.transcripts \
              WHERE translation_room_id = $1 AND is_current AND deleted_at IS NULL",
@@ -52,17 +65,26 @@ impl TranscriptSource for PgTranscriptSource {
         let rows: Vec<(Uuid, String, String, String, i32)> = if limit == 0 {
             Vec::new()
         } else {
-            sqlx::query_as(
+            let sql = if newest {
+                "SELECT id, speaker_name, original_text, original_language, start_time_ms FROM ( \
+                     SELECT id, speaker_name, original_text, original_language, start_time_ms, \
+                            sequence_order \
+                     FROM transcript.transcript_segments \
+                     WHERE transcript_id = $1 AND is_final AND btrim(original_text) <> '' \
+                     ORDER BY sequence_order DESC LIMIT $2) newest \
+                 ORDER BY sequence_order"
+            } else {
                 "SELECT id, speaker_name, original_text, original_language, start_time_ms \
                  FROM transcript.transcript_segments \
                  WHERE transcript_id = $1 AND is_final AND btrim(original_text) <> '' \
-                 ORDER BY sequence_order LIMIT $2",
-            )
-            .bind(id)
-            .bind(i64::from(limit))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?
+                 ORDER BY sequence_order LIMIT $2"
+            };
+            sqlx::query_as(sql)
+                .bind(id)
+                .bind(i64::from(limit))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?
         };
         Ok(Some(TranscriptData {
             workspace_id: WorkspaceId::from_uuid(ws),
@@ -79,107 +101,6 @@ impl TranscriptSource for PgTranscriptSource {
                 })
                 .collect(),
             total_segments: u32::try_from(total).unwrap_or(u32::MAX),
-        }))
-    }
-}
-
-/// Room title, languages and participant names for the summary prompt. TEMPORARY cross-schema
-/// read of `translation_room.*` like the adapters above.
-pub struct PgRoomMetaSource {
-    pool: PgPool,
-}
-
-impl PgRoomMetaSource {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait]
-impl RoomMetaSource for PgRoomMetaSource {
-    async fn room(&self, room: RoomId) -> AppResult<Option<RoomMeta>> {
-        let row: Option<(Uuid, String, String, serde_json::Value)> = sqlx::query_as(
-            "SELECT workspace_id, title, source_language, target_languages \
-             FROM translation_room.translation_rooms WHERE id = $1",
-        )
-        .bind(room.as_uuid())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        let Some((ws, title, source_language, targets)) = row else {
-            return Ok(None);
-        };
-        let participants: Vec<String> = sqlx::query_scalar(
-            "SELECT display_name FROM translation_room.translation_room_participants \
-             WHERE translation_room_id = $1 ORDER BY created_at",
-        )
-        .bind(room.as_uuid())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(Some(RoomMeta {
-            workspace_id: WorkspaceId::from_uuid(ws),
-            title,
-            source_language,
-            target_languages: serde_json::from_value(targets).unwrap_or_default(),
-            participants,
-        }))
-    }
-
-    async fn context(&self, room: RoomId) -> AppResult<Option<RoomContext>> {
-        let row: Option<(Uuid, String, String, Option<Uuid>)> = sqlx::query_as(
-            "SELECT host_id, title, translation_room_type, series_id \
-             FROM translation_room.translation_rooms WHERE id = $1",
-        )
-        .bind(room.as_uuid())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        let Some((host, title, room_type, series_id)) = row else {
-            return Ok(None);
-        };
-        let host_name: Option<String> =
-            sqlx::query_scalar("SELECT full_name FROM identity.users WHERE id = $1")
-                .bind(host)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        let copilot = if room_type == "COPILOT_SESSION" {
-            let names: Option<(String, String)> = sqlx::query_as(
-                "SELECT name_me, name_others FROM copilot.sessions WHERE room_id = $1",
-            )
-            .bind(room.as_uuid())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            Some(match names {
-                Some((me, others)) => CopilotNames { me, others },
-                None => CopilotNames {
-                    me: "Tôi".into(),
-                    others: "Người khác".into(),
-                },
-            })
-        } else {
-            None
-        };
-        let users: Vec<(String, Uuid)> = sqlx::query_as(
-            "SELECT display_name, user_id FROM translation_room.translation_room_participants \
-             WHERE translation_room_id = $1 AND user_id IS NOT NULL ORDER BY created_at",
-        )
-        .bind(room.as_uuid())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(Some(RoomContext {
-            host_user_id: Some(UserId::from_uuid(host)),
-            host_name: host_name.filter(|n| !n.trim().is_empty()),
-            copilot,
-            series_id,
-            title,
-            participant_users: users
-                .into_iter()
-                .map(|(n, u)| (n, UserId::from_uuid(u)))
-                .collect(),
         }))
     }
 }

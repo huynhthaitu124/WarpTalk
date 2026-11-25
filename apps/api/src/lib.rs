@@ -1,5 +1,6 @@
 //! Business plane composition root: wires modules into one axum router.
 
+pub mod assistant_adapters;
 pub mod auth_wiring;
 pub mod billing_wiring;
 pub mod copilot_stt;

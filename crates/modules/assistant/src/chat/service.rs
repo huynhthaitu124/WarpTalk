@@ -127,7 +127,7 @@ impl ChatService {
         cfg: &ChatConfig,
     ) -> AppResult<crate::suggestion::ResolvedLlm> {
         ensure_enabled(cfg)?;
-        let resolved = match self.d.llm.for_purpose(ws, Purpose::Summary).await {
+        let resolved = match self.d.llm.for_purpose(ws, Purpose::Chat).await {
             Ok(r) => r,
             Err(ResolveError::NotConfigured) => {
                 return Err(AppError::coded(
@@ -178,12 +178,16 @@ impl ChatService {
         room: RoomId,
         cfg: &ChatConfig,
     ) -> AppResult<Option<TranscriptData>> {
-        let t = self.d.transcripts.load(room, cfg.max_segments).await?;
+        let t = self
+            .d
+            .transcripts
+            .load_recent(room, cfg.max_segments)
+            .await?;
         if let Some(t) = &t
             && t.total_segments > cfg.max_segments
         {
             tracing::warn!(%room, total = t.total_segments, max = cfg.max_segments,
-                "transcript longer than assistant_chat.max_segments; newest lines are not visible");
+                "transcript longer than assistant_chat.max_segments; the oldest lines are cut, newest kept");
         }
         Ok(t)
     }

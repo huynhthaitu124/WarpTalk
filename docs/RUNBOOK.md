@@ -526,3 +526,29 @@ Biến môi trường của worker (`W`); mặc định tắt OCR nên PDF scan 
 - Docker: `docker build -f deploy/docker/Dockerfile.rust --build-arg WITH_OCR=1 --target worker .` cài `tesseract-ocr`, `tesseract-ocr-vie`, `poppler-utils`.
 - `skipReason` (trong `GET /workspaces/{id}/documents[/{docId}]`): `ocr_unavailable`, `unsupported_type`, `invalid_encoding`, `external_llm_disallowed`, `no_indexable_content`, `ai_retrieval_not_allowed`.
 - Reindex (owner/admin): `POST /workspaces/{id}/documents/{docId}/reindex` và `POST /workspaces/{id}/documents/reindex?status=skipped|failed|all&limit=50` (tối đa 200/lần; trả `remaining`, gọi lại để tiếp tục). Tài liệu `pending` không bị đụng tới nên gọi lặp là an toàn; `all` gồm cả `completed` (làm mới toàn bộ). Ảnh png/jpg/webp upload được và đi qua OCR.
+
+## Worker: số pipeline gợi ý đồng thời (`SUGGESTION_MAX_PIPELINES`)
+
+`SuggestionWorker` chạy tối đa N pipeline model cùng lúc trên toàn bộ phòng của một tiến trình worker (semaphore toàn cục; mỗi phòng vẫn chỉ 1 pipeline tại một thời điểm). Mặc định **8**.
+
+| Biến | Bắt buộc | Mặc định | Ví dụ | Ghi chú |
+|---|---|---|---|---|
+| `SUGGESTION_MAX_PIPELINES` | không | `8` | `24` | Số nguyên 1 đến 512; thiếu, rỗng, `0` hoặc không đọc được thì về 8 (log WARN); trên 512 bị cắt về 512. Giá trị đang dùng được log ở INFO khi worker khởi động (`suggestion worker concurrency`). Đổi cần khởi động lại worker. Là giới hạn **mỗi tiến trình**: chạy k worker thì tổng là k x N |
+
+Chọn giá trị theo `docs/perf/copilot-latency.md` (bench giả, mỗi phòng phát lại một cuộc họp theo thời gian thực):
+
+- Dưới khoảng 10 phiên đồng thời, 8 là đủ: xếp hàng gần 0, độ trễ gần bằng `decide + generate` của model (~1,0 s).
+- Ở khoảng **50 phiên đồng thời với 8 pipeline** bắt đầu xếp hàng: cụm tới 26 pipeline chờ, xếp hàng p50 1,3 s / p95 2,8 s, `answer` p95 4,0 s. Nâng lên **24** đưa `answer` p95 về 1,4 s và xếp hàng về 0.
+- Quy tắc thô: `N >= (số phòng đang họp) x 0,08 x hệ số bùng nổ 3 đến 4`. Chỉ tiêu: thời gian xếp hàng p95 < 200 ms; vượt nghĩa là thiếu pipeline, không phải model chậm.
+- Trần thực tế là rate limit của nhà cung cấp (TPM/RPM), bench giả không có: tăng N từng bước (8 -> 16 -> 24), theo dõi lỗi 429 / `Overloaded` và độ trễ, đừng tăng quá ngưỡng của khoá.
+- Đo lại trước khi đổi: `warptalk-ai-eval bench-latency --sessions 1,10,50 --max-pipelines <N> --out out/bench.json` (xem `docs/perf/copilot-latency.md`, `docs/architecture/ai-eval.md`).
+
+## API: giới hạn socket âm thanh copilot theo người dùng (Redis)
+
+Giới hạn số socket `/copilot/sessions/{id}/audio` mỗi người dùng dùng chung Redis giữa mọi replica API (`copilot:audio-conns:{user}`, mỗi kết nối là một lease được heartbeat; replica chết thì lease hết hạn sau `COPILOT_AUDIO_LIMIT_LEASE_SECS`).
+
+| Biến | Mặc định | Ghi chú |
+|---|---|---|
+| `COPILOT_AUDIO_MAX_CONCURRENT_PER_USER` | `2` | Vượt quá trả 429 `TOO_MANY_AUDIO_STREAMS` |
+| `COPILOT_AUDIO_LIMIT_LEASE_SECS` | `60` | Tối thiểu 3; heartbeat mỗi lease/3 |
+| `COPILOT_AUDIO_LIMIT_FAIL_OPEN` | `true` | Redis không liên lạc được: `true` cho kết nối qua (ưu tiên sẵn sàng), `false` trả 503 |

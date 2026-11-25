@@ -163,6 +163,8 @@ export interface MeetingSummary {
   detailed: string;
   decisions: string[];
   openQuestions: string[];
+  /** Earlier action items this meeting reported as done / still open (only when said out loud). */
+  previousItems: { task: string; status: 'done' | 'open' }[];
   errorCode?: string;
   generatedAt?: string;
 }
@@ -188,6 +190,12 @@ export function parseSummary(json: unknown): MeetingSummary | null {
   if (!short && !detailed && status === 'none') return null;
   return {
     status, short, detailed, decisions: strList(content.decisions ?? content.keyDecisions), openQuestions: strList(content.openQuestions), errorCode,
+    previousItems: listOf(content.previousItems).flatMap((e) => {
+      const o = obj(e);
+      const task = str(o?.task);
+      const st = str(o?.status)?.toLowerCase();
+      return task && (st === 'done' || st === 'open') ? [{ task, status: st }] : [];
+    }),
     generatedAt: str(o.generatedAt) ?? str(latest?.completedAt) ?? str(obj(o.lastCompleted)?.completedAt) ?? str(o.createdAt),
   };
 }
@@ -290,5 +298,67 @@ export function useSetMyActionItemDone(wsId: string | undefined) {
       return api(`/meetings/${v.roomId}/action-items/${v.id}`, { method: 'PATCH', body: { status: v.done ? 'done' : 'open' } });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['action-items', 'mine', wsId] }),
+  });
+}
+
+// ---- "My tasks": `GET /me/action-items?status=open|done&limit=` (the caller's items across their workspaces)
+export interface MyTask extends ActionItem { roomId?: string; createdAt?: string; assigneeUserId?: string }
+export type TaskStatus = 'open' | 'done';
+
+export function useMeActionItems(status: TaskStatus) {
+  return useQuery({
+    queryKey: ['action-items', 'me', status],
+    retry: false,
+    queryFn: async (): Promise<MyTask[]> => {
+      const json = await api('/me/action-items', { query: { status, limit: 200 }, schema: z.unknown() });
+      return listOf(json, 'actionItems').flatMap((e) => {
+        const o = obj(e);
+        return parseActionItems([e]).map((a) => ({ ...a, roomId: str(o?.roomId), createdAt: str(o?.createdAt), assigneeUserId: str(o?.assigneeUserId) }));
+      });
+    },
+  });
+}
+export function useSetMeTaskDone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; roomId?: string; done: boolean }) => {
+      if (!v.roomId) throw new Error('This task has no meeting to update.');
+      return api(`/meetings/${v.roomId}/action-items/${v.id}`, { method: 'PATCH', body: { status: v.done ? 'done' : 'open' } });
+    },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['action-items'] }); },
+  });
+}
+
+// ---- prior context: `GET /meetings/{roomId}/prior-context` -> { openActionItems[], lastSummaries[] }
+export interface PriorOpenItem { id: string; roomId: string; roomTitle?: string; task: string; owner?: string; due?: string }
+export interface PriorSummary { roomId: string; title?: string; completedAt?: string; summaryShort: string; decisions: string[]; openQuestions: string[]; sameSeries: boolean }
+export interface PriorContext { openActionItems: PriorOpenItem[]; lastSummaries: PriorSummary[] }
+
+export function parsePriorContext(json: unknown): PriorContext {
+  const o = obj(json);
+  return {
+    openActionItems: listOf(o?.openActionItems).flatMap((e): PriorOpenItem[] => {
+      const x = obj(e);
+      const id = str(x?.id);
+      const task = str(x?.task);
+      return x && id && task ? [{ id, roomId: str(x.roomId) ?? '', roomTitle: str(x.roomTitle), task, owner: str(x.owner), due: str(x.due) }] : [];
+    }),
+    lastSummaries: listOf(o?.lastSummaries).flatMap((e): PriorSummary[] => {
+      const x = obj(e);
+      const short = str(x?.summaryShort);
+      return x && short ? [{ roomId: str(x.roomId) ?? '', title: str(x.title), completedAt: str(x.completedAt), summaryShort: short, decisions: strList(x.decisions), openQuestions: strList(x.openQuestions), sameSeries: x.sameSeries === true }] : [];
+    }),
+  };
+}
+
+export function usePriorContext(roomId: string | undefined) {
+  return useQuery({
+    queryKey: ['prior-context', roomId],
+    enabled: !!roomId,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      try { return parsePriorContext(await api(`/meetings/${roomId}/prior-context`, { schema: z.unknown() })); } catch (e) { if (gone(e)) return parsePriorContext(null); throw e; }
+    },
   });
 }

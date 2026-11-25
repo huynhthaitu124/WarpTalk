@@ -283,7 +283,7 @@ async fn harness(n_segments: usize, seg_chars: usize, extra_cfg: &str) -> Option
         println!("skipping: DATABASE_URL / REDIS_URL not set");
         return None;
     };
-    let pool = warptalk_db::connect(&db, 5).await.unwrap();
+    let pool = warptalk_db::connect(&db, 2).await.unwrap();
     warptalk_db::run_migrations(
         &pool,
         &[
@@ -630,7 +630,7 @@ async fn regenerate_creates_version_2_and_keeps_done_items() {
     assert_eq!(v["lastCompleted"]["version"], 1);
 
     // The sweeper (quiet = 0) runs it.
-    assert_eq!(h.worker.sweep(Duration::ZERO).await, 1);
+    assert_eq!(h.worker.sweep_scoped(Duration::ZERO, Some(h.ws)).await, 1);
     h.worker.drain().await;
     assert_eq!(
         h.rows().await,
@@ -861,7 +861,7 @@ async fn transient_llm_errors_retry_then_fail_and_bad_output_is_permanent() {
     // Attempt 1 exhausted its call retries (2 calls) and went back to pending.
     assert_eq!(h.rows().await, vec![(1, "pending".into(), None)]);
     assert_eq!(h.llm.total(), 2);
-    h.worker.sweep(Duration::ZERO).await;
+    h.worker.sweep_scoped(Duration::ZERO, Some(h.ws)).await;
     h.worker.drain().await;
     assert_eq!(
         h.rows().await,

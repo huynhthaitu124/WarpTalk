@@ -49,6 +49,39 @@ pub struct CopilotDeps {
     pub rate_limiter: Arc<dyn RateLimiter>,
 }
 
+/// Display names of a copilot session's two channels (what the transcript stores as speaker
+/// names).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionNames {
+    pub me: String,
+    pub others: String,
+}
+
+/// Pool-only read facade for other modules / workers.
+#[derive(Clone)]
+pub struct CopilotQueries {
+    repo: Arc<dyn SessionRepo>,
+}
+
+impl CopilotQueries {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            repo: Arc::new(PgSessionRepo::new(pool)),
+        }
+    }
+
+    /// `None` when the room has no copilot session.
+    pub async fn session_names(
+        &self,
+        room: warptalk_kernel::RoomId,
+    ) -> warptalk_kernel::AppResult<Option<SessionNames>> {
+        Ok(self.repo.get(room).await?.map(|s| SessionNames {
+            me: s.name_me,
+            others: s.name_others,
+        }))
+    }
+}
+
 pub struct CopilotModule {
     service: Arc<CopilotService>,
     jwt: JwtKeys,

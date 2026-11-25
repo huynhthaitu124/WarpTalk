@@ -7,9 +7,9 @@
 //! the validated result in `assistant.meeting_summaries` / `assistant.action_items`.
 //! Tunables live in the `summary` settings namespace ([`config::SummaryConfig`]).
 
+pub mod composed;
 pub mod config;
 pub mod model;
-pub mod pg_access;
 pub mod pg_sources;
 pub mod ports;
 pub mod prompt;
@@ -18,13 +18,16 @@ pub mod repo;
 pub mod service;
 pub mod worker;
 
+pub use composed::{
+    ComposedRoomAccess, ComposedRoomMetaSource, CopilotNameSource, HostDirectory, RoomFactsData,
+    RoomFactsSource, RoomRelation, RoomRelations,
+};
 pub use config::{NS_SUMMARY, SummaryConfig, register as register_config};
 pub use model::{
     ActionItem, ActionItemDraft, PreviousItemUpdate, SUMMARY_GROUP, SummaryContent, SummaryJob,
     SummaryMeta, SummaryRequest, SummaryResultEvent, SummaryStatus,
 };
-pub use pg_access::{PgExternalLlmGate, PgRoomAccess};
-pub use pg_sources::{PgRoomMetaSource, PgTranscriptSource};
+pub use pg_sources::PgTranscriptSource;
 pub use ports::{
     AllowAllExternalLlm, CopilotNames, ExternalLlmGate, FollowUpSource, LiveFollowUp, NoBus,
     NoFollowUps, RoomAccess, RoomAccessInfo, RoomContext, RoomMeta, RoomMetaSource, SummaryBus,

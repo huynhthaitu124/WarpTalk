@@ -11,13 +11,17 @@ import { LANGUAGES, languageLabel } from '@/lib/languages';
 import { useNative, type NativeError } from '@/lib/native';
 import { captureError, pendingSegments, startCopilotCapture, useCopilotLive, type LiveSegment } from '@/lib/copilotLive';
 import { useWorkspace } from '@/lib/workspace';
-import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
+import { useFeatures } from '@/lib/features';
+import { useFollowUps, useSuggestionFeedback, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
+import type { Citation } from '@/lib/ask';
+import { ASK, PRIOR } from '@/lib/strings';
 import {
   PLATFORMS, platformLabel, sessionIsLive, useActionItems, useCreateSession, useMyActionItems, useRegenerateSummary, useSession, useSessions, useSetActionItemDone,
-  useSetMyActionItemDone, useSummary, summaryBusy, useEndSession, useTranscript, type ActionItem, type CopilotSession,
+  useSetMyActionItemDone, useSummary, summaryBusy, useEndSession, usePriorContext, useTranscript, type ActionItem, type CopilotSession,
 } from '@/lib/copilot';
 import { RoomDot, formatShortDate, formatWhen } from './common';
 import { SuggestionsTab } from './meeting/Suggestions';
+import { AskPanel } from './meeting/AskPanel';
 import { errCode, errMsg } from './errors';
 import { InsufficientCreditsAlert } from './Billing';
 import { CaptureRecovery, LiveCapturePanel, PartialLines, useAudioApps, useOverlayMirror } from './SessionLive';
@@ -261,14 +265,33 @@ export function SessionsPage() {
   );
 }
 
-function TranscriptBand({ roomId, live, partials, local }: { roomId: string; live: boolean; partials?: Parameters<typeof PartialLines>[0]['partials']; local?: LiveSegment[] }) {
+/** A transcript citation to scroll to: the segment id when the line is loaded, else the nearest line at or before `tMs`. */
+export interface LineFocus { ref?: string; tMs?: number; n: number }
+
+function TranscriptBand({ roomId, live, partials, local, focus }: { roomId: string; live: boolean; partials?: Parameters<typeof PartialLines>[0]['partials']; local?: LiveSegment[]; focus?: LineFocus }) {
   const t = useTranscript(roomId, live);
   const polled = t.data ?? [];
   // Segments the host sent that the poll has not returned yet; the poll is the source of truth and replaces them.
   const pending = pendingSegments(roomId, polled, local ?? []);
   const lines = [...polled, ...pending.map((p) => ({ id: p.clientSegmentId, speaker: p.channel === 'me' ? 'Me' : 'Others', text: p.text, atMs: p.startMs, final: true, mine: p.channel === 'me', pending: true }))];
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (live) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [live, lines.length]);
+  const [lit, setLit] = useState<string | null>(null);
+  const followLive = useRef(true);
+  useEffect(() => { if (live && followLive.current) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [live, lines.length]);
+  // Citation click: highlight the cited line for a few seconds and bring it into view (live auto-scroll pauses).
+  useEffect(() => {
+    if (!focus) return;
+    const byId = lines.find((l) => l.id === focus.ref);
+    const byTime = focus.tMs === undefined ? undefined : [...lines].filter((l) => l.atMs !== undefined && l.atMs <= focus.tMs!).sort((a, b) => b.atMs! - a.atMs!)[0];
+    const hit = byId ?? byTime;
+    if (!hit) return;
+    followLive.current = false;
+    setLit(hit.id);
+    document.querySelector(`[data-line-id="${CSS.escape(hit.id)}"]`)?.scrollIntoView?.({ block: 'center' });
+    const t = setTimeout(() => { setLit(null); followLive.current = true; }, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.n]);
   return (
     <section aria-label="Transcript" className="min-w-0">
       <GroupHeader>
@@ -286,7 +309,7 @@ function TranscriptBand({ roomId, live, partials, local }: { roomId: string; liv
         <div tabIndex={0} aria-label="Transcript lines" className="max-h-[480px] overflow-y-auto focus-ring">
           <ol>
             {lines.map((l) => (
-              <li key={l.id} data-testid="transcript-line" data-mine={l.mine} data-pending={'pending' in l ? true : undefined} className="flex gap-3 border-b border-row px-4 py-2">
+              <li key={l.id} data-testid="transcript-line" data-line-id={l.id} data-highlight={lit === l.id ? 'true' : undefined} data-mine={l.mine} data-pending={'pending' in l ? true : undefined} className={`flex gap-3 border-b border-row px-4 py-2 ${lit === l.id ? 'bg-primary/10 ring-1 ring-inset ring-primary' : ''}`}>
                 <span className="w-12 shrink-0 pt-0.5 text-caption tabular-nums text-ink-subtle">{mmss(l.atMs)}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-body-sm font-medium text-ink-muted">{l.speaker}</span>
@@ -346,6 +369,19 @@ function SummaryBand({ roomId, ended, waiting, onRequested }: { roomId: string; 
                 <ul className="mt-1 list-disc pl-5 text-body text-ink">{s.openQuestions.map((d, i) => <li key={i}>{d}</li>)}</ul>
               </div>
             )}
+            {s.previousItems.length > 0 && (
+              <div data-testid="previous-items">
+                <h3 className="text-body-sm font-semibold text-ink">{PRIOR.previousItems}</h3>
+                <ul className="mt-1 flex flex-col gap-1 text-body text-ink">
+                  {s.previousItems.map((p, i) => (
+                    <li key={i} data-status={p.status} className="flex flex-wrap items-center gap-2">
+                      <Badge tone={p.status === 'done' ? 'success' : 'warning'} size="sm">{p.status === 'done' ? PRIOR.statusDone : PRIOR.statusOpen}</Badge>
+                      <span className={`min-w-0 break-words ${p.status === 'done' ? 'text-ink-subtle line-through' : ''}`}>{p.task}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {summaryBusy(s) && <p className="text-caption text-ink-subtle">Updating the summary…</p>}
             {s.generatedAt && <p className="text-caption text-ink-subtle">Generated {formatWhen(s.generatedAt)}</p>}
           </div>
@@ -389,6 +425,55 @@ function ActionItemsBand({ roomId }: { roomId: string }) {
   );
 }
 
+/** Open action items and last summaries of earlier meetings (what the assistant carries into this one). Hidden when there is none. */
+function PriorContextBand({ roomId }: { roomId: string }) {
+  const q = usePriorContext(roomId);
+  const { features } = useFeatures();
+  const d = q.data;
+  if (q.isLoading) return null;
+  if (q.isError) return <section aria-label={PRIOR.title}><PageBody><Alert tone="warning" title={PRIOR.title}>{PRIOR.loadError}</Alert></PageBody></section>;
+  if (!d || (d.openActionItems.length === 0 && d.lastSummaries.length === 0)) return null;
+  const link = (id: string) => (features.copilot ? `/sessions/${id}` : `/rooms/${id}`);
+  return (
+    <section aria-label={PRIOR.title} data-testid="prior-context" className="min-w-0">
+      <GroupHeader><h2 className="font-medium text-ink">{PRIOR.title}</h2></GroupHeader>
+      <div className="flex flex-col gap-3 px-4 py-3">
+        {d.openActionItems.length > 0 && (
+          <div>
+            <h3 className="text-body-sm font-semibold text-ink">{PRIOR.openItems}</h3>
+            <ul className="mt-1 flex flex-col gap-1">
+              {d.openActionItems.map((i) => (
+                <li key={i.id} data-testid="prior-item" className="text-body text-ink">
+                  <span className="break-words">{i.task}</span>
+                  {(i.owner || i.due) && <span className="text-body-sm text-ink-subtle"> ({[i.owner, i.due].filter(Boolean).join(', ')})</span>}
+                  {i.roomId && <> <Link to={link(i.roomId)} className="text-body-sm">{i.roomTitle ?? 'Meeting'}</Link></>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {d.lastSummaries.length > 0 && (
+          <div>
+            <h3 className="text-body-sm font-semibold text-ink">{PRIOR.lastSummaries}</h3>
+            <ul className="mt-1 flex flex-col gap-2">
+              {d.lastSummaries.map((m, n) => (
+                <li key={`${m.roomId}-${n}`} data-testid="prior-summary" className="text-body text-ink">
+                  <span className="flex flex-wrap items-center gap-2">
+                    {m.roomId ? <Link to={link(m.roomId)} className="font-medium">{m.title ?? 'Meeting'}</Link> : <span className="font-medium">{m.title ?? 'Meeting'}</span>}
+                    {m.sameSeries && <Badge size="sm">{PRIOR.sameSeries}</Badge>}
+                    {m.completedAt && <span className="text-caption text-ink-subtle">{formatWhen(m.completedAt)}</span>}
+                  </span>
+                  <span className="mt-0.5 block break-words text-body-sm text-ink-muted">{m.summaryShort}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /** `/sessions/:sessionId`: live transcript (polled while IN_PROGRESS), suggestions, follow-ups, summary, action items. */
 export function SessionDetailPage() {
   const { sessionId = '' } = useParams();
@@ -414,6 +499,8 @@ export function SessionDetailPage() {
 
   const stream = useSuggestionStream(sessionId, undefined, live);
   const triage = useSuggestionTriage(stream.items);
+  const feedback = useSuggestionFeedback();
+  const [focus, setFocus] = useState<LineFocus | undefined>();
   const followUps = useFollowUps(sessionId, !!s);
   useOverlayMirror(native, capturing, triage.visible);
 
@@ -498,13 +585,20 @@ export function SessionDetailPage() {
         {!ended && !canCapture && <CaptureNotice />}
       </header>
       <div className="grid min-w-0 border-t border-row lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <TranscriptBand roomId={sessionId} live={live} partials={capturing ? cap.live.partials : undefined} local={capturing ? cap.live.segments : undefined} />
-        <section aria-label="Suggestions and follow-ups" className="min-w-0 border-row lg:border-l">
+        <TranscriptBand roomId={sessionId} live={live} partials={capturing ? cap.live.partials : undefined} local={capturing ? cap.live.segments : undefined} focus={focus} />
+        <div className="min-w-0 border-t border-row lg:border-l lg:border-t-0">
+        <section aria-label="Suggestions and follow-ups" className="min-w-0">
           <GroupHeader><h2 className="font-medium text-ink">Suggestions and follow-ups</h2></GroupHeader>
-          <SuggestionsTab view={{ items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze }} />
+          <SuggestionsTab view={{ items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze, feedback }} />
         </section>
+        <section aria-label="Ask AI" className="min-w-0 border-t border-row">
+          <GroupHeader><h2 className="font-medium text-ink">{ASK.title}</h2></GroupHeader>
+          <AskPanel roomId={sessionId} className="h-[520px]" onCitation={(c: Citation) => setFocus((f) => ({ ref: c.ref, tMs: c.tMs, n: (f?.n ?? 0) + 1 }))} />
+        </section>
+        </div>
       </div>
       <div className="flex min-w-0 flex-col border-t border-row">
+        <PriorContextBand roomId={sessionId} />
         <SummaryBand roomId={sessionId} ended={ended} waiting={waiting} onRequested={() => setWaiting(true)} />
         <ActionItemsBand roomId={sessionId} />
       </div>

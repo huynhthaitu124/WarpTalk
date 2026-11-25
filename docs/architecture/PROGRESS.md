@@ -108,3 +108,19 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - Knowledge: trích PDF (theo trang)/DOCX (heading, bảng)/HTML trong worker; scanned → OCR (chưa có engine → skipped).
 - `apps/ai-eval`: 6 meeting tổng hợp (4 vi, 2 en), metric suggestion/summary, judge tuỳ chọn, baseline fake + `--compare`. Chưa chạy với model thật.
 - Còn: hỏi AI trong họp + tóm tắt cuốn chiếu (WarpBot), STT dự phòng phía server, trí nhớ giữa các cuộc họp, OCR, reindex hàng loạt.
+
+## Lõi AI vòng 2 — 2026-11-25 (dừng giữa chừng theo yêu cầu)
+
+Đã xong (mỗi agent tự chạy clippy + test crate của mình):
+- Summary biết người nói (tên host, `assigneeUserId`, `GET /me/action-items`), trí nhớ giữa các cuộc họp (`memory`, `GET /meetings/{id}/prior-context`).
+- Prompt safety (`assistant::safety`: fence nonce, sanitize, check_output) cho suggestion/summary/chat; feedback gợi ý + quality + export sang ai-eval; cờ BYO `key_source`.
+- WarpBot: `POST /meetings/{id}/ask`, `/recap` (SSE + citations), history, rate limit, metering.
+- STT dự phòng phía server (WS `/copilot/sessions/{id}/audio` + ticket), auto fallback trong copilot-core, chế độ ngôn ngữ fixed/auto/multi + vocabulary.
+- OCR (tesseract/openai), tài liệu ảnh, `skipReason`, reindex đơn lẻ/hàng loạt.
+- ai-eval: bench độ trễ copilot, dataset tấn công injection, `scripts/real-provider-check.sh`.
+
+Đang dở (commit cuối là WIP; `cargo check --workspace --all-targets` và `tsc` qua, CHƯA chạy clippy/test toàn bộ):
+- Agent dọn dẹp: sửa test `assistant/tests/suggestion.rs` bị treo, cô lập test summary, thay đọc cross-schema trong summary bằng port, fence cho fact extraction (knowledge), cập nhật fake provider ai-eval theo prompt fence mới, chat giữ dòng mới nhất + `Purpose::Chat`, giới hạn WS audio qua Redis, cấu hình số pipeline worker.
+- Web: panel Hỏi AI, nút feedback gợi ý, trang Việc của tôi, trang chất lượng, reindex/skipReason, badge Server STT.
+
+Việc đầu tiên khi quay lại: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (DATABASE_URL/REDIS_URL), `cd apps/web && npm run lint && npx playwright test --trace off`; xem `git diff HEAD~1` để biết phần dở. Sau đó owner chạy `scripts/real-provider-check.sh` với key thật.

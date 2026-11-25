@@ -204,7 +204,7 @@ async fn harness_with(knowledge: Arc<dyn KnowledgeRetriever>, config: Value) -> 
         println!("skipping: DATABASE_URL / REDIS_URL not set");
         return None;
     };
-    let pool = warptalk_db::connect(&db, 5).await.unwrap();
+    let pool = warptalk_db::connect(&db, 2).await.unwrap();
     warptalk_db::run_migrations(&pool, &[warptalk_settings::MIGRATIONS])
         .await
         .unwrap();

@@ -4,7 +4,7 @@ import { Badge, Button, useToast } from '@/ui';
 import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
 import { baseIdentity, mergeCaption, parseCaption, pickTranslation, resolveSpeakers, senderLabel, type CaptionLine } from '@/lib/captions';
-import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
+import { useFollowUps, useSuggestionFeedback, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
 import { useParticipantAction, useParticipants, useRoomAction, useUpdateMyLanguages } from '@/lib/queries';
 import type { Room } from '@/lib/schemas';
 import { StatusStrip } from '../MeetingParts';
@@ -147,7 +147,8 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const stream = useSuggestionStream(room.id, captionLang);
   const triage = useSuggestionTriage(stream.items);
   const followUps = useFollowUps(room.id, stream.status !== 'unavailable');
-  const suggestions = stream.status === 'unavailable' ? undefined : { items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze };
+  const feedback = useSuggestionFeedback();
+  const suggestions = stream.status === 'unavailable' ? undefined : { items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze, feedback };
   const byUser = useMemo(() => new Map(roster.filter((p) => p.userId).map((p) => [p.userId as string, p])), [roster]);
   const tiles = useMemo<TileInfo[]>(() => session.participants.map((p) => {
     const r = byUser.get(baseIdentity(p.identity));
@@ -253,6 +254,8 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
               }}
               unread={unread}
               suggestions={suggestions}
+              askRoomId={room.id}
+              onCitation={() => setTab('transcript')}
             />
             <Button variant="ghost" size="icon" className="absolute right-2 top-1 lg:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="size-4" aria-hidden /></Button>
           </section>
