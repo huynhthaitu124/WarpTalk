@@ -60,7 +60,7 @@ export function CommandMenuProvider({ items, children }: { items: CommandItem[];
       <RD.Root open={open} onOpenChange={setOpen}>
         <RD.Portal>
           <RD.Overlay className="fixed inset-0 z-50 animate-fade-in bg-overlay backdrop-blur-[2px]" />
-          <RD.Content aria-label="Command menu" className="fixed left-1/2 top-[18vh] z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2 animate-pop-in overflow-hidden rounded-xl border border-hairline-strong bg-surface-2 shadow-pop focus:outline-none">
+          <RD.Content aria-label="Command menu" className="fixed left-1/2 top-[18vh] z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2 animate-pop-in overflow-hidden rounded-xl bg-elevated shadow-pop focus:outline-none">
             <RD.Title className="sr-only">Command menu</RD.Title>
             <RD.Description className="sr-only">Type to search commands. Use arrow keys to navigate and Enter to run.</RD.Description>
             <Command label="Search commands" loop>
@@ -74,7 +74,7 @@ export function CommandMenuProvider({ items, children }: { items: CommandItem[];
                 {groups.map(([g, list]) => (
                   <Command.Group key={g} heading={g} className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-eyebrow [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.4px] [&_[cmdk-group-heading]]:text-ink-subtle">
                     {list.map((i) => (
-                      <Command.Item key={i.id} value={`${i.group} ${i.label}`} keywords={i.keywords} onSelect={() => run(i)} className="flex h-9 cursor-default items-center gap-2.5 rounded-md px-2 text-body text-ink data-[selected=true]:bg-surface-4">
+                      <Command.Item key={i.id} value={`${i.group} ${i.label}`} keywords={i.keywords} onSelect={() => run(i)} className="flex h-9 cursor-default items-center gap-2.5 rounded-md px-2 text-body text-ink data-[selected=true]:bg-popover-hover">
                         {i.icon && <span className="text-ink-subtle" aria-hidden>{i.icon}</span>}
                         <span className="flex-1">{i.label}</span>
                         {i.shortcut && <Kbd>{i.shortcut}</Kbd>}

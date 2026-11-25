@@ -200,6 +200,40 @@ export function useRoom(id: string | undefined) {
     retry: false,
   });
 }
+const transcriptSegment = z.object({
+  id: z.string(),
+  speakerName: z.string(),
+  originalText: z.string(),
+  originalLanguage: z.string(),
+  startTimeMs: z.number().nullable().optional(),
+  sequenceOrder: z.number(),
+  translation: z.object({ language: z.string(), text: z.string() }).nullable().optional(),
+});
+const transcriptSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  totalSegments: z.number(),
+  totalDurationMs: z.number(),
+  segments: z.array(transcriptSegment),
+});
+export type Transcript = z.infer<typeof transcriptSchema>;
+/** Stored transcript of a room; `null` when none exists yet (404). */
+export function useTranscript(roomId: string | undefined, lang?: string, live = false) {
+  return useQuery({
+    queryKey: ['transcript', roomId, lang],
+    enabled: !!roomId,
+    retry: false,
+    refetchInterval: live ? 5000 : false,
+    queryFn: async () => {
+      try {
+        return await api(`/transcripts/${roomId}`, { query: { lang }, schema: transcriptSchema });
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+  });
+}
 export function useParticipants(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ['participants', id],
@@ -219,7 +253,7 @@ export function useRoutes(id: string | undefined, enabled = true) {
   });
 }
 export interface CreateRoomInput {
-  workspaceId: string; title: string; sourceLanguage: string; targetLanguages: string[]; requiresApproval: boolean; displayName?: string;
+  workspaceId: string; title: string; description?: string; sourceLanguage: string; targetLanguages: string[]; requiresApproval: boolean; displayName?: string; scheduledAt?: string;
 }
 export function useCreateRoom() {
   const qc = useQueryClient();
@@ -236,6 +270,27 @@ export function useRoomAction(id: string) {
     onSuccess: (r) => {
       qc.setQueryData(['room', id], r);
       void qc.invalidateQueries({ queryKey: ['rooms'] });
+      void qc.invalidateQueries({ queryKey: ['routes', id] });
+    },
+  });
+}
+export interface RoomPatch {
+  title?: string;
+  description?: string | null;
+  scheduledAt?: string | null;
+  sourceLanguage?: string;
+  targetLanguages?: string[];
+  requiresApproval?: boolean;
+}
+/** Host edit of room properties (PATCH; absent fields are kept, `null` clears). */
+export function useUpdateRoom(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: RoomPatch) => api(`/translation-rooms/${id}`, { method: 'PATCH', body: patch, schema: room }),
+    onSuccess: (r) => {
+      qc.setQueryData(['room', id], r);
+      void qc.invalidateQueries({ queryKey: ['rooms'] });
+      void qc.invalidateQueries({ queryKey: ['participants', id] });
       void qc.invalidateQueries({ queryKey: ['routes', id] });
     },
   });

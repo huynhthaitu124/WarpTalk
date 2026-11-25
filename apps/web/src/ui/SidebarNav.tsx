@@ -1,5 +1,6 @@
 import { Link, NavLink } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { CaretDown } from '@phosphor-icons/react';
 import { cn } from '@/lib/cn';
 
 /**
@@ -7,10 +8,21 @@ import { cn } from '@/lib/cn';
  * accessible name of the `<nav>`.
  */
 export function SidebarNav({ children, label = 'Primary', heading }: { children: ReactNode; label?: string; heading?: string }) {
+  const [open, setOpen] = useState(true);
   return (
     <nav aria-label={label} className="flex flex-col gap-px">
-      {heading && <p className="mb-1 flex h-6 items-center px-2 text-[12px] font-medium text-ink-subtle">{heading}</p>}
-      {children}
+      {heading && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="mb-0.5 flex h-7 w-fit items-center gap-1 rounded-md px-2 text-body-sm font-medium text-ink-muted hover:bg-surface-3/60 hover:text-ink focus-ring"
+        >
+          {heading}
+          <CaretDown aria-hidden size={10} weight="fill" className={cn('transition-transform', !open && '-rotate-90')} />
+        </button>
+      )}
+      {open && children}
     </nav>
   );
 }
@@ -35,13 +47,13 @@ export function SidebarLink({
           cn(
             'flex h-[30px] min-w-0 flex-1 items-center gap-2.5 rounded-[8px] px-2 text-body font-medium no-underline transition-colors focus-ring hover:no-underline',
             actions?.length && 'pr-14',
-            (active ?? isActive) ? 'bg-surface-3 text-ink' : 'text-ink/90 hover:bg-surface-3/60 hover:text-ink',
+            (active ?? isActive) ? 'bg-surface-3 text-ink' : 'text-ink/85 hover:bg-surface-3/60 hover:text-ink',
           )
         }
       >
         {({ isActive }) => (
           <>
-            <span aria-hidden className={cn('shrink-0 transition-colors', (active ?? isActive) ? 'text-ink' : 'text-ink-muted/80 group-hover:text-ink/80')}>{icon}</span>
+            <span aria-hidden className={cn('shrink-0 transition-colors', (active ?? isActive) ? 'text-ink' : 'text-ink-muted group-hover:text-ink')}>{icon}</span>
             <span className="truncate">{children}</span>
           </>
         )}

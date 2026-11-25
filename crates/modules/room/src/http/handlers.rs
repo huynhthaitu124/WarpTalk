@@ -10,10 +10,10 @@ type ApiResult<T> = AppResult<Json<T>>;
 use super::dto::{
     AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
     CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, JoinedDto, ListQuery,
-    PageDto, ParticipantDto, RoomDto, RoutesDto, UpdateLanguagesRequest,
+    PageDto, ParticipantDto, RoomDto, RoutesDto, UpdateLanguagesRequest, UpdateRoomRequest,
 };
 use crate::application::ports::RoomRecord;
-use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom};
+use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom, UpdateRoom};
 use crate::domain::{AudioMode, RoomAction, RoomStatus};
 
 pub async fn create(
@@ -28,6 +28,7 @@ pub async fn create(
             CreateRoom {
                 workspace_id: req.workspace_id,
                 title: req.title,
+                description: req.description,
                 host_display_name: req.display_name,
                 scheduled_at: req.scheduled_at,
                 source_language: req.source_language,
@@ -64,6 +65,30 @@ pub async fn get_one(
     Path(id): Path<RoomId>,
 ) -> ApiResult<RoomDto> {
     Ok(Json(s.room_dto(s.service.get(id, auth.user_id()).await?)))
+}
+
+pub async fn update(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+    Json(req): Json<UpdateRoomRequest>,
+) -> ApiResult<RoomDto> {
+    let room = s
+        .service
+        .update(
+            id,
+            auth.user_id(),
+            UpdateRoom {
+                title: req.title,
+                description: req.description,
+                scheduled_at: req.scheduled_at,
+                source_language: req.source_language,
+                target_languages: req.target_languages,
+                requires_approval: req.requires_approval,
+            },
+        )
+        .await?;
+    Ok(Json(s.room_dto(room)))
 }
 
 pub async fn join_by_code(

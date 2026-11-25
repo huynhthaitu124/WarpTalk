@@ -10,7 +10,7 @@ export function Tooltip({ content, children, side = 'top' }: { content: ReactNod
     <RT.Root>
       <RT.Trigger asChild>{children}</RT.Trigger>
       <RT.Portal>
-        <RT.Content side={side} sideOffset={6} className="z-[70] animate-fade-in rounded-md border border-hairline-strong bg-surface-3 px-2 py-1 text-caption text-ink shadow-pop">
+        <RT.Content side={side} sideOffset={6} className="z-[70] animate-fade-in rounded-md bg-popover px-2 py-1 text-caption text-ink shadow-pop">
           {content}
         </RT.Content>
       </RT.Portal>

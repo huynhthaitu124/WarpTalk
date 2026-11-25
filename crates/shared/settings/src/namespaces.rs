@@ -139,7 +139,7 @@ pub struct SuggestionSettings {
 impl Default for SuggestionSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             decide_model: "gpt-4o-mini".into(),
             generate_model: "gpt-4.1".into(),
             decide_max_tokens: 64,

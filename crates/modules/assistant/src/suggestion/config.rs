@@ -13,7 +13,7 @@
 //!
 //! ```text
 //! {
-//!   "enabled": false,                       // deploy switch (gate 1)
+//!   "enabled": true,                        // deploy switch (gate 1)
 //!   "decide_model": "gpt-4o-mini", "generate_model": "gpt-4.1",   // per-stage model (a BYO resolver may override)
 //!   "decide_max_tokens": 64, "generate_max_tokens": 200,          // per language for generate
 //!   "temperature": 0.2, "request_timeout_seconds": 8.0,
@@ -384,7 +384,7 @@ pub struct SuggestionConfig {
 impl Default for SuggestionConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             decide_model: "gpt-4o-mini".into(),
             generate_model: "gpt-4.1".into(),
             decide_max_tokens: 64,
@@ -742,6 +742,9 @@ mod tests {
             [
                 "clarification",
                 "term",
+                "consideration",
+                "concept",
+                "comparison",
                 "correction",
                 "fact",
                 "action_item",

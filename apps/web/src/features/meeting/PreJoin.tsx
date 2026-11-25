@@ -1,31 +1,39 @@
 import { useEffect, useRef } from 'react';
-import { Camera, CameraSlash, Microphone, VideoCamera, WarningCircle } from '@phosphor-icons/react';
-import { Alert, Button, Card, CardBody, Checkbox, Field, Input, Select, StatusPill } from '@/ui';
+import { Camera, CameraSlash, Microphone, MicrophoneSlash, VideoCamera, WarningCircle } from '@phosphor-icons/react';
+import { Alert, Button, Card, CardBody, Field, Input, Select, StatusPill, Tooltip } from '@/ui';
+import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import type { Room } from '@/lib/schemas';
 import type { MediaPreview } from './useMediaPreview';
 
-export interface PreJoinValues { name: string; speak: string; listen: string; joinMuted: boolean }
+/** One language per person: what they speak is also what they hear; everybody else is dubbed into it. */
+export interface PreJoinValues { name: string; language: string; micOn: boolean }
 
 /** Languages a room can use: the source language plus every target. */
 export function roomLanguages(r: Pick<Room, 'sourceLanguage' | 'targetLanguages'>): string[] {
   return [r.sourceLanguage, ...r.targetLanguages.filter((l) => l !== r.sourceLanguage)];
 }
 
-function LevelMeter({ level, active }: { level: number; active: boolean }) {
+function LevelMeter({ level, active, muted }: { level: number; active: boolean; muted: boolean }) {
   const pct = Math.round(level * 100);
   return (
     <div className="flex items-center gap-3">
-      <Microphone className="size-4 shrink-0 text-ink-subtle" aria-hidden />
+      {muted ? <MicrophoneSlash className="size-4 shrink-0 text-ink-subtle" aria-hidden /> : <Microphone className="size-4 shrink-0 text-ink-subtle" aria-hidden />}
       <div role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} data-testid="mic-meter" data-active={active} className="h-2 flex-1 overflow-hidden rounded-pill bg-surface-3">
         <div className="h-full rounded-pill bg-success transition-[width] duration-75" style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-24 text-right text-caption text-ink-subtle">{!active ? 'No microphone' : pct > 4 ? 'Hearing you' : 'Say something'}</span>
+      <span className="w-24 text-right text-caption text-ink-subtle">{!active ? 'No microphone' : muted ? 'Muted' : pct > 4 ? 'Hearing you' : 'Say something'}</span>
     </div>
   );
 }
 
-function Preview({ preview, name }: { preview: MediaPreview; name: string }) {
+const round = (on: boolean) => cn(
+  'grid size-11 place-items-center rounded-full shadow-sm backdrop-blur transition-colors focus-ring disabled:opacity-50',
+  on ? 'bg-black/45 text-white hover:bg-black/60' : 'bg-red-600 text-white hover:bg-red-700',
+);
+
+function Preview({ preview, name, micOn, onMic }: { preview: MediaPreview; name: string; micOn: boolean; onMic(): void }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -43,18 +51,19 @@ function Preview({ preview, name }: { preview: MediaPreview; name: string }) {
           <p className="text-body-sm">{preview.status === 'requesting' ? 'Starting camera…' : preview.camOn && !preview.hasVideo ? 'No camera available' : 'Camera is off'}</p>
         </div>
       )}
-      <span className="absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/75 px-2 py-0.5 text-caption text-white">{name || 'You'}</span>
-      <Button
-        size="sm"
-        variant="secondary"
-        className="absolute bottom-2 right-2"
-        aria-pressed={preview.camOn}
-        aria-label={preview.camOn ? 'Turn camera off' : 'Turn camera on'}
-        onClick={() => preview.setCamOn(!preview.camOn)}
-      >
-        {preview.camOn ? <Camera className="size-4" aria-hidden /> : <CameraSlash className="size-4" aria-hidden />}
-        {preview.camOn ? 'Turn camera off' : 'Turn camera on'}
-      </Button>
+      <span className="absolute left-3 top-3 max-w-[60%] truncate rounded-md bg-black/60 px-2 py-0.5 text-caption text-white">{name || 'You'}</span>
+      <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
+        <Tooltip content={micOn ? 'Mute microphone' : 'Unmute microphone'}>
+          <button type="button" className={round(micOn)} aria-pressed={micOn} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} disabled={!preview.hasAudio} onClick={onMic}>
+            {micOn ? <Microphone className="size-5" aria-hidden /> : <MicrophoneSlash className="size-5" aria-hidden />}
+          </button>
+        </Tooltip>
+        <Tooltip content={preview.camOn ? 'Turn camera off' : 'Turn camera on'}>
+          <button type="button" className={round(preview.camOn)} aria-pressed={preview.camOn} aria-label={preview.camOn ? 'Turn camera off' : 'Turn camera on'} onClick={() => preview.setCamOn(!preview.camOn)}>
+            {preview.camOn ? <Camera className="size-5" aria-hidden /> : <CameraSlash className="size-5" aria-hidden />}
+          </button>
+        </Tooltip>
+      </div>
     </div>
   );
 }
@@ -70,17 +79,16 @@ export function PreJoin({
   joining: boolean;
   notice?: { tone: 'warning' | 'danger'; title: string; body: string } | null;
 }) {
-  const langs = roomLanguages(room).map((c) => ({ value: c, label: languageLabel(c) }));
+  const langs = languageOptions(roomLanguages(room));
   const micSel = preview.micId || preview.stream?.getAudioTracks()[0]?.getSettings().deviceId || '';
   const camSel = preview.camId || preview.stream?.getVideoTracks()[0]?.getSettings().deviceId || '';
-  const sameLang = values.speak === values.listen;
   const blocked = preview.status === 'denied' || preview.status === 'error';
   return (
     <Card className="mx-auto w-full max-w-4xl" data-testid="meeting-prejoin">
       <CardBody className="grid gap-x-6 gap-y-4 p-4 sm:p-6 lg:grid-cols-[1.15fr_1fr] lg:grid-rows-[auto_1fr]">
         <div className="flex min-w-0 flex-col gap-3 lg:col-start-1 lg:row-start-1">
-          <Preview preview={preview} name={values.name} />
-          <LevelMeter level={preview.level} active={preview.hasAudio} />
+          <Preview preview={preview} name={values.name} micOn={values.micOn && preview.hasAudio} onMic={() => onChange({ micOn: !values.micOn })} />
+          <LevelMeter level={preview.level} active={preview.hasAudio} muted={!values.micOn} />
           {blocked && (
             <Alert tone="warning">
               <span className="flex items-start gap-2"><WarningCircle className="mt-0.5 size-4 shrink-0" aria-hidden /><span data-testid="media-blocked">{preview.message}</span></span>
@@ -118,11 +126,9 @@ export function PreJoin({
           </div>
           {notice && <Alert tone={notice.tone} title={notice.title}>{notice.body}</Alert>}
           <Field label="Display name (optional)"><Input value={values.name} onChange={(e) => onChange({ name: e.target.value })} maxLength={100} autoComplete="name" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="I speak"><Select value={values.speak} onValueChange={(v) => onChange({ speak: v })} options={langs} /></Field>
-            <Field label="I listen in" hint={sameLang ? 'Same as the language you speak: no dubbing for you.' : undefined}><Select value={values.listen} onValueChange={(v) => onChange({ listen: v })} options={langs} /></Field>
-          </div>
-          <Checkbox checked={values.joinMuted} onCheckedChange={(v) => onChange({ joinMuted: v })} label="Join with my microphone muted" />
+          <Field label="My language" hint={`You speak and hear ${languageLabel(values.language)}. Everyone else hears you in their own language.`}>
+            <Select value={values.language} onValueChange={(v) => onChange({ language: v })} options={langs} />
+          </Field>
           <Button variant="primary" size="lg" loading={joining} onClick={onJoin}>Join meeting</Button>
         </div>
       </CardBody>

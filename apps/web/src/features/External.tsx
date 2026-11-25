@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Broadcast as Cast, Microphone as Mic, Play, ArrowsClockwise as RefreshCw, Stop as Square, Users } from '@phosphor-icons/react';
 import {
   Alert, Badge, Button, EmptyState, Field, Input, PageHeader, Select, StatusPill, Switch, useToast,
@@ -7,29 +7,48 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth, useProfile } from '@/lib/auth';
 import { useWorkspace } from '@/lib/workspace';
-import { useMeetingJoin, useRoom } from '@/lib/queries';
-import { LANGUAGES, languageLabel } from '@/lib/languages';
+import { useEndMeeting, useMeetingJoin, useRoom, useUpdateMyLanguages } from '@/lib/queries';
+import { useFollowUps, useSuggestionStream } from '@/lib/suggestions';
+import { languageLabel } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import {
   PROVIDER_LABEL, freshAccessToken, leaseIsStale, leaseRemainingSeconds, parseMeetingLink, useBridgeAudioMode, useBridgeRelease, useBridgeTakeover, useClaimBridge, useStartBridgeRoom,
 } from '@/lib/bridge';
 import {
   nativeErrorCode, nativeErrorMessage, useCaptureLive, useNative,
-  type AudioApp, type Capabilities, type CaptureMode, type NativeError, type PermissionKind, type Permissions,
+  type AudioApp, type Capabilities, type CaptureMode, type NativeError, type NativeEvent, type OverlayLine, type OverlayState, type PermissionKind, type Permissions,
 } from '@/lib/native';
 import { mergeCaption, pickTranslation, type CaptionLine } from '@/lib/captions';
 import { session } from '@/lib/session';
 import type { JoinGrant } from '@/lib/schemas';
 import { CaptionsPanel, StatusStrip, type ConnectionLabel } from './MeetingParts';
 import {
-  AppRow, BrowserFallback, ErrorRow, KeyValue, LevelMeter, NativeBadge, PermissionsPanel, StepCard, ago, useNow, type Recovery,
+  AppRow, BrowserFallback, ErrorRow, KeyValue, LevelMeter, PermissionsPanel, StepCard, ago, useNow, type Recovery,
 } from './ExternalParts';
 import { errCode, errMsg } from './errors';
 
 const ExternalCaptions = lazy(() => import('./ExternalCaptions'));
 
-const LANG_OPTIONS = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+const LANG_OPTIONS = languageOptions();
 const LIVE = ['IN_PROGRESS', 'PAUSED'];
 const TERMINAL = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'];
+const BROWSER_RE = /chrome|safari|firefox|edge|brave|arc|opera|vivaldi|browser/i;
+
+/** The running audio app that most likely plays this provider's call (Teams app, a browser for Meet, else any audible app). */
+function pickAppFor(apps: AudioApp[], provider: string | undefined): AudioApp | undefined {
+  const audible = (list: AudioApp[]) => list.find((a) => a.producingAudio) ?? list[0];
+  if (provider === 'teams') {
+    const m = apps.filter((a) => /teams/i.test(a.bundleId) || /teams/i.test(a.name));
+    if (m.length) return audible(m);
+  } else if (provider === 'google_meet') {
+    const m = apps.filter((a) => BROWSER_RE.test(a.bundleId) || BROWSER_RE.test(a.name));
+    if (m.length) return audible(m);
+  } else if (provider === 'zoom') {
+    const m = apps.filter((a) => /zoom/i.test(a.bundleId) || /zoom/i.test(a.name));
+    if (m.length) return audible(m);
+  }
+  return apps.find((a) => a.producingAudio);
+}
 
 type CaptionsState = 'idle' | 'connecting' | 'connected' | 'unavailable' | 'error';
 
@@ -42,10 +61,15 @@ export function ExternalPage() {
   const now = useNow();
 
   // ---- form
-  const [link, setLink] = useState('');
-  const [title, setTitle] = useState('');
-  const [far, setFar] = useState('en');
-  const [listen, setListen] = useState('vi');
+  const [params] = useSearchParams();
+  const auto = params.get('auto') === '1';
+  const [link, setLink] = useState(() => params.get('link') ?? '');
+  const [title, setTitle] = useState(() => params.get('title') ?? '');
+  const [far, setFar] = useState(() => params.get('far') || 'en');
+  const [listen, setListen] = useState(() => params.get('listen') || 'vi');
+  /** Copilot: the user speaks in the call too, so their mic is published into the room. */
+  const copilot = auto;
+  const [micOn, setMicOn] = useState(true);
   const [mode, setMode] = useState<CaptureMode>('text');
   const [appId, setAppId] = useState('');
   const [dubDevice, setDubDevice] = useState('');
@@ -70,6 +94,8 @@ export function ExternalPage() {
   const audioMode = useBridgeAudioMode(roomId ?? undefined);
   const startRoom = useStartBridgeRoom(roomId ?? undefined);
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null);
+  const [hasRun, setHasRun] = useState(false);
+  const endMeeting = useEndMeeting(roomId ?? '');
   const [actionError, setActionError] = useState<{ code?: string; message: string } | null>(null);
 
   const r = room.data;
@@ -157,8 +183,9 @@ export function ExternalPage() {
   }
 
   // ---- start / stop capture
-  async function startCapture() {
-    if (!native || !r || !appId) return;
+  async function startCapture(appOverride?: string) {
+    const useApp = appOverride ?? appId;
+    if (!native || !r || !useApp) return;
     setActionError(null);
     setBusy('start');
     try {
@@ -168,7 +195,7 @@ export function ExternalPage() {
       const accessToken = await freshAccessToken();
       if (!accessToken) throw Object.assign(new Error('Your session expired. Sign in again.'), { code: 'AUTH_EXPIRED' });
       const st = await native.startExternalCapture({
-        appBundleId: appId,
+        appBundleId: useApp,
         roomId: r.id,
         mode,
         accessToken,
@@ -176,6 +203,7 @@ export function ExternalPage() {
         ...(mode === 'voice' ? { listenLanguage: listen, dubOutputDeviceUid: dubDevice || undefined } : {}),
       });
       apply(st);
+      setHasRun(true);
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.code === 'BRIDGE_AUDIO_MODE_LOCKED') setMode('text');
@@ -245,7 +273,7 @@ export function ExternalPage() {
     setCaptionsState('connecting');
     setCaptionsMsg('');
     try {
-      setGrant(await meetingJoin.mutateAsync({ displayName: profile.data?.fullName, clientTag: 'listener' }));
+      setGrant(await meetingJoin.mutateAsync({ displayName: profile.data?.fullName, ...(copilot ? {} : { clientTag: 'listener' as const }) }));
     } catch (e) {
       if (e instanceof ApiError && (e.code === 'LIVEKIT_NOT_CONFIGURED' || e.status === 503)) {
         setCaptionsState('unavailable');
@@ -256,7 +284,7 @@ export function ExternalPage() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, profile.data?.fullName]);
+  }, [roomId, profile.data?.fullName, copilot]);
 
   // Join once per claimed room, as soon as it is live.
   useEffect(() => {
@@ -268,6 +296,7 @@ export function ExternalPage() {
   const onCaption = useCallback((l: CaptionLine) => setLines((cur) => mergeCaption(cur, l)), []);
 
   const [overlayOn, setOverlayOn] = useState(false);
+  const [overlayClosed, setOverlayClosed] = useState(false);
   const [clickThrough, setClickThrough] = useState(false);
   const [hideShare, setHideShare] = useState(false);
   async function toggleOverlay(v: boolean) {
@@ -297,6 +326,107 @@ export function ExternalPage() {
     pushed.current = key;
     void native.pushOverlayCaption({ speaker: l.speaker, text: l.text, translation: tr, segmentId: l.id, isFinal: l.final }).catch(() => undefined);
   }, [native, overlayOn, lines, listen]);
+
+  // ---- copilot window: auto-start, state relay, commands
+  const suggestionStream = useSuggestionStream(roomId ?? undefined, listen, !!roomId);
+  const followUps = useFollowUps(roomId ?? undefined, !!roomId);
+  const lineAt = useRef(new Map<string, number>());
+  const overlayState = useMemo<OverlayState>(() => {
+    const at = lineAt.current;
+    const out: OverlayLine[] = lines.slice(-200).map((l) => {
+      if (!at.has(l.id)) at.set(l.id, Date.now());
+      const self = !!userId && l.speakerUserId === userId;
+      const tr = pickTranslation(l, listen);
+      return { id: l.id, speaker: self ? 'You' : l.speaker, self, text: l.text, ...(tr ? { translation: tr } : {}), ...(l.lang ? { lang: l.lang } : {}), final: l.final, at: at.get(l.id) ?? Date.now() };
+    });
+    const st = live.status.state;
+    const status: OverlayState['status'] = roomTerminal ? 'ended'
+      : running && st === 'running' ? 'translating'
+        : !roomId || busy === 'start' || st === 'starting' ? 'connecting'
+          : hasRun ? 'stopped' : 'ready';
+    const err = live.errors[0]?.message ?? actionError?.message ?? (captionsState === 'error' ? captionsMsg : undefined);
+    return {
+      title: title.trim() || r?.title || '',
+      status, myLang: listen, farLang: far, micOn, lines: out,
+      suggestions: suggestionStream.items.map((s) => ({ id: s.suggestionId, category: s.category, content: s.content, ...(s.detail ? { detail: s.detail } : {}) })),
+      followUps: (followUps.data ?? []).map((f) => ({ id: f.id, text: f.text, ...(f.owner ? { owner: f.owner } : {}) })),
+      suggestionsAvailable: suggestionStream.status !== 'unavailable',
+      ...(err ? { error: err } : {}),
+    };
+  }, [lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
+  const overlayStateRef = useRef(overlayState);
+  overlayStateRef.current = overlayState;
+  useEffect(() => { void native?.pushOverlayState?.(overlayState).catch(() => undefined); }, [native, overlayState]);
+
+  async function endSession() {
+    if (running) await stopCapture();
+    try { if (roomId) await endMeeting.mutateAsync(); } catch (e) { setActionError({ code: errCode(e), message: errMsg(e) }); }
+  }
+  const openCopilot = useCallback(() => {
+    if (!native?.openOverlayWindow) return;
+    setOverlayClosed(false);
+    void native.openOverlayWindow().catch(() => undefined);
+  }, [native]);
+
+  const updateLangs = useUpdateMyLanguages(roomId ?? '');
+  // Copilot mode: the pill is the whole UI, so show it as soon as the page opens (it reads "Connecting…").
+  const pillShown = useRef(false);
+  useEffect(() => {
+    if (!copilot || !native?.openOverlayWindow || pillShown.current) return;
+    pillShown.current = true;
+    openCopilot();
+  }, [copilot, native, openCopilot]);
+
+  // Auto-start (link opened from "create meeting"): claim -> pick the call's app -> capture -> open the copilot window. Once.
+  const autoClaimed = useRef(false);
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!auto || !native || !current || roomId || autoClaimed.current || !parsed.ok || sameLang) return;
+    autoClaimed.current = true;
+    void doClaim();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto, native, current, roomId, parsed.ok, sameLang]);
+  useEffect(() => {
+    if (!auto || !native || !r || autoStarted.current || !canCapture || roomTerminal || running || busy) return;
+    const app = pickAppFor(apps, parsed.ok ? parsed.provider : undefined);
+    if (!app) return; // the app list refreshes every few seconds; try again then
+    autoStarted.current = true;
+    setAppId(app.bundleId);
+    void startCapture(app.bundleId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto, native, r, canCapture, roomTerminal, running, busy, apps]);
+
+  // Commands from the copilot window (relayed by the host as `warptalk-native` events).
+  const cmdRef = useRef<(command: string, value?: string) => void>(() => undefined);
+  cmdRef.current = (command, value) => {
+    switch (command) {
+      case 'start': {
+        const app = apps.find((a) => a.bundleId === appId) ?? pickAppFor(apps, parsed.ok ? parsed.provider : undefined);
+        if (app && !running) void startCapture(app.bundleId);
+        break;
+      }
+      case 'stop': if (running) void stopCapture(); break;
+      case 'listen':
+        if (!value) break;
+        setListen(value);
+        // One language per person: the user speaks it and reads everything in it. The server adds it as a target.
+        if (roomId) void updateLangs.mutateAsync({ speakLanguage: value, listenLanguage: value }).catch((e) => setActionError({ code: errCode(e), message: errMsg(e) }));
+        break;
+      case 'far': if (value) setFar(value); break;
+      case 'mic': setMicOn(value === 'on'); break;
+      case 'ready': void native?.pushOverlayState?.(overlayStateRef.current).catch(() => undefined); break;
+      case 'closed': setOverlayClosed(true); break;
+      case 'end': void endSession(); break;
+    }
+  };
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<NativeEvent>).detail;
+      if (d?.type === 'overlay-command') cmdRef.current(d.command, d.value);
+    };
+    window.addEventListener('warptalk-native', on);
+    return () => window.removeEventListener('warptalk-native', on);
+  }, []);
 
   // ---- errors and the way out of each
   const errors: NativeError[] = live.errors;
@@ -353,12 +483,27 @@ export function ExternalPage() {
   const selectedApp = apps.find((a) => a.bundleId === appId);
   const canStart = !!native && canCapture && !!appId && !running && !roomTerminal && busy === null && (mode !== 'voice' || voiceReady);
 
+  const captionsNode = grant && (
+    <Suspense fallback={null}>
+      <ExternalCaptions
+        grant={grant}
+        onCaption={onCaption}
+        onConnected={() => setCaptionsState('connected')}
+        onDisconnected={() => { setCaptionsState('idle'); setGrant(null); }}
+        onError={(m) => { setCaptionsState('error'); setCaptionsMsg(m); }}
+        audio={copilot && micOn}
+      />
+    </Suspense>
+  );
+
+  // Copilot mode (opened from "Create meeting"): the overlay pill is the whole UI; this page renders nothing and only
+  // keeps the capture, captions and state relay alive.
+  if (copilot && native && current) return <>{captionsNode}</>;
+
   return (
     <>
       <PageHeader
         title="External meeting"
-        description={native ? 'Translate a Google Meet, Zoom or Microsoft Teams call by listening to its audio on this Mac.' : 'Translate a Google Meet, Zoom or Microsoft Teams call by listening to its audio with the WarpTalk desktop app.'}
-        actions={native && caps ? <NativeBadge text={`Desktop app · macOS ${caps.osVersion}`} /> : undefined}
       />
 
       {!native && <div className="mb-6"><BrowserFallback /></div>}
@@ -536,16 +681,11 @@ export function ExternalPage() {
               {claimed && roomLive && (captionsState === 'error' || captionsState === 'unavailable') && (
                 <div><Button size="sm" onClick={() => void connectCaptions()}><RefreshCw className="size-4" aria-hidden />Retry captions</Button></div>
               )}
-              {grant && (
-                <Suspense fallback={null}>
-                  <ExternalCaptions
-                    grant={grant}
-                    onCaption={onCaption}
-                    onConnected={() => setCaptionsState('connected')}
-                    onDisconnected={() => { setCaptionsState('idle'); setGrant(null); }}
-                    onError={(m) => { setCaptionsState('error'); setCaptionsMsg(m); }}
-                  />
-                </Suspense>
+              {captionsNode}
+              {native?.openOverlayWindow && (
+                <StepCard title="Copilot window" description="Live transcript and AI suggestions in a floating window">
+                  <Button size="sm" onClick={openCopilot}>{overlayClosed ? 'Reopen copilot window' : 'Open copilot window'}</Button>
+                </StepCard>
               )}
               {native && (
                 <StepCard title="Caption overlay" description="A floating window over the meeting app">

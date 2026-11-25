@@ -73,7 +73,7 @@ test.describe('In-meeting UI', () => {
     await meet(app, tokens, user, workspace.id);
     const grid = app.getByTestId('participant-grid');
     await expect(grid.getByTestId('participant-tile')).toHaveCount(3);
-    await expect(grid.getByText('Host Hana (you)')).toBeVisible();
+    await expect(grid.getByText('Host Hana').first()).toBeVisible();
     const ana = grid.locator('[data-identity="u-ana"]');
     await expect(ana).toHaveAttribute('data-speaking', 'false');
     await script(app, 'speak', 'u-ana', true);
@@ -87,7 +87,7 @@ test.describe('In-meeting UI', () => {
     await expect(grid.getByTestId('participant-tile')).toHaveCount(4);
     await script(app, 'leave', 'u-cy');
     await expect(grid.getByTestId('participant-tile')).toHaveCount(3);
-    await expect(grid.locator(`[data-identity="${user.userId}"]`).getByRole('img', { name: 'Host' })).toBeVisible();
+    await expect(grid.locator(`[data-identity="${user.userId}"]`)).toContainText('host');
   });
 
   test('MTG-13 raise hand publishes on the reactions topic and shows on tiles and in People', async ({ app, tokens, user, workspace }) => {
@@ -133,10 +133,9 @@ test.describe('In-meeting UI', () => {
     const posted = await ok(call<Record<string, unknown>>(`/meetings/${c.roomId}/chat/messages`, { token: (await login(guest)).accessToken, body: { content: 'Hello team', clientMessageId: 'mtg15-ana' } }));
     const ana = (o: Record<string, unknown>) => ({ type: 'chat.message', ...posted, ...o });
     const deliver = (body: unknown) => app.evaluate(([b, id]) => (window as unknown as { __meeting: { data(t: string, b: unknown, f: unknown): void } }).__meeting.data('chat', b, { identity: id as string, name: 'Ana Pereira' }), [body, guest.userId]);
-    // Chat arrives while the Transcript tab is open: unread badge on the tab and on the panel button.
+    // Chat arrives while the Transcript tab is open: unread badge on the tab.
     await deliver(ana({}));
     await expect(app.getByTestId('chat-unread')).toHaveText(/1/);
-    await expect(app.getByTestId('panel-badge')).toHaveText(/1/);
     await app.getByRole('tab', { name: /^Chat/ }).click();
     await expect(app.getByTestId('chat-unread')).toHaveCount(0);
     await expect(app.getByTestId('chat-message')).toHaveCount(1);
@@ -296,15 +295,12 @@ test.describe('In-meeting UI', () => {
     await app.keyboard.press('Escape');
   });
 
-  test('MTG-21 side panel can be closed and reopened; ended state offers a way back', async ({ app, tokens, user, workspace }) => {
+  test('MTG-21 side panel is always shown on wide screens; ended state offers a way back', async ({ app, tokens, user, workspace }) => {
     await meet(app, tokens, user, workspace.id);
     const panel = app.getByTestId('side-panel');
     await expect(panel).toBeVisible();
-    await bar(app).getByRole('button', { name: 'Close side panel' }).click();
-    await expect(panel).toHaveCount(0);
-    await bar(app).getByRole('button', { name: 'Open side panel' }).click();
-    await expect(panel).toBeVisible();
-    await expect(panel.getByRole('tab')).toHaveText([/Transcript/, /People/, /Chat/, ...(await panel.getByRole('tab', { name: /Suggestions/ }).count() ? [/Suggestions/] : [])]); // Suggestions only when the backend serves the stream
+    await expect(bar(app).getByRole('button', { name: /side panel/ })).toHaveCount(0);
+    await expect(panel.getByRole('tab')).toHaveText([/Transcript/, /Chat/, /People/, ...(await panel.getByRole('tab', { name: /Suggestions/ }).count() ? [/Suggestions/] : [])]); // Suggestions only when the backend serves the stream
   });
 
   test('MTG-22 a11y: no serious violations in the live meeting (dark and light)', async ({ app, tokens, user, workspace }) => {
@@ -341,18 +337,18 @@ test.describe('In-meeting UI: layout 390', () => {
     expect(a!.y).toBe(b!.y); // two columns
     expect(a!.height).toBeLessThan(140);
     // The side panel starts closed on phones; the stage and bar do not overlap.
-    await expect(app.getByTestId('side-panel')).toHaveCount(0);
+    await expect(app.getByTestId('side-panel')).toBeHidden();
     const stage = (await app.getByTestId('stage').boundingBox())!;
     const barBox = (await bar(app).boundingBox())!;
     expect(stage.y + stage.height).toBeLessThanOrEqual(barBox.y + 1);
     expect(barBox.y + barBox.height).toBeLessThanOrEqual(844);
     expect(await app.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await bar(app).getByRole('button', { name: 'Open side panel' }).click();
+    await app.getByRole('button', { name: 'Open transcript' }).click();
     const panel = (await app.getByTestId('side-panel').boundingBox())!;
     expect(panel.y).toBeGreaterThan(150);
     await expect(app.getByRole('button', { name: 'Close panel' })).toBeVisible();
     await app.getByRole('button', { name: 'Close panel' }).click();
-    await expect(app.getByTestId('side-panel')).toHaveCount(0);
+    await expect(app.getByTestId('side-panel')).toBeHidden();
   });
 });
 

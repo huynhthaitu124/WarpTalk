@@ -15,7 +15,7 @@ export function DropdownContent({ className, align = 'start', ...p }: ComponentP
       <DM.Content
         align={align}
         sideOffset={6}
-        className={cn('z-[60] min-w-52 animate-pop-in rounded-lg border border-hairline-strong bg-surface-3 p-1 shadow-pop', className)}
+        className={cn('z-[60] min-w-52 animate-pop-in rounded-lg bg-popover p-1 shadow-pop', className)}
         {...p}
       />
     </DM.Portal>
@@ -28,7 +28,7 @@ export function DropdownItem({
   return (
     <DM.Item
       className={cn(
-        'flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-body outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-surface-4',
+        'flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-body outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-popover-hover',
         danger ? 'text-danger-text' : 'text-ink',
         className,
       )}

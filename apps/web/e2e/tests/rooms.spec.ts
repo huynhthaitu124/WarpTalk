@@ -179,26 +179,6 @@ test.describe('Meetings (rooms)', () => {
     }
   });
 
-  test('ROOM-08 generate audio routes (advanced panel)', async ({ app, tokens, workspace, browser, baseURL }) => {
-    const room = await createRoom(tokens.accessToken, workspace.id);
-    const guestUser = await createUser('router');
-    const guest = await signedInContext(browser, guestUser, baseURL);
-    try {
-      await joinByCode(guest.tokens.accessToken, room.roomCode);
-      await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
-      await app.goto(`/rooms/${room.id}`);
-      await expect(app.getByRole('heading', { name: 'Advanced: audio routes' })).toBeVisible();
-      await app.getByRole('button', { name: 'Show' }).click();
-      await app.getByRole('button', { name: 'Generate routes' }).click();
-      await expect(app.getByRole('table', { name: 'Audio routes' }).or(app.getByText(/No routes yet/))).toBeVisible();
-      await expect(app.getByTestId('toast').filter({ hasText: 'Action failed' })).toHaveCount(0);
-      // MT-08: a readable status, never raw JSON
-      await expect(app.getByText(/[{]"/)).toHaveCount(0);
-    } finally {
-      await guest.context.close();
-    }
-  });
-
   test('ROOM-09 create dialog validation is explained, not silent', async ({ app, workspace }) => {
     await app.goto(`/${workspace.slug}/meetings?new=1`);
     const dialog = app.getByRole('dialog', { name: 'Create meeting' });

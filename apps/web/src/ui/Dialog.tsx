@@ -40,7 +40,7 @@ export function DialogContent({
           if (el?.isConnected) { e.preventDefault(); el.focus(); }
         }}
         className={cn(
-          'fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 animate-pop-in flex-col rounded-xl border border-hairline-strong bg-surface-2 shadow-pop focus:outline-none',
+          'fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 animate-pop-in flex-col rounded-xl bg-elevated shadow-pop focus:outline-none',
           className,
         )}
       >
@@ -53,7 +53,7 @@ export function DialogContent({
               <RD.Description className="sr-only">{title}</RD.Description>
             )}
           </div>
-          <RD.Close aria-label="Close dialog" className="-mr-2 -mt-1 rounded-md p-1.5 text-ink-subtle hover:bg-surface-3 hover:text-ink focus-ring">
+          <RD.Close aria-label="Close dialog" className="-mr-2 -mt-1 rounded-md p-1.5 text-ink-subtle hover:bg-popover-hover hover:text-ink focus-ring">
             <X className="size-4" aria-hidden />
           </RD.Close>
         </div>

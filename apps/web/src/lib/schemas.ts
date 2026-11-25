@@ -116,6 +116,7 @@ export const room = z.object({
   activeHostId: uuid.nullable().optional(),
   effectiveHostId: uuid,
   title: z.string(),
+  description: z.string().nullable().optional(),
   roomCode: z.string(),
   status: z.enum(ROOM_STATUSES),
   sourceLanguage: z.string(),

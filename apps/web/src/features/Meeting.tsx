@@ -4,6 +4,7 @@ import { Alert, Button, Card, CardBody, PageHeader, Skeleton, StatusPill } from 
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useJoinById, useMeetingJoin, useParticipants, useRoom } from '@/lib/queries';
+import { externalMeetingHref } from '@/lib/bridge';
 import type { JoinGrant } from '@/lib/schemas';
 import { languageLabel } from '@/lib/languages';
 import { errMsg } from './errors';
@@ -43,6 +44,11 @@ export function MeetingPage() {
   const r = room.data;
 
   const terminal = !!r && TERMINAL.includes(r.status);
+  // External (Teams / Google Meet) rooms have no LiveKit stage: send them to the copilot flow instead.
+  const externalHref = r ? externalMeetingHref(r) : null;
+  useEffect(() => {
+    if (externalHref && !terminal) nav(externalHref, { replace: true });
+  }, [externalHref, terminal, nav]);
   // The room can be ended by somebody else (or the host from another tab) while we are in it.
   useEffect(() => {
     if (terminal && (phase.kind === 'joined' || phase.kind === 'lobby')) {
@@ -59,13 +65,13 @@ export function MeetingPage() {
       // Record speak/listen languages on the participant first (the meeting join takes only a name).
       // People outside the workspace cannot join by id (404/403): they still get a media token.
       try {
-        await roomJoin.mutateAsync({ displayName: name || undefined, speakLanguage: values.speak, listenLanguage: values.listen });
+        await roomJoin.mutateAsync({ displayName: name || undefined, speakLanguage: values.language, listenLanguage: values.language });
       } catch (e) {
         if (!(e instanceof ApiError) || ![403, 404].includes(e.status)) throw e;
       }
       const grant = await meetingJoin.mutateAsync({ displayName: name || undefined });
-      setListen(values.listen);
-      setPhase({ kind: 'joined', grant, media, name: name || self?.displayName || 'You', joinedListen: values.listen });
+      setListen(values.language);
+      setPhase({ kind: 'joined', grant, media, name: name || self?.displayName || 'You', joinedListen: values.language });
     } catch (e) {
       if (e instanceof ApiError && (e.code === 'LIVEKIT_NOT_CONFIGURED' || e.status === 503)) setPhase({ kind: 'not-configured' });
       else if (e instanceof ApiError && e.code === 'IN_LOBBY') setPhase({ kind: 'lobby' });
@@ -99,9 +105,8 @@ export function MeetingPage() {
 
   const isHost = r.effectiveHostId === userId || r.hostId === userId;
   const langs = roomLanguages(r);
-  const defaultSpeak = self?.speakLanguage && langs.includes(self.speakLanguage) ? self.speakLanguage : r.sourceLanguage;
-  const defaultListen = self?.listenLanguage && langs.includes(self.listenLanguage) ? self.listenLanguage : (langs.find((l) => l !== defaultSpeak) ?? defaultSpeak);
-  const values: PreJoinValues = { name: '', speak: defaultSpeak, listen: defaultListen, joinMuted: true, ...edits };
+  const defaultLang = self?.speakLanguage && langs.includes(self.speakLanguage) ? self.speakLanguage : r.sourceLanguage;
+  const values: PreJoinValues = { name: '', language: defaultLang, micOn: false, ...edits };
   const roster = (parts.data ?? []).filter((p) => ['CONNECTED', 'WAITING'].includes(p.status));
 
   if (phase.kind === 'joined') {
@@ -149,7 +154,7 @@ export function MeetingPage() {
         )}
       />
       <EndMeetingDialog roomId={r.id} open={confirmEnd} onOpenChange={setConfirmEnd} onEnded={ended} />
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6 px-4 py-6 sm:py-8">
         {terminal && phase.kind !== 'ended' && <Alert tone="info" title="This meeting has ended">It is closed to new participants. <Link to={`/rooms/${r.id}`}>Back to room details</Link></Alert>}
         {phase.kind === 'ended' && <EndedView title={phase.title} body={phase.body} onBack={backToRoom} onRejoin={phase.canRejoin ? () => setPhase({ kind: 'prejoin' }) : undefined} />}
         {(phase.kind === 'prejoin' || phase.kind === 'error') && !terminal && (
@@ -198,7 +203,7 @@ function PreJoinStage({ room, values, onChange, joining, notice, onJoin }: {
       joining={joining}
       notice={notice}
       onJoin={() => {
-        const mic = !values.joinMuted && preview.hasAudio;
+        const mic = values.micOn && preview.hasAudio;
         const cam = preview.camOn && preview.hasVideo;
         const micId = preview.micId || preview.stream?.getAudioTracks()[0]?.getSettings().deviceId;
         const camId = preview.camId || preview.stream?.getVideoTracks()[0]?.getSettings().deviceId;

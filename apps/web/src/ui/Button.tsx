@@ -11,7 +11,7 @@ export const buttonStyles = cva(
         /* Legacy primary: an ink pill. The lavender `accent` variant is for featured calls to action. */
         primary: 'bg-ink-btn text-on-ink-btn shadow-btn hover:opacity-90 active:opacity-80',
         accent: 'bg-primary text-on-primary shadow-btn hover:bg-primary-hover active:bg-primary-pressed',
-        secondary: 'border border-hairline/60 bg-surface-2 text-ink shadow-btn hover:bg-surface-3 active:bg-surface-3',
+        secondary: 'border border-hairline/60 bg-btn-2 text-ink shadow-btn hover:bg-btn-2-hover active:bg-btn-2-hover',
         ghost: 'rounded-md text-ink-muted hover:bg-surface-2 hover:text-ink active:bg-surface-3',
         danger: 'bg-danger text-on-danger hover:brightness-110 active:brightness-95',
         /* In-page destructive actions (End, Leave): a soft tint. Solid `danger` is for confirm dialogs. */

@@ -15,6 +15,7 @@ export interface Capabilities {
   screenCaptureKit: boolean;
   voiceMode: boolean;
   overlay: boolean;
+  overlayWindow?: boolean;
   supportedApps: { name: string; bundleIds: string[] }[];
   outputDevices: { uid: string; name: string; isVirtual: boolean }[];
   blackHoleInstalled: boolean;
@@ -59,10 +60,34 @@ export interface WarptalkNative {
   pushOverlayCaption(c: OverlayCaption): Promise<null>;
   clearOverlay(): Promise<null>;
   setOverlayOptions(o: { clickThrough?: boolean; hideFromScreenShare?: boolean }): Promise<{ clickThrough: boolean; hideFromScreenShare: boolean }>;
+  /** Copilot window (macOS builds with `capabilities.overlayWindow`). */
+  openOverlayWindow?(): Promise<{ visible: boolean }>;
+  closeOverlayWindow?(): Promise<{ visible: boolean }>;
+  pushOverlayState?(state: OverlayState): Promise<null>;
+  overlayCommand?(command: OverlayCommand, value?: string): Promise<null>;
   permissions(): Promise<Permissions>;
   requestPermission(k: PermissionKind): Promise<Permissions>;
   openSystemSettings(p: SettingsPane): Promise<null>;
 }
+
+/** State the main page relays to the copilot window (`/overlay`), which renders only this. */
+export interface OverlayLine {
+  id: string; speaker: string; self: boolean; text: string; translation?: string; lang?: string; final: boolean; at: number;
+}
+export interface OverlayState {
+  title: string;
+  status: 'connecting' | 'ready' | 'translating' | 'stopped' | 'ended';
+  myLang: string;
+  farLang: string;
+  micOn: boolean;
+  lines: OverlayLine[];
+  suggestions: { id: string; category: string; content: string; detail?: string }[];
+  followUps: { id: string; text: string; owner?: string }[];
+  suggestionsAvailable: boolean;
+  error?: string;
+}
+/** `expand` / `collapse` / `hide` / `resize` (value `WxH`) / `hitrect` (value `x,y,w,h`) only affect the native window and never reach the main page. */
+export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect';
 
 export type NativeEvent =
   | ({ type: 'status'; ts: string } & CaptureStatus)
@@ -71,7 +96,8 @@ export type NativeEvent =
   | { type: 'heartbeat'; ts: string; ok: boolean; at?: string; message?: string }
   | { type: 'error'; ts: string; code: string; message: string; fatal: boolean }
   | { type: 'auth-required'; ts: string; reason: 'heartbeat' }
-  | { type: 'log'; ts: string; message: string };
+  | { type: 'log'; ts: string; message: string }
+  | { type: 'overlay-command'; ts: string; command: OverlayCommand; value?: string };
 
 export function getNative(): WarptalkNative | undefined {
   if (typeof window === 'undefined') return undefined;

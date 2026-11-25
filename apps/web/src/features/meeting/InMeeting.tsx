@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowsClockwise, X } from '@phosphor-icons/react';
-import { Badge, Button, useToast } from '@/ui';
+import { ArrowsClockwise, ListBullets, X } from '@phosphor-icons/react';
+import { Button, ParticipantAvatar, useToast } from '@/ui';
 import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
 import { baseIdentity, mergeCaption, parseCaption, pickTranslation, resolveSpeakers, senderLabel, type CaptionLine } from '@/lib/captions';
 import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@/lib/suggestions';
 import { useParticipantAction, useParticipants, useRoomAction, useUpdateMyLanguages } from '@/lib/queries';
 import type { Room } from '@/lib/schemas';
-import { StatusStrip } from '../MeetingParts';
+import { StatusStrip, type TimedCaptionLine } from '../MeetingParts';
 import { errMsg } from '../errors';
 import { ControlBar } from './ControlBar';
 import { EndMeetingDialog, LeaveDialog } from './Dialogs';
@@ -52,6 +52,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const [tab, setTab] = useState<PanelTab>('transcript');
   const [captionsOn, setCaptionsOn] = useState(true);
   const [rawLines, setLines] = useState<CaptionLine[]>([]);
+  const [stamps, setStamps] = useState<Record<string, number>>({});
   const [unread, setUnread] = useState(0);
   const [hands, setHands] = useState<Record<string, boolean>>({});
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
@@ -82,7 +83,10 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const { subscribe } = session;
   useEffect(() => subscribe('captions', (m) => {
     const line = parseCaption(m.payload, senderLabel(m.from) || 'Speaker', ++seq.current);
-    if (line) setLines((cur) => mergeCaption(cur, line));
+    if (line) {
+      setLines((cur) => mergeCaption(cur, line));
+      setStamps((m) => (m[line.id] ? m : { ...m, [line.id]: Date.now() }));
+    }
   }), [subscribe]);
 
   useEffect(() => subscribe('reactions', (m) => {
@@ -129,21 +133,24 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
     if (l === listen) return;
     if (l === 'original') { onListen(l); return; }
     try {
-      await langs.mutateAsync({ listenLanguage: l });
+      // One language per person: hearing a language also means speaking it (unless listen-only).
+      await langs.mutateAsync(speak === 'none' ? { listenLanguage: l } : { speakLanguage: l, listenLanguage: l });
       onListen(l);
-      toast({ tone: 'success', title: `Now listening in ${languageLabel(l)}` });
+      toast({ tone: 'success', title: `Your language is now ${languageLabel(l)}` });
     } catch (e) { toast({ tone: 'danger', title: 'Could not change the listen language', description: errMsg(e) }); }
   }
   async function changeSpeak(l: string) {
     if (l === speak) return;
     try {
-      await langs.mutateAsync({ speakLanguage: l });
+      await langs.mutateAsync(l === 'none' ? { speakLanguage: l } : { speakLanguage: l, listenLanguage: l });
+      if (l !== 'none') onListen(l);
       toast({ tone: 'success', title: l === 'none' ? 'You are now listen-only' : `You now speak ${languageLabel(l)}` });
     } catch (e) { toast({ tone: 'danger', title: 'Could not change the speak language', description: errMsg(e) }); }
   }
 
   const roster = useMemo(() => (parts.data ?? []).filter((p) => SHOWN.includes(p.status)), [parts.data]);
-  const lines = useMemo(() => resolveSpeakers(rawLines, parts.data ?? []), [rawLines, parts.data]);
+  // First time each line reached this screen: shown as the message time in the transcript.
+  const lines = useMemo<TimedCaptionLine[]>(() => resolveSpeakers(rawLines, parts.data ?? []).map((l) => ({ ...l, receivedAt: stamps[l.id] })), [rawLines, parts.data, stamps]);
   const stream = useSuggestionStream(room.id, captionLang);
   const triage = useSuggestionTriage(stream.items);
   const followUps = useFollowUps(room.id, stream.status !== 'unavailable');
@@ -151,7 +158,7 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const byUser = useMemo(() => new Map(roster.filter((p) => p.userId).map((p) => [p.userId as string, p])), [roster]);
   const tiles = useMemo<TileInfo[]>(() => session.participants.map((p) => {
     const r = byUser.get(baseIdentity(p.identity));
-    return { p, host: p.identity === room.effectiveHostId, hand: !!hands[p.identity], langs: r && r.speakLanguage !== r.listenLanguage ? `${r.speakLanguage} → ${r.listenLanguage}` : undefined };
+    return { p, host: p.identity === room.effectiveHostId, hand: !!hands[p.identity], langs: r && r.speakLanguage !== r.listenLanguage ? `${r.speakLanguage} → ${r.listenLanguage}` : undefined, lang: r?.speakLanguage };
   }), [session.participants, byUser, hands, room.effectiveHostId]);
   const rows = useMemo<PersonRow[]>(() => roster.map((p) => {
     const live = p.userId ? session.participants.find((s) => baseIdentity(s.identity) === p.userId) : undefined;
@@ -176,116 +183,173 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
     if (t) setTab(t);
     setPanelOpen(true);
   }
-  function togglePanel() {
-    if (panelOpen) setPanelOpen(false); else openPanel();
+  async function invite() {
+    const text = `Join my WarpTalk meeting: ${window.location.origin}/join (room code ${room.roomCode})`;
+    try { await navigator.clipboard.writeText(text); toast({ tone: 'success', title: 'Invite copied' }); } catch { toast({ tone: 'danger', title: 'Could not copy the invite' }); }
   }
   useEffect(() => { if (panelOpen && tab === 'chat') setUnread(0); }, [panelOpen, tab]);
 
   const last = [...lines].reverse().find((l) => l.text || Object.keys(l.translations).length);
   const overlayText = last ? pickTranslation(last, captionLang) || last.text : '';
   const connection = session.connection;
+  // The room API has no recording state yet: the REC pill and Record button stay inert until it does.
+  const recording = false;
 
   return (
-    <section aria-label="Meeting" data-testid="meeting-room" className="fixed inset-0 z-[45] flex flex-col bg-canvas text-ink">
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-hairline px-4 py-2 max-sm:px-3">
-        <h1 className="min-w-0 max-w-[40%] truncate text-title font-semibold max-sm:max-w-[55%] max-sm:text-body">{room.title}</h1>
-        <div className="hidden md:block"><StatusStrip connection={connection} quality={session.quality} room={room} /></div>
-        <Badge tone={connection === 'connected' ? 'success' : connection === 'disconnected' ? 'danger' : 'warning'} data-testid="status-connection-compact" className="md:hidden">{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting' : connection === 'connecting' ? 'Connecting' : 'Disconnected'}</Badge>
-        <div className="ml-auto" />
-      </header>
-      {(connection === 'reconnecting' || connection === 'connecting') && (
-        <div role="status" data-testid="reconnecting-banner" className="flex shrink-0 items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-body-sm text-warning-text">
-          <ArrowsClockwise className="size-4 shrink-0 animate-spin" aria-hidden />
-          {connection === 'connecting' ? 'Connecting to the meeting…' : 'Connection lost. Reconnecting, audio resumes automatically…'}
-        </div>
-      )}
-      <div className="relative flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1">
-          <div className="absolute inset-0 overflow-y-auto p-2 sm:p-4" data-testid="stage">
-            <Stage tiles={tiles} />
-          </div>
-          {floating.length > 0 && (
-            <ul aria-label="Reactions" className="pointer-events-none absolute bottom-16 left-3 flex flex-col gap-1.5">
-              {floating.map((f) => (
-                <li key={f.id} data-testid="reaction" className="flex animate-slide-up items-center gap-2 rounded-pill bg-black/75 px-2.5 py-1 text-body-sm text-white">
-                  <span className="text-title" aria-hidden>{f.emoji}</span>{f.name}<span className="sr-only"> reacted {f.emoji}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {captionsOn && overlayText && last && (
-            <div aria-hidden data-testid="caption-overlay" className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
-              <p className="max-w-2xl rounded-lg bg-black/75 px-4 py-2 text-center text-body-lg text-white"><span className="mr-2 text-body-sm opacity-80">{last.speaker}</span>{overlayText}</p>
+    <section aria-label="Meeting" data-testid="meeting-room" className="relative flex h-full min-h-0 flex-col text-ink">
+      <h1 className="sr-only">{room.title}</h1>
+      <div className="relative flex min-h-0 flex-1 gap-3 p-3 pb-0">
+        <div className="relative flex min-w-0 flex-1 flex-col gap-3">
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-sm">
+            <div data-testid="stage" className="absolute inset-0">
+              <Stage tiles={tiles} />
             </div>
+            <time className="pointer-events-auto absolute left-4 top-4 z-30 rounded-full border border-border/70 bg-surface-1/90 px-2.5 py-1 text-[12px] font-medium tabular-nums text-ink shadow-sm backdrop-blur" aria-label="Meeting duration">
+              <Elapsed since={room.startedAt} />
+            </time>
+            {recording && (
+              <span data-testid="rec-pill" className="absolute left-4 top-14 z-30 flex items-center gap-1.5 rounded-full border border-border/70 bg-surface-1/90 px-2.5 py-1 text-[12px] font-medium text-red-600 shadow-sm backdrop-blur">
+                <span aria-hidden className="size-2 animate-pulse rounded-full bg-red-500" />REC
+              </span>
+            )}
+            <div className="pointer-events-none absolute inset-x-4 top-4 z-10 flex items-center justify-center gap-2 pl-24">
+              <span className="pointer-events-auto hidden h-7 items-center rounded-full border border-border/70 bg-surface-1/90 px-3 shadow-sm backdrop-blur md:flex">
+                <StatusStrip compact connection={connection} quality={session.quality} room={room} />
+              </span>
+              <span data-testid="status-connection-compact" className="pointer-events-auto flex h-7 items-center rounded-full border border-border/70 bg-surface-1/90 px-3 text-[12px] text-ink-muted shadow-sm md:hidden">
+                {connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting' : connection === 'connecting' ? 'Connecting' : 'Disconnected'}
+              </span>
+              {(connection === 'reconnecting' || connection === 'connecting') && (
+                <div role="status" data-testid="reconnecting-banner" className="pointer-events-auto flex h-7 items-center gap-2 rounded-full bg-amber-50 px-3 text-[12px] font-medium text-amber-800 shadow-sm">
+                  <ArrowsClockwise className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                  {connection === 'connecting' ? 'Connecting to the meeting…' : 'Connection lost. Reconnecting, audio resumes automatically…'}
+                </div>
+              )}
+            </div>
+            {floating.length > 0 && (
+              <ul aria-label="Reactions" className="pointer-events-none absolute bottom-4 left-4 z-30 flex flex-col gap-1.5">
+                {floating.map((f) => (
+                  <li key={f.id} data-testid="reaction" className="flex animate-slide-up items-center gap-2 rounded-pill bg-black/55 px-2.5 py-1 text-body-sm text-white backdrop-blur">
+                    <span className="text-title" aria-hidden>{f.emoji}</span>{f.name}<span className="sr-only"> reacted {f.emoji}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {captionsOn && (
+            <CaptionLane lines={lines} lang={captionLang} overlay={overlayText && last ? { speaker: last.speaker, text: overlayText } : null} onOpen={() => openPanel('transcript')} />
           )}
         </div>
-        {panelOpen && (
-          <section
-            aria-label="Meeting panel"
-            className={cn(
-              'z-10 flex min-h-0 flex-col overflow-hidden border-hairline-strong bg-surface-1',
-              'max-lg:absolute max-lg:inset-x-0 max-lg:bottom-0 max-lg:h-[72%] max-lg:rounded-t-xl max-lg:border-t max-lg:shadow-pop lg:w-[360px] lg:shrink-0 lg:border-l',
-            )}
-          >
-            <SidePanel
-              className="min-h-0 flex-1"
-              tab={tab === 'suggestions' && !suggestions ? 'transcript' : tab}
-              onTab={setTab}
-              lines={lines}
-              translationLang={captionLang}
-              rows={rows}
-              canModerate={isHost}
-              onAdmit={(id) => void moderate(id, 'admit')}
-              onDeny={(id) => void moderate(id, 'kick')}
-              onAdmitAll={() => void admitAll()}
-              moderating={partAction.isPending}
-              chat={{
-                messages: chat.messages,
-                lang: captionLang,
-                onSend: chat.send,
-                onRetry: chat.retry,
-                onDismiss: chat.dismiss,
-                onHide: isHost ? hideChat : undefined,
-                hasOlder: chat.hasOlder,
-                loadingOlder: chat.loadingOlder,
-                onLoadOlder: () => void chat.loadOlder(),
-                loadError: chat.loadError,
-              }}
-              unread={unread}
-              suggestions={suggestions}
-            />
-            <Button variant="ghost" size="icon" className="absolute right-2 top-1 lg:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="size-4" aria-hidden /></Button>
-          </section>
-        )}
+        <section
+          aria-label="Meeting panel"
+          className={cn(
+            'z-20 min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-sm',
+            'max-lg:fixed max-lg:bottom-24 max-lg:right-3 max-lg:top-3 max-lg:w-[min(360px,calc(100vw-24px))] max-lg:shadow-pop lg:flex lg:w-[300px] lg:shrink-0 xl:w-[340px]',
+            panelOpen ? 'flex' : 'max-lg:hidden',
+          )}
+        >
+          <SidePanel
+            className="min-h-0 flex-1"
+            tab={tab === 'suggestions' && !suggestions ? 'transcript' : tab}
+            onTab={setTab}
+            lines={lines}
+            translationLang={captionLang}
+            rows={rows}
+            canModerate={isHost}
+            onAdmit={(id) => void moderate(id, 'admit')}
+            onDeny={(id) => void moderate(id, 'kick')}
+            onAdmitAll={() => void admitAll()}
+            moderating={partAction.isPending}
+            roomCode={room.roomCode}
+            onInvite={() => void invite()}
+            chat={{
+              messages: chat.messages,
+              lang: captionLang,
+              onSend: chat.send,
+              onRetry: chat.retry,
+              onDismiss: chat.dismiss,
+              onHide: isHost ? hideChat : undefined,
+              hasOlder: chat.hasOlder,
+              loadingOlder: chat.loadingOlder,
+              onLoadOlder: () => void chat.loadOlder(),
+              loadError: chat.loadError,
+            }}
+            unread={unread}
+            suggestions={suggestions}
+          />
+          <Button variant="ghost" size="icon" className="absolute right-2 top-2 lg:hidden" aria-label="Close panel" onClick={() => setPanelOpen(false)}><X className="size-4" aria-hidden /></Button>
+        </section>
       </div>
-      <ControlBar
-        micOn={!!local?.micOn}
-        camOn={!!local?.camOn}
-        sharing={!!local?.sharing}
-        canShare={session.canShare}
-        onMic={() => void guard(session.toggleMic, 'Microphone')}
-        onCamera={() => void guard(session.toggleCamera, 'Camera')}
-        onShare={() => void guard(session.toggleShare, 'Screen sharing')}
-        captionsOn={captionsOn}
-        onCaptions={() => setCaptionsOn((v) => !v)}
-        listen={listen}
-        onListen={(l) => void changeListen(l)}
-        languages={roomLanguages(room)}
-        speak={speak}
-        onSpeak={(l) => void changeSpeak(l)}
-        languagesBusy={langs.isPending}
-        handRaised={handRaised}
-        onHand={toggleHand}
-        onReact={react}
-        panelOpen={panelOpen}
-        onPanel={togglePanel}
-        panelBadge={(isHost ? lobby.length : 0) + unread}
-        host={isHost ? { status: room.status, translationActive: room.translationActive, busy: roomAction.isPending, lobby: lobby.length, onAction: (a) => void hostAction(a), onAdmitAll: () => void admitAll() } : null}
-        onLeave={() => (isHost ? setConfirmLeave(true) : onLeave())}
-        onEnd={() => setConfirmEnd(true)}
-      />
+      <div className="flex shrink-0 justify-center px-3 py-3">
+        <ControlBar
+          micOn={!!local?.micOn}
+          camOn={!!local?.camOn}
+          sharing={!!local?.sharing}
+          canShare={session.canShare}
+          onMic={() => void guard(session.toggleMic, 'Microphone')}
+          onCamera={() => void guard(session.toggleCamera, 'Camera')}
+          onShare={() => void guard(session.toggleShare, 'Screen sharing')}
+          captionsOn={captionsOn}
+          onCaptions={() => setCaptionsOn((v) => !v)}
+          listen={listen}
+          onListen={(l) => void changeListen(l)}
+          languages={roomLanguages(room)}
+          speak={speak}
+          onSpeak={(l) => void changeSpeak(l)}
+          languagesBusy={langs.isPending}
+          handRaised={handRaised}
+          onHand={toggleHand}
+          onReact={react}
+          recording={recording}
+          host={isHost ? { status: room.status, translationActive: room.translationActive, busy: roomAction.isPending, lobby: lobby.length, onAction: (a) => void hostAction(a), onAdmitAll: () => void admitAll() } : null}
+          onLeave={() => (isHost ? setConfirmLeave(true) : onLeave())}
+          onEnd={() => setConfirmEnd(true)}
+        />
+      </div>
+      <button type="button" className="fixed bottom-4 right-4 z-30 text-[13px] font-medium text-primary hover:underline focus-ring max-lg:hidden">Ask WarpBot</button>
       <LeaveDialog open={confirmLeave} onOpenChange={setConfirmLeave} isHost={isHost} onLeave={onLeave} />
       <EndMeetingDialog roomId={room.id} open={confirmEnd} onOpenChange={setConfirmEnd} onEnded={onEnded} />
     </section>
+  );
+}
+
+function Elapsed({ since }: { since?: string | null }) {
+  const [start] = useState(() => (since ? new Date(since).getTime() : Date.now()));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const s = Math.max(0, Math.floor((now - start) / 1000));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return <>{pad(Math.floor(s / 3600))}:{pad(Math.floor((s % 3600) / 60))}:{pad(s % 60)}</>;
+}
+
+/** Caption strip under the stage: the last few lines, newest at the bottom. */
+function CaptionLane({ lines, lang, overlay, onOpen }: { lines: CaptionLine[]; lang: string; overlay: { speaker: string; text: string } | null; onOpen: () => void }) {
+  const recent = lines.filter((l) => l.text || Object.keys(l.translations).length).slice(-3);
+  const wantsTr = lang !== 'original';
+  return (
+    <div className="relative flex h-[clamp(96px,15vh,148px)] shrink-0 flex-col justify-end overflow-hidden rounded-2xl bg-surface-2/60 px-10 py-2 text-center">
+      {overlay ? (
+        <div aria-hidden data-testid="caption-overlay" className="flex flex-col items-center gap-1.5">
+          {recent.map((l, i) => {
+            const tr = pickTranslation(l, lang);
+            const older = i < recent.length - 1;
+            return (
+              <div key={l.id} className={cn('flex max-w-full flex-col items-center leading-snug text-ink', older && 'opacity-55')}>
+                <p className="flex items-center justify-center gap-1.5 text-[13px]">
+                  <ParticipantAvatar name={l.speaker} lang={l.lang} size="xs" />
+                  <span className="min-w-0"><span className="font-bold">{l.speaker}:</span> {l.text || tr}</span>
+                </p>
+                {wantsTr && tr && l.text && tr !== l.text && <p className="text-[15px] font-medium">{tr}</p>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p aria-hidden data-testid="caption-overlay" className="pb-2 text-center text-[13px] text-ink-subtle">Captions will appear here when someone speaks.</p>
+      )}
+      <button type="button" onClick={onOpen} aria-label="Open transcript" title="Open transcript" className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded-full text-ink-muted hover:bg-surface-3/60 hover:text-ink focus-ring">
+        <ListBullets className="size-4" aria-hidden />
+      </button>
+    </div>
   );
 }

@@ -45,7 +45,7 @@ final class WebViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     /// `WKScriptMessageHandlerWithReply`; the plain `addScriptMessageHandler:contentWorld:name:` takes a different
     /// protocol and would not accept `NativeBridge`. The header gives no `NS_SWIFT_NAME`, so rather than guess the
     /// Swift spelling we call the selector through the Objective-C runtime (same behaviour, always compiles).
-    private static func register(replyHandler: NativeBridge, on ucc: WKUserContentController) {
+    static func register(replyHandler: NativeBridge, on ucc: WKUserContentController) {
         let sel = NSSelectorFromString("addScriptMessageHandlerWithReply:contentWorld:name:")
         guard ucc.responds(to: sel), let imp = ucc.method(for: sel) else {
             NSLog("[web] addScriptMessageHandlerWithReply unavailable: native bridge disabled")
@@ -83,7 +83,9 @@ final class WebViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         webView.load(URLRequest(url: url))
     }
 
-    func reload() { webView.url == nil ? load() : webView.reload() }
+    func reload() {
+        if webView.url == nil { load() } else { webView.reload() }
+    }
 
     // MARK: WKNavigationDelegate
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { isLoading = true }

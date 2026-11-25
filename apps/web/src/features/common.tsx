@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Check, Copy, EnvelopeSimple } from '@phosphor-icons/react';
+import { Check, Copy, EnvelopeSimple, Globe } from '@phosphor-icons/react';
 import { Alert, Badge, Button, Capsule, DateCapsule, HostCapsule, LanguageCapsule, StatusDot, StatusPill, useToast } from '@/ui';
 import { cn } from '@/lib/cn';
 import { languageLabel } from '@/lib/languages';
@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { useAcceptInvitation, useMembers, usePendingInvitations } from '@/lib/queries';
 import { useWorkspace } from '@/lib/workspace';
 import type { Room } from '@/lib/schemas';
+import { PROVIDER_LABEL, externalMeetingHref, type BridgeProvider } from '@/lib/bridge';
 import { errMsg } from './errors';
 
 /** Rooms people can open (everything that is not scheduled or finished). */
@@ -75,8 +76,8 @@ export const langCodes = (r: Pick<Room, 'sourceLanguage' | 'targetLanguages'>) =
 
 /** Row-leading 12px status ring (legacy: blue live, amber waiting, emerald scheduled, gray ended, red cancelled). */
 export function RoomDot({ status }: { status: string }) {
-  const c = status === 'IN_PROGRESS' ? 'text-blue-500 shadow-[0_0_8px_currentColor]'
-    : ['WAITING', 'OPEN'].includes(status) ? 'text-amber-500 shadow-[0_0_8px_currentColor]'
+  const c = status === 'IN_PROGRESS' ? 'text-blue-500'
+    : ['WAITING', 'OPEN'].includes(status) ? 'text-amber-500'
     : status === 'SCHEDULED' ? 'text-emerald-500'
     : ['CANCELLED', 'FAILED'].includes(status) ? 'text-red-500'
     : 'text-gray-500';
@@ -105,6 +106,7 @@ export function RoomRow({ room, showOpen = false, compact = false }: { room: Roo
       <RoomDot status={room.status} />
       <Link to={`/rooms/${room.id}`} title={room.title} className="min-w-0 flex-1 basis-40 truncate text-body font-medium text-ink hover:text-link">{room.title}</Link>
       <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-nowrap">
+        {room.bridge && <ProviderChip provider={room.bridge.provider} />}
         {room.requiresApproval && <Badge>Lobby</Badge>}
         <StatusPill status={room.status} />
         {!compact && host && <HostCapsule name={host} />}
@@ -112,11 +114,17 @@ export function RoomRow({ room, showOpen = false, compact = false }: { room: Roo
         {moment && <span title={formatWhen(moment)}><DateCapsule text={formatShortDate(moment)} /></span>}
         <CodeChip code={room.roomCode} />
         {showOpen && live && (
-          <Link to={`/meetings/${room.id}`} aria-label={`Open meeting ${room.title}`}><Button size="sm" variant="primary" tabIndex={-1}>Open</Button></Link>
+          <Link to={externalMeetingHref(room) ?? `/meetings/${room.id}`} aria-label={`Open meeting ${room.title}`}><Button size="sm" variant="primary" tabIndex={-1}>Open</Button></Link>
         )}
       </div>
     </div>
   );
+}
+
+/** Which external app an EXTERNAL_BRIDGE room runs in (Google Meet / Teams / Zoom). */
+export function ProviderChip({ provider }: { provider: string }) {
+  const label = PROVIDER_LABEL[provider as BridgeProvider] ?? 'External';
+  return <Badge data-testid="provider-chip"><Globe size={12} weight="duotone" aria-hidden className="mr-1 inline" />{label}</Badge>;
 }
 
 /** Invitations addressed to me: accept with one click (the workspace becomes current). */

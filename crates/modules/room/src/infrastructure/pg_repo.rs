@@ -19,7 +19,8 @@ use warptalk_kernel::{
 
 use crate::application::ports::{
     Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
-    ParticipantRecord, RoomRecord, RoomRepo, UpdateLanguagesInput, VoiceConsentDirectory,
+    ParticipantRecord, RoomRecord, RoomRepo, UpdateLanguagesInput, UpdateRoomInput,
+    VoiceConsentDirectory,
 };
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
@@ -66,7 +67,7 @@ impl PgRoomRepo {
     }
 }
 
-const ROOM_COLS: &str = "r.id, r.workspace_id, r.host_id, r.active_host_id, r.title, \
+const ROOM_COLS: &str = "r.id, r.workspace_id, r.host_id, r.active_host_id, r.title, r.description, \
     r.translation_room_code, r.status, r.source_language, r.target_languages, r.settings, \
     r.scheduled_at, r.started_at, r.ended_at, r.created_at, \
     EXISTS (SELECT 1 FROM translation_room.translation_room_sessions s \
@@ -82,6 +83,7 @@ struct RoomRow {
     host_id: Uuid,
     active_host_id: Option<Uuid>,
     title: String,
+    description: Option<String>,
     translation_room_code: String,
     status: String,
     source_language: String,
@@ -139,6 +141,7 @@ impl RoomRow {
             host_id: self.host_id.into(),
             active_host_id: self.active_host_id.map(Into::into),
             title: self.title,
+            description: self.description,
             code: self.translation_room_code,
             status,
             source_language: self.source_language,
@@ -704,8 +707,8 @@ impl RoomRepo for PgRoomRepo {
         sqlx::query(
             "INSERT INTO translation_room.translation_rooms \
              (id, workspace_id, host_id, title, translation_room_code, status, source_language, \
-              target_languages, settings, scheduled_at, created_at, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $3)",
+              target_languages, settings, scheduled_at, created_at, created_by, description) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $3, $12)",
         )
         .bind(new.id.as_uuid())
         .bind(new.workspace_id.as_uuid())
@@ -718,6 +721,7 @@ impl RoomRepo for PgRoomRepo {
         .bind(settings)
         .bind(new.scheduled_at)
         .bind(new.now)
+        .bind(&new.description)
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -1255,6 +1259,80 @@ impl RoomRepo for PgRoomRepo {
         Ok(m)
     }
 
+    async fn update_room(&self, input: UpdateRoomInput) -> AppResult<Mutation> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let rec = lock_room(&mut tx, input.room).await?;
+        authorize_host(&mut tx, &rec, input.caller, true).await?;
+        ensure_open(&rec)?;
+        let source = input
+            .source_language
+            .unwrap_or_else(|| rec.source_language.clone());
+        let targets = input
+            .target_languages
+            .unwrap_or_else(|| rec.target_languages.clone());
+        let langs_changed = source != rec.source_language || targets != rec.target_languages;
+        let scheduled_at = input.scheduled_at.unwrap_or(rec.scheduled_at);
+        let status = match rec.status {
+            RoomStatus::Scheduled | RoomStatus::Waiting => match scheduled_at {
+                Some(t) if t > input.now => RoomStatus::Scheduled,
+                _ => RoomStatus::Waiting,
+            },
+            s => s,
+        };
+        sqlx::query(
+            "UPDATE translation_room.translation_rooms SET title = $2, description = $3, \
+             scheduled_at = $4, source_language = $5, target_languages = $6, \
+             settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object('requires_approval', $7::bool), \
+             status = $8, updated_at = $9, updated_by = $10 \
+             WHERE id = $1",
+        )
+        .bind(input.room.as_uuid())
+        .bind(input.title.unwrap_or_else(|| rec.title.clone()))
+        .bind(input.description.unwrap_or_else(|| rec.description.clone()))
+        .bind(scheduled_at)
+        .bind(&source)
+        .bind(serde_json::json!(targets))
+        .bind(input.requires_approval.unwrap_or(rec.requires_approval))
+        .bind(status.as_str())
+        .bind(input.now)
+        .bind(input.caller.user.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        if langs_changed {
+            let langs = room_languages(&source, &targets);
+            sqlx::query(
+                "UPDATE translation_room.translation_room_participants SET \
+                 speak_language = CASE WHEN speak_language = $3 OR speak_language = ANY($2) \
+                     THEN speak_language ELSE $4 END, \
+                 listen_language = CASE WHEN listen_language = ANY($2) \
+                     THEN listen_language ELSE $4 END, \
+                 updated_at = $5 \
+                 WHERE translation_room_id = $1 \
+                 AND (NOT (speak_language = $3 OR speak_language = ANY($2)) \
+                      OR NOT (listen_language = ANY($2)))",
+            )
+            .bind(input.room.as_uuid())
+            .bind(&langs)
+            .bind(LISTEN_ONLY)
+            .bind(&source)
+            .bind(input.now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        let snap = if langs_changed {
+            Snap::Reconcile
+        } else {
+            Snap::Skip
+        };
+        let m = self
+            .finish(&mut tx, input.room, None, vec![], snap, input.now)
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(m)
+    }
+
     async fn generate_routes(
         &self,
         room: RoomId,
@@ -1420,6 +1498,20 @@ impl RoomRepo for PgRoomRepo {
                 new.now,
             )
             .await?;
+            // The creator also speaks their caption language (their mic is captured in copilot
+            // mode); without this no route has the host as a source, so their speech is never
+            // transcribed.
+            sqlx::query(
+                "UPDATE translation_room.translation_room_participants \
+                 SET speak_language = listen_language, updated_at = $3 \
+                 WHERE translation_room_id = $1 AND user_id = $2",
+            )
+            .bind(new.id.as_uuid())
+            .bind(new.creator.as_uuid())
+            .bind(new.now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
         }
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(ClaimOutcome {

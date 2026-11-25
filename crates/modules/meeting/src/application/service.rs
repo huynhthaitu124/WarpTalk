@@ -266,7 +266,7 @@ impl MeetingService {
             .can_publish(true)
             .can_subscribe(false)
             .can_publish_data(false)
-            .can_publish_sources(vec!["MICROPHONE".to_owned()])
+            .can_publish_sources(vec!["microphone".to_owned()])
             .build()
             .map_err(lk_err)?;
         Ok(JoinGrant {

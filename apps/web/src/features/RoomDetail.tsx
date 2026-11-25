@@ -1,43 +1,44 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowsClockwise, CaretDown, Copy, DotsThree, Pause, Play, Prohibit, Stop, Translate, UserCheck, UserMinus, VideoCamera } from '@phosphor-icons/react';
+import { CaretDown, CheckCircle, Copy, Hourglass, Users, UsersThree, DotsThree, Pause, Play, Prohibit, Stop, Translate, UserCheck, UserMinus, VideoCamera } from '@phosphor-icons/react';
 import {
-  Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
-  EmptyState, Field, GroupHeader, HostCapsule, Input, LanguageCapsule, OccupancyCapsule, DateCapsule, PageBody, PageHeader, Select, Skeleton, StatusPill, Table, TBody, TD, TH, THead, TR, useToast,
+  Alert, Avatar, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger,
+  EmptyState, Field, GroupHeader, Input, PageBody, PageHeader, Select, Skeleton, useToast,
 } from '@/ui';
 import { useAuth, useProfile } from '@/lib/auth';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
-  useGenerateRoutes, useJoinById, useLeaveRoom, useParticipantAction, useParticipants, useRoom, useRoomAction, useRoutes, type RoomAction,
+  useJoinById, useLeaveRoom, useParticipantAction, useParticipants, useRoom, useRoomAction, type RoomAction,
 } from '@/lib/queries';
+import { externalMeetingHref } from '@/lib/bridge';
 import { ApiError } from '@/lib/api';
-import { LANGUAGES, languageLabel } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import type { Participant, Room } from '@/lib/schemas';
-import { TERMINAL_STATUSES, formatShortDate, formatWhen, langCodes, roomMoment, useCopy, useHostName } from './common';
+import { TERMINAL_STATUSES, useCopy, useHostName } from './common';
 import { errMsg } from './errors';
+import { RoomRecords } from './RoomRecords';
+import { EditableDescription, EditableTitle, PeopleProp, PropGroup, RoomProperties } from './RoomProperties';
 
 const TERMINAL = TERMINAL_STATUSES;
 
 export function JoinRoomForm({ roomId, defaultName }: { roomId: string; defaultName?: string }) {
   const join = useJoinById(roomId);
   const [name, setName] = useState(defaultName ?? '');
-  const [speak, setSpeak] = useState('en');
-  const [listen, setListen] = useState('vi');
+  const [lang, setLang] = useState('en');
   async function submit(e: FormEvent) {
     e.preventDefault();
     try {
-      await join.mutateAsync({ displayName: name.trim() || undefined, speakLanguage: speak, listenLanguage: listen });
+      await join.mutateAsync({ displayName: name.trim() || undefined, speakLanguage: lang, listenLanguage: lang });
     } catch { /* inline */ }
   }
-  const opts = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+  const opts = languageOptions();
   return (
     <Card className="mx-auto max-w-md">
-      <CardHeader title="Join this meeting" description="Choose how you speak and what you want to hear." />
+      <CardHeader title="Join this meeting" description="Pick your language: you speak and hear it, everyone else hears you in theirs." />
       <CardBody>
         <form onSubmit={submit} className="flex flex-col gap-4">
           <Field label="Display name (optional)"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} /></Field>
-          <Field label="I speak"><Select value={speak} onValueChange={setSpeak} options={opts} /></Field>
-          <Field label="I want to listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field>
+          <Field label="My language"><Select value={lang} onValueChange={setLang} options={opts} /></Field>
           {join.isError && <Alert tone="danger">{errMsg(join.error)}</Alert>}
           <Button type="submit" variant="primary" loading={join.isPending}>Join meeting</Button>
         </form>
@@ -46,10 +47,10 @@ export function JoinRoomForm({ roomId, defaultName }: { roomId: string; defaultN
   );
 }
 
-function OpenMeetingLink({ roomId, primary }: { roomId: string; primary: boolean }) {
+function OpenMeetingLink({ room, primary }: { room: Room; primary: boolean }) {
   return (
     <Link
-      to={`/meetings/${roomId}`}
+      to={externalMeetingHref(room) ?? `/meetings/${room.id}`}
       className={primary
         ? 'inline-flex h-7 items-center gap-2 rounded-pill bg-ink-btn pl-2.5 pr-3 font-medium text-on-ink-btn shadow-btn no-underline hover:no-underline hover:opacity-90 focus-ring'
         : 'inline-flex h-7 items-center gap-2 rounded-pill border border-hairline/60 bg-surface-2 pl-2.5 pr-3 font-medium text-ink shadow-btn no-underline hover:bg-surface-3 hover:no-underline focus-ring'}
@@ -77,7 +78,7 @@ function HostControls({ room, canOpen }: { room: Room; canOpen: boolean }) {
   const startable = ['SCHEDULED', 'WAITING', 'OPEN'].includes(s);
   const live = s === 'IN_PROGRESS';
   const canEnd = ['IN_PROGRESS', 'PAUSED', 'WAITING', 'OPEN'].includes(s);
-  const openLink = canOpen && <OpenMeetingLink roomId={room.id} primary={live} />;
+  const openLink = canOpen && <OpenMeetingLink room={room} primary={live} />;
   return (
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Room controls">
       {openLink}
@@ -115,13 +116,11 @@ function HostControls({ room, canOpen }: { room: Room; canOpen: boolean }) {
   );
 }
 
-const NOT_ACTIVE = ['KICKED', 'LEFT', 'REJECTED'];
-
-function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: string; list: Participant[]; canModerate: boolean; selfId: string | null }) {
+/** Hosts admit or deny people waiting in the lobby. Renders nothing when the lobby is empty. */
+function LobbySection({ roomId, list, canModerate }: { roomId: string; list: Participant[]; canModerate: boolean }) {
   const pa = useParticipantAction(roomId);
   const toast = useToast();
   const waiting = list.filter((p) => p.status === 'WAITING');
-  const others = list.filter((p) => p.status !== 'WAITING');
   const seen = useRef<number | null>(null);
 
   // In-app heads-up when somebody lands in the lobby (the list polls every 3s).
@@ -134,10 +133,10 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
     seen.current = waiting.length;
   }, [waiting, canModerate, toast]);
 
-  async function run(p: Participant, action: 'admit' | 'kick', verb: 'admit' | 'decline' | 'remove') {
+  async function run(p: Participant, action: 'admit' | 'kick', verb: 'admit' | 'decline') {
     try {
       await pa.mutateAsync({ pid: p.id, action });
-      toast({ tone: 'success', title: verb === 'admit' ? `${p.displayName} admitted` : verb === 'decline' ? `Request from ${p.displayName} declined` : `${p.displayName} removed` });
+      toast({ tone: 'success', title: verb === 'admit' ? `${p.displayName} admitted` : `Request from ${p.displayName} declined` });
     } catch (e) { toast({ tone: 'danger', title: 'Action failed', description: errMsg(e) }); }
   }
   async function admitAll() {
@@ -146,10 +145,9 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
     }
     toast({ tone: 'success', title: `${waiting.length} admitted` });
   }
+  if (!canModerate || waiting.length === 0) return null;
   return (
-    <div className="flex min-w-0 flex-col">
-      {canModerate && waiting.length > 0 && (
-        <section data-testid="lobby" className="min-w-0 border-b border-hairline">
+        <section data-testid="lobby" className="min-w-0 overflow-hidden rounded-[10px] border border-hairline bg-surface-1 shadow-capsule">
           <GroupHeader className="pr-2">
             <h2 className="font-medium text-ink">{`Lobby (${waiting.length})`}</h2><span className="truncate max-sm:hidden">· These people are waiting for you to let them in.</span>
             {waiting.length > 1 && <Button size="sm" variant="primary" className="ml-auto" disabled={pa.isPending} onClick={() => void admitAll()}>Admit all</Button>}
@@ -167,115 +165,6 @@ function ParticipantsCard({ roomId, list, canModerate, selfId }: { roomId: strin
             ))}
           </ul>
         </section>
-      )}
-      <section className="min-w-0">
-        <GroupHeader><h2 className="font-medium text-ink">{`Participants (${others.length})`}</h2></GroupHeader>
-        {others.length === 0 ? (
-          <PageBody><p className="text-body text-ink-muted">Nobody has joined yet.</p></PageBody>
-        ) : (
-          <>
-            <div className="max-sm:hidden">
-              <Table bare aria-label="Participants">
-                <THead><TR><TH>Name</TH><TH>Role</TH><TH>Speaks</TH><TH>Listens</TH><TH>Status</TH>{canModerate && <TH><span className="sr-only">Actions</span></TH>}</TR></THead>
-                <TBody>
-                  {others.map((p) => (
-                    <TR key={p.id}>
-                      <TD><span className="flex items-center gap-2"><Avatar name={p.displayName} className="size-6" /><span className="max-w-48 truncate" title={p.displayName}>{p.displayName}</span>{p.userId === selfId && <Badge size="sm" shape="tag" tone="primary" className="font-normal">You</Badge>}</span></TD>
-                      <TD><StatusPill status={p.role} /></TD>
-                      <TD>{languageLabel(p.speakLanguage)}</TD>
-                      <TD>{languageLabel(p.listenLanguage)}</TD>
-                      <TD><StatusPill status={p.status} /></TD>
-                      {canModerate && (
-                        <TD className="text-right">
-                          {p.role !== 'HOST' && !NOT_ACTIVE.includes(p.status) && (
-                            <Button size="sm" variant="ghost" onClick={() => run(p, 'kick', 'remove')} aria-label={`Kick ${p.displayName}`} disabled={pa.isPending}>Kick</Button>
-                          )}
-                        </TD>
-                      )}
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </div>
-            <ul className="sm:hidden" aria-label="Participants (list)">
-              {others.map((p) => (
-                <li key={p.id} className="flex flex-col gap-2 border-b border-row px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Avatar name={p.displayName} size="sm" />
-                    <span className="min-w-0 flex-1 truncate text-body font-medium" title={p.displayName}>{p.displayName}</span>
-                    {p.userId === selfId && <Badge>You</Badge>}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-caption text-ink-subtle">
-                    <StatusPill status={p.role} /><StatusPill status={p.status} />
-                    <span>{languageLabel(p.speakLanguage)} → {languageLabel(p.listenLanguage)}</span>
-                    {canModerate && p.role !== 'HOST' && !NOT_ACTIVE.includes(p.status) && (
-                      <Button size="sm" variant="ghost" className="ml-auto" onClick={() => run(p, 'kick', 'remove')} aria-label={`Kick ${p.displayName}`} disabled={pa.isPending}>Kick</Button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
-    </div>
-  );
-}
-
-/** Route status arrives as a string or a tagged object: show a word, never JSON. */
-/** CAPTION_ONLY / STANDARD_VOICE: the route runs without the full (cloned-voice) dub. */
-function degradedRoute(status: unknown): boolean {
-  const raw = typeof status === 'string' ? status : status && typeof status === 'object' ? Object.keys(status)[0] : undefined;
-  return !!raw && /^(caption_?only|standard_?voice)$/i.test(raw);
-}
-
-function routeStatusLabel(status: unknown): string {
-  const raw = typeof status === 'string' ? status : status && typeof status === 'object' ? Object.keys(status)[0] : undefined;
-  if (!raw) return 'Unknown';
-  const t = raw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
-  return t[0]!.toUpperCase() + t.slice(1);
-}
-
-function RoutesCard({ roomId, canGenerate, participants }: { roomId: string; canGenerate: boolean; participants: Participant[] }) {
-  const [open, setOpen] = useState(false);
-  const routes = useRoutes(roomId, open);
-  const gen = useGenerateRoutes(roomId);
-  const names = useMemo(() => new Map(participants.map((p) => [p.id, p.displayName])), [participants]);
-  const items = routes.data?.routes ?? [];
-  return (
-    <section className="min-w-0 border-t border-hairline">
-      <GroupHeader className="pr-2">
-        <h2 className="font-medium text-ink">Advanced: audio routes</h2><span className="truncate max-sm:hidden">· Who hears whom, in which language. Operator view.</span>
-        <Button size="sm" className="ml-auto" aria-expanded={open} aria-controls="routes-body" onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Show'}</Button>
-      </GroupHeader>
-      {open && (
-        <div id="routes-body">
-          {canGenerate && <div className="flex justify-end px-4 pt-3"><Button size="sm" loading={gen.isPending} onClick={() => gen.mutate()}><ArrowsClockwise size={16} aria-hidden />Generate routes</Button></div>}
-          {routes.isLoading ? (
-            <PageBody><Skeleton className="h-10" /></PageBody>
-          ) : routes.isError ? (
-            <PageBody><Alert tone="warning">Audio routes are not available yet: {errMsg(routes.error)}</Alert></PageBody>
-          ) : items.length === 0 ? (
-            <PageBody><p className="text-body text-ink-muted">No routes yet. Routes appear once the meeting is live and participants have joined.</p></PageBody>
-          ) : (
-            <Table bare aria-label="Audio routes">
-              <THead><TR><TH>Speaker</TH><TH>Listener</TH><TH>Language</TH><TH>Voice clone</TH><TH>Status</TH></TR></THead>
-              <TBody>
-                {items.map((r) => (
-                  <TR key={r.routeId}>
-                    <TD>{names.get(r.sourceParticipantId) ?? 'Participant'}</TD>
-                    <TD>{names.get(r.targetParticipantId) ?? 'Participant'}</TD>
-                    <TD className="whitespace-nowrap">{languageLabel(r.sourceLanguage)} → {languageLabel(r.targetLanguage)}</TD>
-                    <TD>{r.voiceCloneEnabled ? 'On' : 'Off'}</TD>
-                    <TD><Badge tone={degradedRoute(r.status) ? 'warning' : undefined} data-testid={degradedRoute(r.status) ? 'route-degraded' : undefined}>{degradedRoute(r.status) ? `Degraded: ${routeStatusLabel(r.status).toLowerCase()}` : routeStatusLabel(r.status)}</Badge></TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -311,70 +200,66 @@ export function RoomDetailPage() {
   const inLobby = self?.status === 'WAITING';
   const canOpen = !terminal && !inLobby && !!(self || canModerate);
 
-  const connected = list.filter((p) => p.status === 'CONNECTED').length;
-  const waitingN = list.filter((p) => p.status === 'WAITING').length;
-  const attended = list.filter((p) => ['DISCONNECTED', 'LEFT'].includes(p.status)).length;
-  const moment = roomMoment(room);
+  const connected = list.filter((p) => p.status === 'CONNECTED');
+  const waiting = list.filter((p) => p.status === 'WAITING');
+  const attended = list.filter((p) => ['DISCONNECTED', 'LEFT'].includes(p.status));
+  const editable = canModerate && !terminal;
+
+  const controls = !inLobby && (canModerate && !terminal ? <HostControls room={room} canOpen={canOpen} /> : canOpen && <OpenMeetingLink room={room} primary />);
 
   return (
-    <div className="flex min-h-full flex-col lg:flex-row">
-      <div className="min-w-0 flex-1">
-        <header className="flex flex-col gap-4 px-6 pb-6 pt-8 max-sm:px-4 max-sm:pt-5">
-          <h1 className="break-words text-headline font-semibold text-ink max-sm:text-title" title={room.title}>{room.title}</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill status={room.status} />
-            {hostName && <HostCapsule name={hostName} size="lg" />}
-            <LanguageCapsule size="lg" source={room.sourceLanguage} targets={room.targetLanguages} labels={langCodes(room)} />
-            {room.requiresApproval && <Badge>Lobby on</Badge>}
-            {!inLobby && (
-              <button
-                type="button"
-                aria-label={`Copy room code ${room.roomCode}`}
-                onClick={() => void copy(room.roomCode, 'Room code')}
-                className="inline-flex h-7 items-center gap-1.5 rounded-pill border border-hairline/60 bg-surface-1 px-2.5 text-[11px] font-semibold text-ink shadow-capsule hover:bg-surface-2 focus-ring"
-              >
-                <Copy size={13} aria-hidden className="text-ink-subtle" /><code data-testid="room-code">{room.roomCode}</code>
-              </button>
+    <div className="flex min-h-full flex-col">
+      {/* Toolbar row, top right (as in Linear's issue view). A person still in the lobby sees no controls. */}
+      <div className="flex min-h-14 items-center justify-end px-6 pt-3 max-sm:px-4">{controls}</div>
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-10 px-6 pb-10 pt-4 max-sm:gap-6 max-sm:px-4 lg:flex-row lg:items-start lg:gap-16 lg:pl-20">
+        <div className="flex min-w-0 max-w-[760px] flex-1 flex-col gap-6">
+          <header className="flex flex-col gap-5">
+            <EditableTitle room={room} editable={editable} />
+            <EditableDescription room={room} editable={editable} />
+          </header>
+          <div className="flex flex-col gap-4 empty:hidden">
+            {!self && !terminal && partsQ.isSuccess && <JoinRoomForm roomId={room.id} defaultName={profile.data?.fullName} />}
+            {inLobby && <Alert tone="warning" title="Waiting for the host">The host needs to admit you before you can enter the meeting. This page updates automatically.</Alert>}
+            {self?.status === 'KICKED' && <Alert tone="danger" title="You were removed from this meeting" />}
+            {self?.status === 'CONNECTED' && !isHost && !terminal && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-hairline bg-surface-1 px-4 py-3 shadow-card">
+                <span className="text-body">You are in this meeting as <strong>{self.displayName}</strong>.</span>
+                <Button size="sm" onClick={() => leave.mutate()} loading={leave.isPending}>Leave meeting</Button>
+              </div>
             )}
-            <OccupancyCapsule size="lg" count={connected} label={`${connected} in room`} />
-            {moment && <span title={formatWhen(moment)}><DateCapsule size="lg" text={formatShortDate(moment)} /></span>}
+            {terminal && <Alert tone="info">This meeting is {room.status.toLowerCase()}.</Alert>}
+            {!inLobby && <LobbySection roomId={room.id} list={list} canModerate={canModerate && !terminal} />}
           </div>
-          {/* A person still waiting to be admitted sees neither the code nor any controls. */}
-          {!inLobby && (canModerate && !terminal ? <HostControls room={room} canOpen={canOpen} /> : canOpen && <div><OpenMeetingLink roomId={room.id} primary /></div>)}
-        </header>
-        <div className="flex flex-col gap-4 border-t border-hairline px-6 py-4 empty:hidden max-sm:px-4">
-          {!self && !terminal && partsQ.isSuccess && <JoinRoomForm roomId={room.id} defaultName={profile.data?.fullName} />}
-          {inLobby && <Alert tone="warning" title="Waiting for the host">The host needs to admit you before you can enter the meeting. This page updates automatically.</Alert>}
-          {self?.status === 'KICKED' && <Alert tone="danger" title="You were removed from this meeting" />}
-          {self?.status === 'CONNECTED' && !isHost && !terminal && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-hairline bg-surface-1 px-4 py-3 shadow-card">
-              <span className="text-body">You are in this meeting as <strong>{self.displayName}</strong>.</span>
-              <Button size="sm" onClick={() => leave.mutate()} loading={leave.isPending}>Leave meeting</Button>
-            </div>
+          {!inLobby && (self || canModerate) && (
+            <div className="mt-6"><RoomRecords roomId={room.id} lang={self?.listenLanguage} live={room.status === 'IN_PROGRESS'} ended={terminal} /></div>
           )}
-          {terminal && <Alert tone="info">This meeting is {room.status.toLowerCase()}.</Alert>}
         </div>
-        {inLobby ? null : partsQ.isError ? (
-          <PageBody className="border-t border-hairline"><EmptyState title="Participants unavailable" description={errMsg(partsQ.error)} /></PageBody>
-        ) : (
-          <div className="flex min-w-0 flex-col border-t border-hairline">
-            <ParticipantsCard roomId={room.id} list={list} canModerate={canModerate && !terminal} selfId={userId} />
-            {canModerate && <RoutesCard roomId={room.id} canGenerate={canModerate && !terminal} participants={list} />}
-          </div>
-        )}
-      </div>
-      {!inLobby && !partsQ.isError && (
-        <aside aria-label="People summary" className="shrink-0 p-4 max-lg:border-t max-lg:border-hairline lg:w-[316px] lg:pl-0 lg:pt-8">
-          <Card className="rounded-[10px] p-3 shadow-capsule lg:sticky lg:top-4">
-            <h2 className="text-body font-medium text-ink">People</h2>
-            <dl className="mt-2 flex flex-col text-body-sm text-ink-muted">
-              {([['Participants', list.length], ['Waiting to be admitted', waitingN], ['In room', connected], ['Attended', attended]] as const).map(([k, v]) => (
-                <div key={k} className="flex h-8 items-center justify-between border-b border-row last:border-0"><dt>{k}</dt><dd className="tabular-nums text-ink">{v}</dd></div>
-              ))}
-            </dl>
-          </Card>
+        <aside aria-label="Properties" className="flex shrink-0 flex-col gap-9 lg:sticky lg:top-6 lg:w-[280px]">
+          <RoomProperties room={room} hostName={hostName} editable={editable} />
+          {!inLobby && (
+            <PropGroup title="Room code">
+              <li>
+                <button
+                  type="button"
+                  aria-label={`Copy room code ${room.roomCode}`}
+                  onClick={() => void copy(room.roomCode, 'Room code')}
+                  className="-ml-1.5 inline-flex h-8 items-center gap-2.5 rounded-md px-1.5 text-body text-ink hover:bg-surface-2 focus-ring"
+                >
+                  <Copy size={16} aria-hidden className="text-ink-muted" /><code data-testid="room-code" className="font-mono">{room.roomCode}</code>
+                </button>
+              </li>
+            </PropGroup>
+          )}
+          {!inLobby && !partsQ.isError && (
+            <PropGroup title="People">
+              <PeopleProp label="In room" icon={<UsersThree size={16} />} text={`${connected.length} in room`} people={connected} />
+              <PeopleProp label="Waiting to be admitted" icon={<Hourglass size={16} />} text={`${waiting.length} waiting`} people={waiting} />
+              <PeopleProp label="Attended" icon={<CheckCircle size={16} />} text={`${attended.length} attended`} people={attended} />
+              <PeopleProp label="Participants" icon={<Users size={16} />} text={`${list.length} total`} people={list} />
+            </PropGroup>
+          )}
         </aside>
-      )}
+      </div>
     </div>
   );
 }

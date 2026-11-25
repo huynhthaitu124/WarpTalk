@@ -12,6 +12,7 @@ use crate::domain::{BridgeConfig, BridgeState};
 pub struct CreateRoomRequest {
     pub workspace_id: WorkspaceId,
     pub title: String,
+    pub description: Option<String>,
     pub display_name: Option<String>,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub source_language: String,
@@ -43,6 +44,28 @@ pub struct UpdateLanguagesRequest {
     pub listen_language: Option<String>,
 }
 
+/// `Some(None)` for an explicit `null`, `None` when the field is absent.
+fn nullable<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRoomRequest {
+    pub title: Option<String>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub scheduled_at: Option<Option<DateTime<Utc>>>,
+    pub source_language: Option<String>,
+    pub target_languages: Option<Vec<String>>,
+    pub requires_approval: Option<bool>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
@@ -71,6 +94,7 @@ pub struct RoomDto {
     pub active_host_id: Option<UserId>,
     pub effective_host_id: UserId,
     pub title: String,
+    pub description: Option<String>,
     pub room_code: String,
     pub status: &'static str,
     pub source_language: String,
@@ -132,6 +156,7 @@ impl RoomDto {
             host_id: r.host_id,
             active_host_id: r.active_host_id,
             title: r.title,
+            description: r.description,
             room_code: r.code,
             status: r.status.as_str(),
             source_language: r.source_language,

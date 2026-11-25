@@ -4,14 +4,15 @@ import {
   Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, DialogContent, Drawer, EmptyState, Field, Input, Select, Skeleton, StatusPill,
   Table, TBody, TD, TH, THead, TR, Textarea, useToast,
 } from '@/ui';
-import { LANGUAGES, languageLabel } from '@/lib/languages';
+import { languageLabel } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import { GLOBAL_STATUSES, type GlobalStatus, type GlobalTerm } from '@/lib/schemas';
 import { useGlobalAction, useGlobalAudits, useGlobalSave, useGlobalTerms, type GlobalInput } from '@/lib/glossary';
 import { formatWhen } from './common';
 import { errMsg } from './errors';
 
 const ANY = 'any';
-const langOpts = [{ value: ANY, label: 'Any language' }, ...LANGUAGES.map((l) => ({ value: l.code, label: l.label }))];
+const langOpts = [{ value: ANY, label: 'Any language' }, ...languageOptions()];
 
 function TermDialog({ term, onClose }: { term: GlobalTerm | 'new'; onClose(): void }) {
   const initial = term === 'new' ? undefined : term;

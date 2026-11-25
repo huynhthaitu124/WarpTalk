@@ -6,6 +6,7 @@ import {
   Table, TBody, TD, TH, THead, TR, Textarea, useToast,
 } from '@/ui';
 import { LANGUAGES, languageLabel } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import { canAdmin, useWorkspace } from '@/lib/workspace';
 import {
   exportGlossaryCsv, useAddTerm, useCreateGlossary, useDeleteGlossary, useDeleteTerm, useGlossaries, useGlossary, useImportTerms, useTerms,
@@ -29,7 +30,7 @@ function ReadOnlyNote() {
 
 function langOptions(...extra: string[]) {
   const known = new Set<string>(LANGUAGES.map((l) => l.code));
-  return [...LANGUAGES.map((l) => ({ value: l.code, label: l.label })), ...extra.filter((c) => c && !known.has(c)).map((c) => ({ value: c, label: languageLabel(c) }))];
+  return languageOptions([...LANGUAGES.map((l) => l.code), ...extra.filter((c) => c && !known.has(c))]);
 }
 
 function Pair({ g }: { g: Pick<Glossary, 'sourceLanguage' | 'targetLanguage'> }) {

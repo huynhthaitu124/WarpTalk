@@ -144,3 +144,15 @@ export function leaseIsStale(bridge: { leaseExpiresAt?: string | null; serverTim
   const left = leaseRemainingSeconds(bridge, receivedAt, now);
   return left === null || left <= 0;
 }
+
+/**
+ * Where "Open meeting" goes for an external (Teams / Google Meet) room: back into the copilot flow, which re-claims
+ * the same room from its join link. `null` for WarpTalk (LiveKit) rooms or when the link is unknown.
+ */
+export function externalMeetingHref(r: { title: string; sourceLanguage: string; targetLanguages: string[]; bridge?: { joinUrl?: string | null } | undefined }): string | null {
+  const link = r.bridge?.joinUrl;
+  if (!link) return null;
+  const q = new URLSearchParams({ link, far: r.sourceLanguage, listen: r.targetLanguages[0] ?? r.sourceLanguage, auto: '1' });
+  if (r.title) q.set('title', r.title);
+  return `/external?${q.toString()}`;
+}

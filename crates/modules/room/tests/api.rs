@@ -1166,6 +1166,30 @@ fn participants_of(v: &Value) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn bridge_claim_host_speaks_caption_language_so_mic_is_routed() {
+    let Some(c) = ctx().await else { return };
+    let (ws, u) = members(&c, 1);
+    let code = meet_code();
+    let mut body = claim_body(ws, &code);
+    body["listenLanguage"] = json!("en");
+    let (st, v) = c.call(Method::POST, CLAIM, u[0], Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let room = v["id"].as_str().unwrap().to_owned();
+    let (_, v) = c
+        .call(
+            Method::GET,
+            &format!("/translation-rooms/{room}/participants"),
+            u[0],
+            None,
+        )
+        .await;
+    let ps = participants_of(&v);
+    let host = ps.iter().find(|p| p["userId"] == u[0].to_string()).unwrap();
+    assert_eq!(host["listenLanguage"], "en");
+    assert_eq!(host["speakLanguage"], "en");
+}
+
+#[tokio::test]
 async fn bridge_claim_joins_viewer_as_connected_listener() {
     let Some(c) = ctx().await else { return };
     let (ws, u) = members(&c, 4);
@@ -1709,4 +1733,90 @@ async fn relisten(c: &Ctx, room: &str, user: UserId, lang: &str) {
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{v}");
+}
+
+#[tokio::test]
+async fn host_updates_room_properties() {
+    let Some(c) = ctx().await else { return };
+    let (host, member) = (UserId::new(), UserId::new());
+    let ws = WorkspaceId::new();
+    c.policy.set_role(ws, host, WorkspaceRole::Owner);
+    c.policy.set_role(ws, member, WorkspaceRole::Member);
+    let (_, v) = c
+        .call(
+            Method::POST,
+            "/translation-rooms",
+            host,
+            Some(
+                json!({"workspaceId": ws, "title": "T", "description": "d", "sourceLanguage": "en",
+                        "targetLanguages": ["vi"], "requiresApproval": false}),
+            ),
+        )
+        .await;
+    let room = v["id"].as_str().unwrap().to_owned();
+    let uri = format!("/translation-rooms/{room}");
+    // host joins speaking vi; vi will leave the room
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &format!("{uri}/join"),
+            host,
+            Some(json!({"speakLanguage": "vi", "listenLanguage": "vi"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let later = (chrono::Utc::now() + chrono::Duration::days(2)).to_rfc3339();
+    let (st, v) = c
+        .call(
+            Method::PATCH,
+            &uri,
+            host,
+            Some(
+                json!({"title": "  New  ", "description": null, "scheduledAt": later,
+                        "targetLanguages": ["ja", "ja"], "requiresApproval": true}),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["title"], "New");
+    assert!(v["description"].is_null());
+    assert_eq!(v["status"], "SCHEDULED");
+    assert_eq!(v["targetLanguages"], json!(["ja"]));
+    assert_eq!(v["requiresApproval"], true);
+    let (_, ps) = c
+        .call(Method::GET, &format!("{uri}/participants"), host, None)
+        .await;
+    let me = &participants_of(&ps)[0];
+    assert_eq!(
+        (me["speakLanguage"].as_str(), me["listenLanguage"].as_str()),
+        (Some("en"), Some("en"))
+    );
+
+    // clearing the schedule goes back to WAITING; absent fields are kept
+    let (st, v) = c
+        .call(
+            Method::PATCH,
+            &uri,
+            host,
+            Some(json!({"scheduledAt": null})),
+        )
+        .await;
+    assert_eq!(
+        (st, v["status"].as_str()),
+        (StatusCode::OK, Some("WAITING"))
+    );
+    assert_eq!(v["title"], "New");
+
+    let (st, v) = c
+        .call(Method::PATCH, &uri, host, Some(json!({"title": ""})))
+        .await;
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("INVALID_TITLE"))
+    );
+    let (st, _) = c
+        .call(Method::PATCH, &uri, member, Some(json!({"title": "x"})))
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
 }

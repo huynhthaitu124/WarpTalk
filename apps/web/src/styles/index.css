@@ -15,6 +15,11 @@
   --surface-2: #1c1d20;
   --surface-3: #25272a;
   --surface-4: #2d2f33;
+  --elevated: #1c1d20;
+  --popover: #25272a;
+  --popover-hover: #2d2f33;
+  --btn-2: #1c1d20;
+  --btn-2-hover: #25272a;
   --hairline: #232428;
   --hairline-strong: #313338;
   --hairline-tertiary: #3e3e44;
@@ -72,12 +77,17 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --canvas: #f1f2f4;
-  --panel: #f7f8f9;
+  --canvas: #f0f0f0;
+  --panel: #fdfdfd;
   --surface-1: #ffffff;
-  --surface-2: #f0f1f4;
-  --surface-3: #e4e6ea;
+  --surface-2: #f2f2f2;
+  --surface-3: #e4e4e4;
   --surface-4: #d0d3da;
+  --elevated: #ffffff;
+  --popover: #ffffff;
+  --popover-hover: #f2f2f2;
+  --btn-2: #ffffff;
+  --btn-2-hover: #f2f2f2;
   --hairline: #e3e5e9;
   --hairline-strong: #d0d3da;
   --hairline-tertiary: #9ca3af;
@@ -128,7 +138,7 @@
   --ink-btn: #111214;
   --ink-btn-fg: #f1f2f4;
   --elev-card: 0 1px 1px rgba(17, 18, 20, 0.035);
-  --elev-pop: 0 8px 30px rgba(17, 18, 20, 0.14), 0 0 0 1px var(--hairline-strong);
+  --elev-pop: 0 12px 40px rgba(17, 18, 20, 0.12), 0 2px 8px rgba(17, 18, 20, 0.06);
   --edge-highlight: inset 0 0 0 0 transparent;
 }
 
@@ -136,6 +146,11 @@
   --color-canvas: var(--canvas);
   --color-panel: var(--panel);
   --color-surface-1: var(--surface-1);
+  --color-elevated: var(--elevated);
+  --color-popover: var(--popover);
+  --color-popover-hover: var(--popover-hover);
+  --color-btn-2: var(--btn-2);
+  --color-btn-2-hover: var(--btn-2-hover);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-surface-4: var(--surface-4);

@@ -27,13 +27,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((t) => {
           const Icon = ICON[t.tone];
           return (
-            <div key={t.id} role="status" data-testid="toast" className="pointer-events-auto flex animate-slide-up items-start gap-3 rounded-lg border border-hairline-strong bg-surface-3 p-3 shadow-pop">
+            <div key={t.id} role="status" data-testid="toast" className="pointer-events-auto flex animate-slide-up items-start gap-3 rounded-lg bg-popover p-3 shadow-pop">
               <Icon weight="fill" className={cn('mt-0.5 size-4 shrink-0', COLOR[t.tone])} aria-hidden />
               <div className="min-w-0 flex-1">
                 <p className="text-body font-medium text-ink">{t.title}</p>
                 {t.description && <p className="mt-0.5 text-body-sm text-ink-subtle">{t.description}</p>}
               </div>
-              <button type="button" aria-label="Dismiss notification" onClick={() => dismiss(t.id)} className="rounded-md p-1 text-ink-subtle hover:bg-surface-4 hover:text-ink focus-ring">
+              <button type="button" aria-label="Dismiss notification" onClick={() => dismiss(t.id)} className="rounded-md p-1 text-ink-subtle hover:bg-popover-hover hover:text-ink focus-ring">
                 <X className="size-3.5" aria-hidden />
               </button>
             </div>

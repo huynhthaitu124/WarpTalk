@@ -12,12 +12,45 @@
   },
   {
     "id": "term",
-    "description": "term: jargon, an acronym, a brand, a product name or a technical term is used that this meeting has not defined, and a participant could plausibly not know it. This fires on a term being USED as much as on one being asked about.",
-    "contract": "Name the exact term, brand or acronym as it was spoken, then define it in one clause. Prefer how it is used in THIS meeting when the transcript or the reference sources show that - a generic gloss of a term the team uses differently is worse than nothing. When neither defines it, give the widely accepted meaning and set source to \"general knowledge\". This is the common case, not the exception: the category fires precisely because the meeting has not defined the term.",
+    "description": "term: jargon, an acronym, a brand, a product name, a technical term or a named concept is used that this meeting has not defined, and a participant could plausibly not know it. This fires on a term being USED as much as on one being asked about.",
+    "contract": "Name the exact term, brand or acronym as it was spoken, then define it in one clause. Prefer how it is used in THIS meeting when the transcript or the reference sources show that - a generic gloss of a term the team uses differently is worse than nothing. When neither defines it, give the widely accepted meaning and set source to \"general knowledge\". This is the common case, not the exception: the category fires precisely because the meeting has not defined the term. When the term is a technology, framework or platform, the one clause says what it is FOR, not only what it is; the detail may add one or two key facts a participant would need to follow the discussion.",
     "retrieval": "optional",
     "kind": "hint",
     "severity": "info",
     "ttl_seconds": 120,
+    "allow_general_knowledge": true,
+    "actions": []
+  },
+  {
+    "id": "consideration",
+    "description": "consideration: the segment proposes, decides or describes combining technologies, platforms or approaches (for example a backend runtime with a frontend framework, a database with a hosting model, a migration from one stack to another, a library with a runtime version), or adopting one in a specific setting, and there are well-known caveats a participant should keep in mind: compatibility, integration points, deployment, performance, security, licensing, cost or operational trade-offs. Fire on the plan being stated, not only when someone asks.",
+    "contract": "Name the combination or choice as it was spoken, then give the one or two caveats that matter most for it, as concrete as general knowledge allows (what to check, configure or decide). Use the detail for up to three further points, each one short line. Only well-established caveats; never invent version-specific behaviour you are unsure of, and never argue against the choice itself.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 180,
+    "allow_general_knowledge": true,
+    "actions": []
+  },
+  {
+    "id": "concept",
+    "description": "concept: a named method, principle, pattern, model, standard, regulation or business/financial/legal notion is invoked (for example an architecture pattern, a methodology, a compliance standard, a pricing or contract model, a statistical or scientific idea) and the discussion relies on participants understanding it, but the meeting has not explained it.",
+    "contract": "Name the concept as it was spoken and explain it in one plain clause, then say in a few words why it matters to what is being discussed. The detail may give a short example or the usual pitfall. Prefer the meeting's own usage when the transcript or reference sources show it.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 180,
+    "allow_general_knowledge": true,
+    "actions": []
+  },
+  {
+    "id": "comparison",
+    "description": "comparison: participants weigh two or more named options (tools, vendors, frameworks, approaches, plans) against each other and the key differences between them have not been laid out in the transcript.",
+    "contract": "Name the options as spoken and state the one or two differences most relevant to the stated goal, neutrally. The detail may list a few more differences as short lines. Never pick a winner unless the transcript states the criterion that decides it.",
+    "retrieval": "optional",
+    "kind": "hint",
+    "severity": "info",
+    "ttl_seconds": 180,
     "allow_general_knowledge": true,
     "actions": []
   },
@@ -54,7 +87,10 @@
     "wire_name": "action",
     "allow_general_knowledge": false,
     "actions": [
-      { "kind": "create_action_item", "label": "Create task" }
+      {
+        "kind": "create_action_item",
+        "label": "Create task"
+      }
     ]
   },
   {
@@ -67,7 +103,10 @@
     "ttl_seconds": 300,
     "allow_general_knowledge": false,
     "actions": [
-      { "kind": "create_action_item", "label": "Create task" }
+      {
+        "kind": "create_action_item",
+        "label": "Create task"
+      }
     ]
   }
 ]

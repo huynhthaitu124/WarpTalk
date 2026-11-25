@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, CardBody, Dialog, DialogContent, Field, Input, PageHeader, Select, StatusPill } from '@/ui';
 import { useJoinByCode } from '@/lib/queries';
-import { LANGUAGES } from '@/lib/languages';
+import { languageOptions } from '@/lib/languageOptions';
 import { useWorkspace } from '@/lib/workspace';
 import { errMsg } from './errors';
 
@@ -12,15 +12,14 @@ export function JoinByCodeForm({ onJoined }: { onJoined?: () => void }) {
   const nav = useNavigate();
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [speak, setSpeak] = useState('en');
-  const [listen, setListen] = useState('vi');
-  const opts = LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
+  const [lang, setLang] = useState('en');
+  const opts = languageOptions();
   const valid = code.trim().length === 12;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     try {
-      const p = await join.mutateAsync({ roomCode: code.trim(), displayName: name.trim() || undefined, speakLanguage: speak, listenLanguage: listen });
+      const p = await join.mutateAsync({ roomCode: code.trim(), displayName: name.trim() || undefined, speakLanguage: lang, listenLanguage: lang });
       if (p.roomId) { onJoined?.(); nav(`/rooms/${p.roomId}`); }
     } catch { /* inline */ }
   }
@@ -42,10 +41,7 @@ export function JoinByCodeForm({ onJoined }: { onJoined?: () => void }) {
         <Input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" placeholder="e.g. abcdef123456" autoFocus />
       </Field>
       <Field label="Display name (optional)"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} /></Field>
-      <div className="grid grid-cols-2 gap-3 max-[420px]:grid-cols-1">
-        <Field label="I speak"><Select value={speak} onValueChange={setSpeak} options={opts} /></Field>
-        <Field label="I listen in"><Select value={listen} onValueChange={setListen} options={opts} /></Field>
-      </div>
+      <Field label="My language" hint="You speak and hear this language. Everyone else hears you in theirs."><Select value={lang} onValueChange={setLang} options={opts} /></Field>
       {join.isError && <Alert tone="danger">{errMsg(join.error)}</Alert>}
       <Button type="submit" variant="primary" disabled={!valid} loading={join.isPending}>Join meeting</Button>
     </form>

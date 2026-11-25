@@ -11,7 +11,7 @@ export function Card({ className, raised, variant = 'default', ...rest }: HTMLAt
       className={cn(
         variant === 'dashed' ? 'rounded-md border border-dashed border-hairline bg-surface-1'
           : variant === 'featured' ? 'rounded-lg border border-primary bg-primary text-on-primary shadow-btn'
-          : cn('rounded-lg border bg-surface-1 shadow-card', raised ? 'border-hairline-strong bg-surface-2' : 'border-hairline'),
+          : cn('rounded-lg border bg-surface-1 shadow-card', raised ? 'border-hairline-strong bg-elevated' : 'border-hairline'),
         className,
       )}
       {...rest}

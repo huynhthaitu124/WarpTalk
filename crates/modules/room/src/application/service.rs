@@ -11,7 +11,7 @@ use warptalk_kernel::{
 use super::ports::{
     Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
     ParticipantRecord, RoomEventPublisher, RoomRecord, RoomRepo, UpdateLanguagesInput,
-    WorkspacePolicy,
+    UpdateRoomInput, WorkspacePolicy,
 };
 use crate::domain::{
     AudioMode, BridgeConfig, BridgeProvider, RoomAction, RoomStatus, generate_room_code,
@@ -35,10 +35,21 @@ pub struct ClaimBridge {
 pub struct CreateRoom {
     pub workspace_id: WorkspaceId,
     pub title: String,
+    pub description: Option<String>,
     pub host_display_name: Option<String>,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub source_language: String,
     pub target_languages: Vec<String>,
+    pub requires_approval: Option<bool>,
+}
+
+#[derive(Default)]
+pub struct UpdateRoom {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub scheduled_at: Option<Option<DateTime<Utc>>>,
+    pub source_language: Option<String>,
+    pub target_languages: Option<Vec<String>>,
     pub requires_approval: Option<bool>,
 }
 
@@ -129,6 +140,21 @@ impl RoomService {
                 "title must be 1-255 characters",
             ));
         }
+        let description = req
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned);
+        if description
+            .as_ref()
+            .is_some_and(|d| d.chars().count() > 5000)
+        {
+            return Err(validation(
+                "INVALID_DESCRIPTION",
+                "description must be at most 5000 characters",
+            ));
+        }
         if !valid_language(&req.source_language)
             || req.target_languages.is_empty()
             || req.target_languages.len() > 20
@@ -169,6 +195,7 @@ impl RoomService {
                     .filter(|n| !n.trim().is_empty())
                     .unwrap_or_else(|| "Host".into()),
                 title: title.clone(),
+                description: description.clone(),
                 code: generate_room_code(&mut rand::thread_rng()),
                 status,
                 source_language: req.source_language.clone(),
@@ -294,6 +321,80 @@ impl RoomService {
             .lifecycle(id, caller, action, self.clock.now())
             .await?;
         self.publish(&m, action == RoomAction::Start).await?;
+        Ok(m.room)
+    }
+
+    pub async fn update(&self, id: RoomId, user: UserId, req: UpdateRoom) -> AppResult<RoomRecord> {
+        let title = match req.title {
+            Some(t) => {
+                let t = t.trim().to_owned();
+                if t.is_empty() || t.chars().count() > 255 {
+                    return Err(validation(
+                        "INVALID_TITLE",
+                        "title must be 1-255 characters",
+                    ));
+                }
+                Some(t)
+            }
+            None => None,
+        };
+        let description = req
+            .description
+            .map(|d| d.map(|d| d.trim().to_owned()).filter(|d| !d.is_empty()));
+        if description
+            .as_ref()
+            .and_then(Option::as_ref)
+            .is_some_and(|d| d.chars().count() > 5000)
+        {
+            return Err(validation(
+                "INVALID_DESCRIPTION",
+                "description must be at most 5000 characters",
+            ));
+        }
+        if req
+            .source_language
+            .as_deref()
+            .is_some_and(|l| !valid_language(l))
+        {
+            return Err(validation(
+                "INVALID_LANGUAGE",
+                "sourceLanguage must be a valid language code",
+            ));
+        }
+        let target_languages = match req.target_languages {
+            Some(ts) => {
+                if ts.is_empty() || ts.len() > 20 || !ts.iter().all(|l| valid_language(l)) {
+                    return Err(validation(
+                        "INVALID_LANGUAGE",
+                        "at least one valid targetLanguage is required",
+                    ));
+                }
+                let mut out: Vec<String> = Vec::new();
+                for t in ts {
+                    if !out.contains(&t) {
+                        out.push(t);
+                    }
+                }
+                Some(out)
+            }
+            None => None,
+        };
+        let (_, caller) = self.caller(id, user).await?;
+        let m = self
+            .repo
+            .update_room(UpdateRoomInput {
+                room: id,
+                caller,
+                title,
+                description,
+                scheduled_at: req.scheduled_at,
+                source_language: req.source_language,
+                target_languages,
+                requires_approval: req.requires_approval,
+                now: self.clock.now(),
+            })
+            .await?;
+        self.publish(&m, false).await?;
         Ok(m.room)
     }
 

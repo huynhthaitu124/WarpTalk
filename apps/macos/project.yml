@@ -22,6 +22,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources/Assets.xcassets
     dependencies:
       - package: LiveKit
     postBuildScripts:
@@ -41,17 +42,20 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         ENABLE_TESTABILITY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Resources/Info.plist
       properties:
         CFBundleName: WarpTalk
         CFBundleDisplayName: WarpTalk
+        CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.2"
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
         NSMicrophoneUsageDescription: "WarpTalk dùng micro của bạn để gửi giọng nói vào phòng dịch trực tiếp."
+        NSCameraUsageDescription: "WarpTalk dùng camera để hiển thị hình của bạn trong phòng họp."
         NSAudioCaptureUsageDescription: "WarpTalk ghi lại âm thanh của ứng dụng họp (Chrome, Zoom, Teams...) để dịch cuộc họp bên ngoài."
         NSScreenCaptureUsageDescription: "WarpTalk chỉ dùng quyền Ghi màn hình (phương án dự phòng) để lấy âm thanh của ứng dụng họp, không lưu hình ảnh."
         # DEMO ONLY: allow plain http/ws to the Next.js dev server (http://localhost:3000), the backend and LiveKit.

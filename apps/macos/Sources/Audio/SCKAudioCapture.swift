@@ -19,9 +19,9 @@ final class SCKAudioCapture: NSObject, AudioCaptureSource, SCStreamOutput, SCStr
         }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else { throw CaptureError.noDisplay }
-        let apps = content.applications.filter {
-            $0.bundleIdentifier == target.bundleID || $0.processID == target.pid
-                || target.extraAudioPrefixes.contains(where: { p in $0.bundleIdentifier.hasPrefix(p) })
+        let apps = content.applications.filter { app in
+            app.bundleIdentifier == target.bundleID || app.processID == target.pid
+                || target.extraAudioPrefixes.contains(where: { app.bundleIdentifier.hasPrefix($0) })
         }
         guard !apps.isEmpty else { throw CaptureError.noAudioProcess(target.name) }
 

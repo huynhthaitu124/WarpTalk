@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import * as RD from '@radix-ui/react-dialog';
 import {
-  ArrowLeft, BookBookmark, Brain, Broadcast, Buildings, Check, CaretDown, CaretRight, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, Palette, Plus, SignOut,
+  ArrowLeft, BookBookmark, Brain, Buildings, Check, CaretDown, CaretRight, FileText, GearSix, House, Keyboard, List, MagnifyingGlass, Moon, NotePencil, Palette, Plus, SignOut,
   SquaresFour, Sun, Users, X,
 } from '@phosphor-icons/react';
 import {
@@ -77,12 +77,11 @@ function AccountMenu() {
   return (
     <Dropdown>
       <DropdownTrigger asChild>
-        <button type="button" data-testid="account-menu" className="flex w-full items-center gap-2.5 rounded-2xl border border-hairline/50 bg-surface-1 p-2 text-left shadow-card hover:bg-surface-2 focus-ring">
-          <Avatar name={name} className="size-7" />
+        <button type="button" data-testid="account-menu" className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-3/60 focus-ring">
+          <Avatar name={name} className="size-6 text-[9px]" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[12.5px] font-medium leading-tight text-ink" data-testid="account-name">{name}</span>
-            <span className="block truncate text-[11px] leading-tight text-ink-muted">{email}</span>
-            {role && <span className="block truncate text-[11px] font-medium leading-tight text-chip-primary-text">{role}</span>}
+            <span className="block truncate text-[11px] leading-tight text-ink-muted">{role ? `${role} · ${email}` : email}</span>
           </span>
         </button>
       </DropdownTrigger>
@@ -99,7 +98,7 @@ function AccountMenu() {
   );
 }
 
-const ico = (I: typeof House) => <I weight="duotone" size={16} />;
+const ico = (I: typeof House) => <I size={16} />;
 
 /** Settings replaces the workspace nav (same canvas layer): "Back to app", uppercase group labels. */
 function SettingsSidebar() {
@@ -121,7 +120,7 @@ function SettingsSidebar() {
         {visible.map((s, i) => (
           <div key={s.id} className="flex flex-col gap-px">
             {(i === 0 || visible[i - 1]!.group !== s.group) && <p className={cn('flex h-6 items-center px-2 text-body-sm font-medium uppercase tracking-[0.6px] text-ink-subtle', i > 0 && 'mt-4', 'mb-1')}>{s.group}</p>}
-            <SidebarLink to={wsPath(`/settings/${s.id}`)} icon={<s.icon weight="duotone" size={16} />} active={s.id === section}>{s.label}</SidebarLink>
+            <SidebarLink to={wsPath(`/settings/${s.id}`)} icon={<s.icon size={16} />} active={s.id === section}>{s.label}</SidebarLink>
           </div>
         ))}
       </nav>
@@ -143,9 +142,21 @@ function Sidebar() {
         <>
           <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
             {guest ? <Brand /> : <WorkspaceSwitcher />}
-            <SidebarSearch />
+            <div className="flex shrink-0 items-center gap-1">
+              <SidebarSearch />
+              {!guest && (
+                <Link
+                  to={`${wsPath('/meetings')}?new=1`}
+                  aria-label="New meeting"
+                  title="New meeting"
+                  className="grid size-8 place-items-center rounded-full border border-hairline/60 bg-surface-1 text-ink shadow-sm hover:bg-surface-2 focus-ring"
+                >
+                  <NotePencil className="size-4" aria-hidden />
+                </Link>
+              )}
+            </div>
           </div>
-          <div className="flex flex-col gap-3 overflow-y-auto px-3 pb-3 pt-1">
+          <div className="flex flex-col gap-5 overflow-y-auto px-3 pb-3 pt-1">
             {guest ? (
               // A person who only joined rooms by code has no workspace: no switcher, no workspace nav.
               <SidebarNav label="Primary">
@@ -166,7 +177,6 @@ function Sidebar() {
                   >
                     Meetings
                   </SidebarLink>
-                  <SidebarLink to="/external" icon={ico(Broadcast)}>External meeting</SidebarLink>
                 </SidebarNav>
                 <SidebarNav label="Workspace" heading="Workspace">
                   <SidebarLink to={wsPath('/members')} icon={ico(Users)} badge={pendingCount || null}>Members</SidebarLink>
@@ -181,11 +191,6 @@ function Sidebar() {
         </>
       )}
       <div className="mt-auto flex flex-col gap-2 p-3">
-        {SHOW_DESIGN && !inSettings && (
-          <SidebarNav label="Resources">
-            <SidebarLink to="/design" icon={ico(Palette)}>Design system</SidebarLink>
-          </SidebarNav>
-        )}
         <AccountMenu />
       </div>
     </div>
@@ -319,7 +324,6 @@ export function Shell() {
         nav('go-glossary', 'Go to Glossary', <BookBookmark className="size-4" />, wsPath('/glossary')),
         nav('go-settings', 'Go to Settings', <GearSix className="size-4" />, wsPath('/settings'), 'G S'),
         ...(admin ? [nav('go-ai', 'Go to AI providers', <Brain className="size-4" />, wsPath('/settings/ai'))] : []),
-        nav('go-external', 'Go to External meeting', <Broadcast className="size-4" />, '/external', 'G E'),
       ] : []),
       nav('go-workspaces', 'Manage workspaces', <Buildings className="size-4" />, '/workspaces'),
       ...(SHOW_DESIGN ? [nav('go-design', 'Open design system', <Palette className="size-4" />, '/design')] : []),
@@ -343,14 +347,11 @@ export function Shell() {
         <MobileDrawer open={drawer} onOpenChange={setDrawer} openerRef={openerRef} />
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The raised panel: the sidebar is the recessed layer under it. */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel md:mr-1.5 md:mt-1.5 md:rounded-xl md:border md:border-hairline md:shadow-panel">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel md:my-1.5 md:mr-1.5 md:rounded-xl md:border md:border-hairline md:shadow-panel">
             <TopBar onMenu={(el) => { openerRef.current = el; setDrawer(true); }} />
             <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none overflow-y-auto overflow-x-hidden">
               <Outlet />
             </main>
-          </div>
-          <div className="hidden h-9 shrink-0 items-center justify-end gap-1.5 pr-5 text-caption text-ink-subtle md:flex" aria-hidden>
-            <Kbd>⌘K</Kbd>commands
           </div>
         </div>
       </div>

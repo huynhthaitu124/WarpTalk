@@ -140,7 +140,6 @@ export function MeetingsPage() {
     <>
       <PageHeader
         title="Meetings"
-        description={`Translation meetings in ${current.name}.`}
         actions={
           <>
             <Button onClick={() => patch({ join: '1' })}><Keyboard size={16} aria-hidden />Join by code</Button>

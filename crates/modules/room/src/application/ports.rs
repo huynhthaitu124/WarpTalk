@@ -161,6 +161,7 @@ pub struct RoomRecord {
     pub host_id: UserId,
     pub active_host_id: Option<UserId>,
     pub title: String,
+    pub description: Option<String>,
     pub code: String,
     pub status: RoomStatus,
     pub source_language: String,
@@ -203,6 +204,7 @@ pub struct NewRoom {
     pub host: UserId,
     pub host_display_name: String,
     pub title: String,
+    pub description: Option<String>,
     pub code: String,
     pub status: RoomStatus,
     pub source_language: String,
@@ -284,6 +286,19 @@ pub struct UpdateLanguagesInput {
     pub now: DateTime<Utc>,
 }
 
+/// Host edit of room properties. `None`: keep; `Some(None)`: clear (nullable fields).
+pub struct UpdateRoomInput {
+    pub room: RoomId,
+    pub caller: Caller,
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub scheduled_at: Option<Option<DateTime<Utc>>>,
+    pub source_language: Option<String>,
+    pub target_languages: Option<Vec<String>>,
+    pub requires_approval: Option<bool>,
+    pub now: DateTime<Utc>,
+}
+
 /// Result of a locked mutation; the service publishes `commands` and `snapshot` after commit.
 #[derive(Debug, Clone)]
 pub struct Mutation {
@@ -347,6 +362,9 @@ pub trait RoomRepo: Send + Sync {
     async fn leave(&self, room: RoomId, user: UserId, now: DateTime<Utc>) -> AppResult<Mutation>;
     /// Change the caller's own speak/listen language; reconciles routes when the room is live.
     async fn update_languages(&self, input: UpdateLanguagesInput) -> AppResult<Mutation>;
+    /// Host edits title/description/schedule/languages/lobby. Participants whose languages left
+    /// the room fall back to the source language; routes reconcile when live.
+    async fn update_room(&self, input: UpdateRoomInput) -> AppResult<Mutation>;
     async fn generate_routes(
         &self,
         room: RoomId,
