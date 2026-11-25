@@ -74,6 +74,8 @@ async fn main() -> anyhow::Result<()> {
         voice_cloner: None,
         voice_admin: None,
         stt_token_issuer: None,
+        copilot_server_stt: None,
+        copilot_audio_config: None,
         billing_config: None,
     };
     let (verification_mailer, invitation_mailer) =

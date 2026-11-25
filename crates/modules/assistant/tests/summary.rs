@@ -171,12 +171,15 @@ impl LlmResolver for FakeResolver {
     async fn for_purpose(&self, _: WorkspaceId, p: Purpose) -> Result<ResolvedLlm, ResolveError> {
         assert_eq!(p, Purpose::Summary);
         match self.0.lock().unwrap().clone() {
-            Some(l) => Ok(ResolvedLlm {
-                provider: l,
-                model: Some("fake-model".into()),
-                boundary: *self.1.lock().unwrap(),
-                key_source: (*self.1.lock().unwrap()).into(),
-            }),
+            Some(l) => {
+                let boundary = *self.1.lock().unwrap();
+                Ok(ResolvedLlm {
+                    provider: l,
+                    model: Some("fake-model".into()),
+                    boundary,
+                    key_source: boundary.into(),
+                })
+            }
             None => Err(ResolveError::NotConfigured),
         }
     }
