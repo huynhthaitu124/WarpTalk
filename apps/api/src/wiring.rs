@@ -516,6 +516,11 @@ pub struct ApiOptions {
     /// Overrides the ephemeral STT token issuer (tests); default is OpenAI when `OPENAI_API_KEY`
     /// is set, else `POST /copilot/sessions/{id}/stt-token` answers 503 `STT_NOT_CONFIGURED`.
     pub stt_token_issuer: Option<Arc<dyn SttTokenIssuer>>,
+    /// Overrides the server-side STT of the copilot audio fallback socket (tests); default from
+    /// `COPILOT_SERVER_STT` / `OPENAI_API_KEY` (see `copilot_stt`), else the socket answers 503.
+    pub copilot_server_stt: Option<Arc<dyn warptalk_copilot::application::ports::ServerStt>>,
+    /// Overrides the audio socket limits (tests); default reads `COPILOT_AUDIO_*` env.
+    pub copilot_audio_config: Option<warptalk_copilot::application::audio::AudioConfig>,
     /// Overrides the billing config (tests); default reads `STRIPE_*` / `BILLING_*` env.
     pub billing_config: Option<warptalk_billing::application::service::BillingConfig>,
 }
@@ -772,9 +777,17 @@ pub async fn build(
             .billing_config
             .unwrap_or_else(crate::billing_wiring::billing_config_from_env),
     });
+    let server_stt = opts
+        .copilot_server_stt
+        .or_else(crate::copilot_stt::server_stt_from_env);
+    let audio_config = opts
+        .copilot_audio_config
+        .unwrap_or_else(warptalk_copilot::application::audio::AudioConfig::from_env);
+    let glossary_service = transcript.as_ref().map(|t| t.glossaries());
     let copilot = copilot_redis.map(|conn| {
         let usage_conn = conn.clone();
-        CopilotModule::new(CopilotDeps {
+        let ticket_conn = conn.clone();
+        let mut module = CopilotModule::new(CopilotDeps {
             pool: pool.clone(),
             jwt: jwt.clone(),
             clock: Arc::new(SystemClock),
@@ -794,7 +807,22 @@ pub async fn build(
             ),
             gate: Arc::new(crate::billing_wiring::BillingCreditGate(billing.queries())),
             stt_model: crate::billing_wiring::copilot_stt_model(),
-        })
+        });
+        if let Some(stt) = server_stt {
+            module = module.with_server_stt(warptalk_copilot::application::audio::ServerAudio {
+                stt,
+                tickets: Arc::new(
+                    warptalk_copilot::infrastructure::redis_adapters::RedisTicketStore::new(
+                        ticket_conn,
+                    ),
+                ),
+                config: audio_config,
+            });
+        }
+        if let Some(g) = glossary_service {
+            module = module.with_glossary(Arc::new(crate::copilot_stt::CopilotGlossary(g)));
+        }
+        module
     });
 
     let meeting = MeetingModule::new(MeetingDeps {

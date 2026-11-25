@@ -116,15 +116,13 @@ struct FakeResolver {
 #[async_trait]
 impl LlmResolver for FakeResolver {
     async fn for_purpose(&self, _: WorkspaceId, _: Purpose) -> Result<ResolvedLlm, ResolveError> {
+        let boundary = *self.boundary.lock().unwrap();
+        let key_source = (*self.key_source.lock().unwrap()).unwrap_or_else(|| boundary.into());
         Ok(ResolvedLlm {
             provider: self.llm.clone(),
             model: None,
-            boundary: *self.boundary.lock().unwrap(),
-            key_source: self
-                .key_source
-                .lock()
-                .unwrap()
-                .unwrap_or_else(|| (*self.boundary.lock().unwrap()).into()),
+            boundary,
+            key_source,
         })
     }
 }
