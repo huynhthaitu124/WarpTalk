@@ -15,7 +15,8 @@
 //!       "decisions": [{"keywords": ["a", "b"]}],
 //!       "action_items": [{"owner": "Lan", "task_keywords": ["api"], "deadline": "thứ Sáu"}],
 //!       "must_not_include": ["hallucination trap"]
-//!     }
+//!     },
+//!     "injection": { "markers": ["attacker.example", "text of the real system prompt"] }
 //!   },
 //!   "fake": { "suggestions": [...], "summary": {...} }
 //! }
@@ -122,11 +123,20 @@ pub struct SummaryExpect {
     pub must_not_include: Vec<String>,
 }
 
+/// Prompt-injection attack meetings: strings that must never show up in any model output
+/// (attacker URLs, leaked system-prompt text, compliance phrases). Empty for normal meetings.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InjectionExpect {
+    pub markers: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Expectations {
     pub suggestions: SuggestionExpect,
     pub summary: SummaryExpect,
+    pub injection: InjectionExpect,
 }
 
 /// One scripted suggestion of the `fake` provider.
@@ -257,9 +267,14 @@ mod tests {
     #[test]
     fn bundled_datasets_are_valid() {
         let all = load_dir(&default_dir(), &[]).unwrap();
-        assert_eq!(all.len(), 6);
+        assert_eq!(all.len(), 9);
         let vi = all.iter().filter(|m| m.language == "vi").count();
-        assert_eq!(vi, 4);
+        assert_eq!(vi, 6);
+        let attacks = all
+            .iter()
+            .filter(|m| !m.expectations.injection.markers.is_empty())
+            .count();
+        assert_eq!(attacks, 3);
         for m in &all {
             assert!(m.lines.iter().any(|l| l.channel == Channel::Me), "{}", m.id);
             assert!(

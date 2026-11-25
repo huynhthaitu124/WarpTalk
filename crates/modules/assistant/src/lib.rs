@@ -7,9 +7,12 @@
 //! - `http`: axum handlers and request/response DTOs.
 
 pub mod application;
+pub mod chat;
 pub mod domain;
 pub mod http;
 pub mod infrastructure;
+pub mod memory;
+pub mod safety;
 pub mod suggestion;
 pub mod summary;
 pub mod usage;
@@ -40,6 +43,21 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             name: "meeting_summaries",
             sql: include_str!("../migrations/0002_meeting_summaries.sql"),
         },
+        Migration {
+            version: 3,
+            name: "summary_speakers_memory",
+            sql: include_str!("../migrations/0003_summary_speakers_memory.sql"),
+        },
+        Migration {
+            version: 20,
+            name: "chat_messages",
+            sql: include_str!("../migrations/0020_chat_messages.sql"),
+        },
+        Migration {
+            version: 30,
+            name: "suggestion_feedback",
+            sql: include_str!("../migrations/0030_suggestion_feedback.sql"),
+        },
     ],
 };
 
@@ -65,6 +83,8 @@ pub struct AssistantModule {
     repo: Arc<dyn LlmConfigRepository>,
     jwt: JwtKeys,
     summary: Option<http::summary::SummaryApi>,
+    feedback: Option<suggestion::feedback_http::FeedbackApi>,
+    chat: Option<chat::ChatApi>,
 }
 
 impl AssistantModule {
@@ -83,6 +103,8 @@ impl AssistantModule {
             repo,
             jwt: deps.jwt,
             summary: None,
+            feedback: None,
+            chat: None,
         }
     }
 
@@ -96,13 +118,36 @@ impl AssistantModule {
         self
     }
 
+    /// Mount the suggestion feedback routes (`suggestions/{id}/feedback`, quality, export).
+    pub fn with_suggestion_feedback(mut self, api: suggestion::feedback_http::FeedbackApi) -> Self {
+        self.feedback = Some(api);
+        self
+    }
+
+    /// Mount the meeting assistant routes (`meetings/{room_id}/ask`, `ask/history`, `recap`).
+    pub fn with_chat(mut self, api: chat::ChatApi) -> Self {
+        self.chat = Some(api);
+        self
+    }
+
     /// Routes relative to the API prefix (`/api/v1`), state applied.
     pub fn router(&self) -> axum::Router {
-        http::router(http::AppState {
+        let router = http::router(http::AppState {
             llm_config: self.llm_config.clone(),
             jwt: self.jwt.clone(),
             summary: self.summary.clone(),
-        })
+        });
+        let router = match &self.feedback {
+            Some(api) => router.merge(suggestion::feedback_http::router(
+                api.clone(),
+                self.jwt.clone(),
+            )),
+            None => router,
+        };
+        match &self.chat {
+            Some(api) => router.merge(chat::http::router(api.clone(), self.jwt.clone())),
+            None => router,
+        }
     }
 
     /// Read access to workspace LLM configs and sealed credentials for the AI resolver.

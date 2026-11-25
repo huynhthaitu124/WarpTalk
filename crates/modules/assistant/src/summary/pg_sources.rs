@@ -9,7 +9,11 @@ use uuid::Uuid;
 use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppResult, RoomId, WorkspaceId};
 
-use super::ports::{RoomMeta, RoomMetaSource, TranscriptData, TranscriptSegment, TranscriptSource};
+use super::ports::{
+    CopilotNames, RoomContext, RoomMeta, RoomMetaSource, TranscriptData, TranscriptSegment,
+    TranscriptSource,
+};
+use warptalk_kernel::UserId;
 
 /// Final transcript segments for the summary job. TEMPORARY cross-schema read of
 /// `transcript.*` like the adapters above (read-only).
@@ -119,6 +123,63 @@ impl RoomMetaSource for PgRoomMetaSource {
             source_language,
             target_languages: serde_json::from_value(targets).unwrap_or_default(),
             participants,
+        }))
+    }
+
+    async fn context(&self, room: RoomId) -> AppResult<Option<RoomContext>> {
+        let row: Option<(Uuid, String, String, Option<Uuid>)> = sqlx::query_as(
+            "SELECT host_id, title, translation_room_type, series_id \
+             FROM translation_room.translation_rooms WHERE id = $1",
+        )
+        .bind(room.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let Some((host, title, room_type, series_id)) = row else {
+            return Ok(None);
+        };
+        let host_name: Option<String> =
+            sqlx::query_scalar("SELECT full_name FROM identity.users WHERE id = $1")
+                .bind(host)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        let copilot = if room_type == "COPILOT_SESSION" {
+            let names: Option<(String, String)> = sqlx::query_as(
+                "SELECT name_me, name_others FROM copilot.sessions WHERE room_id = $1",
+            )
+            .bind(room.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+            Some(match names {
+                Some((me, others)) => CopilotNames { me, others },
+                None => CopilotNames {
+                    me: "Tôi".into(),
+                    others: "Người khác".into(),
+                },
+            })
+        } else {
+            None
+        };
+        let users: Vec<(String, Uuid)> = sqlx::query_as(
+            "SELECT display_name, user_id FROM translation_room.translation_room_participants \
+             WHERE translation_room_id = $1 AND user_id IS NOT NULL ORDER BY created_at",
+        )
+        .bind(room.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(Some(RoomContext {
+            host_user_id: Some(UserId::from_uuid(host)),
+            host_name: host_name.filter(|n| !n.trim().is_empty()),
+            copilot,
+            series_id,
+            title,
+            participant_users: users
+                .into_iter()
+                .map(|(n, u)| (n, UserId::from_uuid(u)))
+                .collect(),
         }))
     }
 }

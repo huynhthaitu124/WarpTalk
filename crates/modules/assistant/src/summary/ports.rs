@@ -48,6 +48,37 @@ pub struct RoomMeta {
 #[async_trait]
 pub trait RoomMetaSource: Send + Sync {
     async fn room(&self, room: RoomId) -> AppResult<Option<RoomMeta>>;
+
+    /// Who is who in the room (host user, copilot speaker names, series). Optional: sources
+    /// that cannot tell return `None` and the summary falls back to the raw speaker names.
+    async fn context(&self, _room: RoomId) -> AppResult<Option<RoomContext>> {
+        Ok(None)
+    }
+}
+
+/// The copilot speaker names of a room (`copilot.sessions.name_me` / `name_others`): the
+/// transcript stores exactly these as speaker names of the two channels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CopilotNames {
+    /// Channel `me`: the host's microphone (default "Tôi").
+    pub me: String,
+    /// Channel `others`: everybody else, not told apart (default "Người khác").
+    pub others: String,
+}
+
+/// Directory facts about a room that the summary and the meeting memory need.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RoomContext {
+    pub host_user_id: Option<UserId>,
+    /// The host user's real display name (`identity.users.full_name`).
+    pub host_name: Option<String>,
+    /// `Some` for copilot rooms (type `COPILOT_SESSION`).
+    pub copilot: Option<CopilotNames>,
+    /// Recurring-meeting series of the room, when it belongs to one.
+    pub series_id: Option<Uuid>,
+    pub title: String,
+    /// Participants with a user account: (display name in the room, user id).
+    pub participant_users: Vec<(String, UserId)>,
 }
 
 /// A follow-up the live suggestion engine already emitted for the room.

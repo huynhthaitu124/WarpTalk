@@ -20,15 +20,15 @@ pub mod worker;
 
 pub use config::{NS_SUMMARY, SummaryConfig, register as register_config};
 pub use model::{
-    ActionItem, ActionItemDraft, SUMMARY_GROUP, SummaryContent, SummaryJob, SummaryMeta,
-    SummaryRequest, SummaryResultEvent, SummaryStatus,
+    ActionItem, ActionItemDraft, PreviousItemUpdate, SUMMARY_GROUP, SummaryContent, SummaryJob,
+    SummaryMeta, SummaryRequest, SummaryResultEvent, SummaryStatus,
 };
 pub use pg_access::{PgExternalLlmGate, PgRoomAccess};
 pub use pg_sources::{PgRoomMetaSource, PgTranscriptSource};
 pub use ports::{
-    AllowAllExternalLlm, ExternalLlmGate, FollowUpSource, LiveFollowUp, NoBus, NoFollowUps,
-    RoomAccess, RoomAccessInfo, RoomMeta, RoomMetaSource, SummaryBus, TranscriptData,
-    TranscriptSegment, TranscriptSource, WorkspaceScope,
+    AllowAllExternalLlm, CopilotNames, ExternalLlmGate, FollowUpSource, LiveFollowUp, NoBus,
+    NoFollowUps, RoomAccess, RoomAccessInfo, RoomContext, RoomMeta, RoomMetaSource, SummaryBus,
+    TranscriptData, TranscriptSegment, TranscriptSource, WorkspaceScope,
 };
 pub use redis_ports::{RedisFollowUpSource, RedisSummaryBus};
 pub use repo::PgSummaryRepository;

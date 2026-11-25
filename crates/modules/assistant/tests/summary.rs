@@ -175,6 +175,7 @@ impl LlmResolver for FakeResolver {
                 provider: l,
                 model: Some("fake-model".into()),
                 boundary: *self.1.lock().unwrap(),
+                key_source: (*self.1.lock().unwrap()).into(),
             }),
             None => Err(ResolveError::NotConfigured),
         }

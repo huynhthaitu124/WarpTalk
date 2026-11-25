@@ -210,6 +210,8 @@ pub enum Outcome {
     GenerateEmpty,
     GenerateFailed,
     HygieneDropped,
+    /// Output carried an ungrounded URL or asked the reader for credentials / a click.
+    UnsafeOutput,
     Duplicate,
     PublishFailed,
     Published,
@@ -241,6 +243,7 @@ impl Outcome {
             Self::GenerateEmpty => "generate_empty",
             Self::GenerateFailed => "generate_failed",
             Self::HygieneDropped => "hygiene_dropped",
+            Self::UnsafeOutput => "unsafe_output",
             Self::Duplicate => "duplicate",
             Self::PublishFailed => "publish_failed",
             Self::Published => "published",

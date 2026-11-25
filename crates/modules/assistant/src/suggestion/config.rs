@@ -41,6 +41,8 @@
 //!                 "scale_tokens_per_language": true, "names": { "en": "English" } },
 //!   "hygiene": { "blocked_phrases": [], "redact_pii": true, "digit_run_min": 10,
 //!                "scrub_input": true, "min_content_chars": 1 },
+//!   "safety": { "enabled": true, "block_unknown_urls": true, "block_credential_requests": true,
+//!               "allow_transcript_urls": true, "allowed_hosts": [] },
 //!   "dedup": { "window_seconds": 900 },                           // 0 disables
 //!   "retrieval": { "top_k": 3, "timeout_ms": 3000, "max_snippet_chars": 1200 },
 //!   "follow_up": { "verify_in_transcript": true, "task_max_chars": 1000,
@@ -398,6 +400,8 @@ pub struct SuggestionConfig {
     pub prompt_templates: BTreeMap<String, PromptTemplate>,
     pub language: LanguageConfig,
     pub hygiene: HygieneConfig,
+    /// Output validation against prompt injection (ungrounded URLs, credential requests).
+    pub safety: crate::safety::OutputPolicy,
     pub dedup: DedupConfig,
     pub retrieval: RetrievalConfig,
     pub follow_up: FollowUpConfig,
@@ -438,6 +442,7 @@ impl Default for SuggestionConfig {
             prompt_templates: BTreeMap::new(),
             language: LanguageConfig::default(),
             hygiene: HygieneConfig::default(),
+            safety: crate::safety::OutputPolicy::default(),
             dedup: DedupConfig::default(),
             retrieval: RetrievalConfig::default(),
             follow_up: FollowUpConfig::default(),

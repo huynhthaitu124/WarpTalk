@@ -27,7 +27,8 @@ use warptalk_storage::{ObjectStore, StorageError};
 
 use super::ports::WorkspaceRepo;
 use crate::domain::documents::{
-    self, AccessLevel, DocType, authorize_manage, decode_text, ingestion, visible_levels,
+    self, AccessLevel, DocType, ReindexScope, authorize_manage, decode_text, ingestion,
+    visible_levels,
 };
 
 /// Stream of purge requests consumed by the knowledge module.
@@ -199,6 +200,24 @@ pub trait DocumentRepo: Send + Sync {
         levels: &[AccessLevel],
         limit: i64,
     ) -> AppResult<Vec<Uuid>>;
+    /// Atomically moves an active, AI-allowed document whose ingestion status is in `statuses`
+    /// to `pending` with a bumped revision (so a concurrent second reindex finds nothing to
+    /// claim). `None` when the document is not (or no longer) in one of those states.
+    async fn begin_reindex(
+        &self,
+        ws: WorkspaceId,
+        id: Uuid,
+        statuses: &[&str],
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<DocumentRecord>>;
+    /// Ids of active, AI-allowed documents in `statuses` (oldest update first, at most `limit`)
+    /// and the total number of such documents.
+    async fn reindex_candidates(
+        &self,
+        ws: WorkspaceId,
+        statuses: &[&str],
+        limit: i64,
+    ) -> AppResult<(Vec<Uuid>, i64)>;
     async fn audit(
         &self,
         ws: WorkspaceId,
@@ -304,6 +323,31 @@ pub struct PatchInput {
     pub access_level: Option<String>,
     pub ai_retrieval_allowed: Option<bool>,
 }
+
+/// Result of reindexing one document.
+#[derive(Debug, Clone)]
+pub struct ReindexOutcome {
+    pub document: DocumentRecord,
+    /// False when the document was already `pending` (nothing re-published).
+    pub queued: bool,
+}
+
+/// Result of a bulk reindex.
+#[derive(Debug, Clone, Default)]
+pub struct BatchReindexOutcome {
+    /// Documents whose index request was re-published.
+    pub queued: Vec<Uuid>,
+    /// Claimed by a concurrent reindex / no longer in the requested state.
+    pub not_eligible: u32,
+    /// Claimed but the request could not be published (document is `failed` again).
+    pub failed: Vec<Uuid>,
+    /// Matching documents beyond this batch (call again).
+    pub remaining: i64,
+}
+
+/// Default / maximum documents per bulk reindex call.
+pub const REINDEX_DEFAULT_BATCH: i64 = 50;
+pub const REINDEX_MAX_BATCH: i64 = 200;
 
 pub enum Download {
     Url {
@@ -415,7 +459,7 @@ impl DocumentService {
             AppError::coded(
                 415,
                 "UNSUPPORTED_FILE_TYPE",
-                "Unsupported file type: allowed types are pdf, docx, txt, md and csv.",
+                "Unsupported file type: allowed types are pdf, docx, txt, md, csv, png, jpg and webp.",
             )
         })?;
         let size = input.bytes.len() as u64;
@@ -693,6 +737,114 @@ impl DocumentService {
             }
         }
         Ok(doc)
+    }
+
+    /// Re-publishes the index request of one document (owner/admin). Skipped, failed and
+    /// completed documents get a new revision and go back to `pending`; a document that is
+    /// already `pending` is left alone (`queued = false`), so repeating the call is harmless.
+    pub async fn reindex(
+        &self,
+        ws: WorkspaceId,
+        actor: UserId,
+        id: Uuid,
+    ) -> AppResult<ReindexOutcome> {
+        let role = self.role(ws, actor).await?;
+        authorize_manage(role)?;
+        let doc = self.visible(ws, id, role).await?;
+        if !doc.ai_retrieval_allowed {
+            return Err(AppError::coded(
+                409,
+                "AI_RETRIEVAL_NOT_ALLOWED",
+                "AI retrieval is switched off for this document",
+            ));
+        }
+        match self
+            .reindex_claimed(doc.clone(), actor, ReindexScope::All)
+            .await?
+        {
+            Some((document, _published)) => Ok(ReindexOutcome {
+                document,
+                queued: true,
+            }),
+            None => Ok(ReindexOutcome {
+                document: self.visible(ws, id, role).await.unwrap_or(doc),
+                queued: false,
+            }),
+        }
+    }
+
+    /// Claims `doc` (status in `scope`) and publishes its index request. `Ok(None)` = could not
+    /// claim. The bool is false when publishing failed (the row is then `failed`).
+    async fn reindex_claimed(
+        &self,
+        doc: DocumentRecord,
+        actor: UserId,
+        scope: ReindexScope,
+    ) -> AppResult<Option<(DocumentRecord, bool)>> {
+        let Some(claimed) = self
+            .repo
+            .begin_reindex(doc.workspace_id, doc.id, scope.statuses(), self.clock.now())
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.audit(
+            &claimed,
+            actor,
+            "ReindexDocument",
+            json!({ "previousStatus": doc.ingestion_status, "previousReason": doc.ingestion_failure_reason }),
+        )
+        .await;
+        match self.store.get(&claimed.storage_key).await {
+            Ok(bytes) => {
+                let after = self.publish_index(claimed.clone(), Some(&bytes)).await;
+                let ok = after.ingestion_status == ingestion::PENDING;
+                Ok(Some((after, ok)))
+            }
+            Err(e) => {
+                tracing::error!(document = %claimed.id, error = %e, "cannot re-read document for reindex");
+                Ok(Some((
+                    self.mark_failed(claimed, "storage_unavailable").await,
+                    false,
+                )))
+            }
+        }
+    }
+
+    /// Bulk reindex of up to `limit` documents in `scope` (owner/admin). Bounded; the response
+    /// says how many matching documents remain. Already-pending documents are never touched,
+    /// so overlapping calls do not double-publish.
+    pub async fn reindex_batch(
+        &self,
+        ws: WorkspaceId,
+        actor: UserId,
+        scope: ReindexScope,
+        limit: Option<i64>,
+    ) -> AppResult<BatchReindexOutcome> {
+        authorize_manage(self.role(ws, actor).await?)?;
+        let limit = limit
+            .unwrap_or(REINDEX_DEFAULT_BATCH)
+            .clamp(1, REINDEX_MAX_BATCH);
+        let (ids, total) = self
+            .repo
+            .reindex_candidates(ws, scope.statuses(), limit)
+            .await?;
+        let mut out = BatchReindexOutcome {
+            remaining: (total - ids.len() as i64).max(0),
+            ..Default::default()
+        };
+        for id in ids {
+            let Some(doc) = self.repo.get(ws, id).await? else {
+                out.not_eligible += 1;
+                continue;
+            };
+            match self.reindex_claimed(doc, actor, scope).await? {
+                Some((_, true)) => out.queued.push(id),
+                Some((_, false)) => out.failed.push(id),
+                None => out.not_eligible += 1,
+            }
+        }
+        Ok(out)
     }
 
     /// Best-effort purge of the document's vectors (failure is logged; the operation succeeds).

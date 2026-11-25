@@ -12,9 +12,10 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use warptalk_kernel::{SystemClock, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_knowledge::application::{
-    AccessContext, AccessScope, DocumentAccess, DocumentSource, DocumentSourceError,
-    JobDisposition, NoopOcr, SearchFilters,
+    AccessContext, AccessScope, DocumentAccess, DocumentSource, DocumentSourceError, ExtractError,
+    JobDisposition, NoopOcr, OcrEngine, SearchFilters,
 };
+use warptalk_knowledge::domain::PageText;
 use warptalk_knowledge::domain::request::{IndexRequest, ResultStatus};
 use warptalk_knowledge::domain::text::tokenize;
 use warptalk_knowledge::infrastructure::{ExtractLimits, MemoryResultPublisher};
@@ -27,6 +28,7 @@ use warptalk_web::JwtKeys;
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two_pages.pdf");
 const SCANNED: &[u8] = include_bytes!("fixtures/scanned.pdf");
 const DIMS: usize = 64;
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n-pixels-";
 
 struct FakeEmbed;
 
@@ -105,6 +107,28 @@ struct Env {
 }
 
 async fn setup() -> Option<Env> {
+    setup_with(Arc::new(NoopOcr)).await
+}
+
+/// OCR stand-in: returns fixed text, optionally claiming to be an external (hosted) engine.
+struct FakeOcr {
+    external: bool,
+}
+
+#[async_trait]
+impl OcrEngine for FakeOcr {
+    async fn recognize(&self, _: &[u8], _: &str) -> Result<Vec<PageText>, ExtractError> {
+        Ok(vec![PageText {
+            page: None,
+            text: "Scanned memo: the warehouse keycode rotates every quarter.".into(),
+        }])
+    }
+    fn sends_content_externally(&self) -> bool {
+        self.external
+    }
+}
+
+async fn setup_with(ocr: Arc<dyn OcrEngine>) -> Option<Env> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
         eprintln!("DATABASE_URL not set; skipping integration test");
         return None;
@@ -126,6 +150,8 @@ async fn setup() -> Option<Env> {
     objects.insert("k/policy.pdf".to_owned(), TWO_PAGES.to_vec());
     objects.insert("k/scan.pdf".to_owned(), SCANNED.to_vec());
     objects.insert("k/leave.docx".to_owned(), docx());
+    objects.insert("k/memo.png".to_owned(), PNG.to_vec());
+    objects.insert("k/data.zip".to_owned(), b"PK\x03\x04 not office".to_vec());
     objects.insert("k/broken.pdf".to_owned(), b"%PDF-1.4 truncated".to_vec());
     let module = KnowledgeModule::new(KnowledgeDeps {
         pool,
@@ -140,11 +166,7 @@ async fn setup() -> Option<Env> {
         access: Arc::new(Deny),
         results: results.clone(),
     })
-    .with_document_source(
-        Arc::new(MapSource(objects)),
-        ExtractLimits::default(),
-        Arc::new(NoopOcr),
-    );
+    .with_document_source(Arc::new(MapSource(objects)), ExtractLimits::default(), ocr);
     let ws = WorkspaceId::new();
     settings
         .put(
@@ -165,8 +187,19 @@ async fn setup() -> Option<Env> {
 
 impl Env {
     async fn index(&self, key: &str, mime: &str, name: &str) -> (Uuid, JobDisposition) {
+        self.index_as(key, mime, name, true).await
+    }
+
+    async fn index_as(
+        &self,
+        key: &str,
+        mime: &str,
+        name: &str,
+        external_llm_allowed: bool,
+    ) -> (Uuid, JobDisposition) {
         let doc = Uuid::now_v7();
         let v: Value = json!({
+            "external_llm_allowed": external_llm_allowed,
             "workspace_id": self.ws.as_uuid(), "job_id": Uuid::now_v7().to_string(),
             "source_type": "document", "source_id": doc.to_string(), "title": name,
             "needs_extraction": true, "object_key": key, "mime_type": mime, "file_name": name});
@@ -260,11 +293,68 @@ async fn scanned_and_broken_and_missing_documents_do_not_index() {
     // Scanned: no OCR engine -> 0 chunks (workspace marks the document `skipped`).
     let (doc, d) = env.index("k/scan.pdf", "application/pdf", "Scan.pdf").await;
     assert_eq!(d, JobDisposition::Done);
-    assert_eq!(env.last_result(doc).chunks_indexed, 0);
+    let r = env.last_result(doc);
+    assert_eq!(
+        (r.status, r.reason.as_str()),
+        (ResultStatus::Blocked, "ocr_unavailable")
+    );
+    assert_eq!(r.chunks_indexed, 0);
+    // Unsupported zip content: skipped with its own reason.
+    let (doc, _) = env.index("k/data.zip", "application/zip", "data.zip").await;
+    assert_eq!(env.last_result(doc).reason, "unsupported_type");
     // Corrupt PDF and missing object: failed results, no panic.
     for key in ["k/broken.pdf", "k/missing.pdf"] {
         let (doc, d) = env.index(key, "application/pdf", "X.pdf").await;
         assert!(matches!(d, JobDisposition::Dead(_)), "{key}: {d:?}");
         assert_eq!(env.last_result(doc).status, ResultStatus::Failed);
     }
+}
+
+#[tokio::test]
+async fn image_is_routed_to_ocr_by_magic_bytes_and_becomes_searchable() {
+    let Some(env) = setup_with(Arc::new(FakeOcr { external: false })).await else {
+        return;
+    };
+    // Declared type and name say nothing about an image: the PNG signature decides.
+    let (doc, d) = env
+        .index("k/memo.png", "application/octet-stream", "memo.bin")
+        .await;
+    assert_eq!(d, JobDisposition::Done);
+    let r = env.last_result(doc);
+    assert_eq!(r.status, ResultStatus::Indexed, "{r:?}");
+    let hits = env
+        .module
+        .service()
+        .search(
+            &env.ctx(),
+            "warehouse keycode quarter",
+            &SearchFilters::default(),
+        )
+        .await
+        .unwrap();
+    assert!(hits.chunks[0].payload.text.contains("keycode"));
+}
+
+#[tokio::test]
+async fn external_ocr_is_skipped_when_external_llm_is_disallowed() {
+    let Some(env) = setup_with(Arc::new(FakeOcr { external: true })).await else {
+        return;
+    };
+    let (doc, d) = env
+        .index_as("k/memo.png", "image/png", "memo.png", false)
+        .await;
+    assert_eq!(d, JobDisposition::Done);
+    let r = env.last_result(doc);
+    assert_eq!(
+        (r.status, r.reason.as_str(), r.chunks_indexed),
+        (ResultStatus::Blocked, "external_llm_disallowed", 0)
+    );
+    // Allowed workspace: indexed.
+    let (doc, _) = env.index("k/memo.png", "image/png", "memo.png").await;
+    assert_eq!(env.last_result(doc).status, ResultStatus::Indexed);
+    // A scanned PDF takes the same gate.
+    let (doc, _) = env
+        .index_as("k/scan.pdf", "application/pdf", "Scan.pdf", false)
+        .await;
+    assert_eq!(env.last_result(doc).reason, "external_llm_disallowed");
 }

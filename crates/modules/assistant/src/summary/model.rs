@@ -104,6 +104,21 @@ pub struct ActionItemDraft {
     pub due: Option<String>,
     #[serde(default)]
     pub source_segment_ids: Vec<Uuid>,
+    /// The user the item is assigned to (the host when the owner is the host / "Tôi").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_user_id: Option<Uuid>,
+}
+
+/// What the transcript says about an open item of an earlier meeting ("Bối cảnh trước").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousItemUpdate {
+    /// The earlier item's task, as given in the prior context.
+    pub task: String,
+    /// `done` | `open` (still open).
+    pub status: String,
+    #[serde(default)]
+    pub source_segment_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -130,6 +145,8 @@ pub struct SummaryContent {
     pub action_items: Vec<ActionItemDraft>,
     pub open_questions: Vec<String>,
     pub topics: Vec<String>,
+    /// Earlier action items this meeting reported as done / still open (only when said).
+    pub previous_items: Vec<PreviousItemUpdate>,
     pub language: String,
     pub meta: SummaryMeta,
 }
@@ -146,6 +163,7 @@ pub struct ActionItem {
     pub due: Option<String>,
     pub status: String,
     pub source_segment_ids: Vec<Uuid>,
+    pub assignee_user_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -194,10 +212,23 @@ pub fn output_schema() -> Value {
                 }
             },
             "open_questions": str_list,
-            "topics": str_list
+            "topics": str_list,
+            "previous_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "status": {"type": "string", "enum": ["done", "open"]},
+                        "source_segments": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["task", "status", "source_segments"],
+                    "additionalProperties": false
+                }
+            }
         },
         "required": ["summary_short", "summary_detailed", "decisions", "action_items",
-                     "open_questions", "topics"],
+                     "open_questions", "topics", "previous_items"],
         "additionalProperties": false
     })
 }
@@ -212,6 +243,15 @@ pub struct RawOutput {
     pub action_items: Vec<RawActionItem>,
     pub open_questions: Vec<String>,
     pub topics: Vec<String>,
+    pub previous_items: Vec<RawPreviousItem>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RawPreviousItem {
+    pub task: String,
+    pub status: String,
+    pub source_segments: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

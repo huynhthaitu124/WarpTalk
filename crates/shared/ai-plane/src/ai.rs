@@ -18,7 +18,7 @@ use futures::stream::BoxStream;
 use tokio::task::JoinHandle;
 use warptalk_assistant::domain::byo::LlmPurpose;
 use warptalk_assistant::suggestion::{
-    DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm,
+    DataBoundary, KeySource, LlmResolver, Purpose, ResolveError, ResolvedLlm,
 };
 use warptalk_kernel::WorkspaceId;
 use warptalk_llm::{
@@ -210,6 +210,7 @@ impl AiProviders {
             model: Some(choice.model).filter(|m| !m.trim().is_empty()),
             // Platform keys reach third-party endpoints.
             boundary: DataBoundary::External,
+            key_source: KeySource::Platform,
         })
     }
 

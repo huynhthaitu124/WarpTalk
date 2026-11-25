@@ -13,6 +13,8 @@ use crate::fake::FakeProvider;
 pub enum ProviderSpec {
     /// Deterministic scripted answers (needs no keys, no network).
     Fake,
+    /// The fake, but it obeys prompt injections (to prove the injection metric catches them).
+    FakeNaive,
     Real {
         name: String,
         provider: Arc<dyn LlmProvider>,
@@ -23,18 +25,20 @@ impl ProviderSpec {
     pub fn name(&self) -> &str {
         match self {
             Self::Fake => "fake",
+            Self::FakeNaive => "fake-naive",
             Self::Real { name, .. } => name,
         }
     }
 
     pub fn is_fake(&self) -> bool {
-        matches!(self, Self::Fake)
+        matches!(self, Self::Fake | Self::FakeNaive)
     }
 
     /// The provider to use for one meeting (the fake is scripted per meeting).
     pub fn for_meeting(&self, m: &Meeting) -> Arc<dyn LlmProvider> {
         match self {
             Self::Fake => Arc::new(FakeProvider::new(m)),
+            Self::FakeNaive => Arc::new(FakeProvider::naive(m)),
             Self::Real { provider, .. } => provider.clone(),
         }
     }
@@ -42,7 +46,7 @@ impl ProviderSpec {
     /// The provider to use as judge.
     pub fn for_judge(&self) -> Arc<dyn LlmProvider> {
         match self {
-            Self::Fake => Arc::new(FakeProvider::judge_only()),
+            Self::Fake | Self::FakeNaive => Arc::new(FakeProvider::judge_only()),
             Self::Real { provider, .. } => provider.clone(),
         }
     }
@@ -59,10 +63,11 @@ fn env_key(vars: &[&str]) -> Result<String> {
     bail!("set {} to use this provider", vars.join(" or "))
 }
 
-/// `fake | openai | anthropic | gemini`.
+/// `fake | fake-naive | openai | anthropic | gemini`.
 pub fn build(name: &str) -> Result<ProviderSpec> {
     let (kind, vars): (ProviderId, &[&str]) = match name {
         "fake" => return Ok(ProviderSpec::Fake),
+        "fake-naive" => return Ok(ProviderSpec::FakeNaive),
         "openai" => (ProviderId::OpenAi, &["OPENAI_API_KEY"]),
         "anthropic" => (ProviderId::Anthropic, &["ANTHROPIC_API_KEY"]),
         "gemini" => (ProviderId::Gemini, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]),

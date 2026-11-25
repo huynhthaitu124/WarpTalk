@@ -1,3 +1,4 @@
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -7,7 +8,8 @@ use warptalk_web::{ApiResult, AuthUser};
 
 use super::AppState;
 use super::dto::{
-    CreateSessionRequest, IngestRequest, IngestResponse, ListQuery, SessionDto, SttTokenResponse,
+    AudioTicketResponse, CreateSessionRequest, IngestRequest, IngestResponse, ListQuery,
+    SessionDto, SttTokenBody, SttTokenResponse,
 };
 use crate::domain::MAX_SEGMENTS_PER_CALL;
 
@@ -85,14 +87,37 @@ pub async fn ingest(
     Ok(axum::Json(out.into()))
 }
 
-/// The response carries a secret: never cacheable.
+/// The response carries a secret: never cacheable. The body is optional JSON
+/// (`{ "languageMode", "languages", "vocabulary" }`); empty means the session defaults.
 pub async fn stt_token(
     State(s): State<AppState>,
     auth: AuthUser,
     Path(id): Path<RoomId>,
+    body: Bytes,
 ) -> AppResult<Response> {
-    let t = s.service.stt_token(id, auth.user_id()).await?;
+    let prefs = if body.iter().all(u8::is_ascii_whitespace) {
+        SttTokenBody::default()
+    } else {
+        serde_json::from_slice::<SttTokenBody>(&body).map_err(|e| {
+            AppError::validation("INVALID_BODY", format!("invalid stt-token body: {e}"))
+        })?
+    }
+    .into_prefs()?;
+    let t = s.service.stt_token(id, auth.user_id(), prefs).await?;
     let mut resp = axum::Json(SttTokenResponse::from(t)).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(resp)
+}
+
+/// One-time ticket for `GET /copilot/sessions/{id}/audio?token=...` (never cacheable).
+pub async fn audio_ticket(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+) -> AppResult<Response> {
+    let t = s.service.issue_audio_ticket(id, auth.user_id()).await?;
+    let mut resp = axum::Json(AudioTicketResponse::from(t)).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(resp)

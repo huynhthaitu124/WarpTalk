@@ -80,6 +80,7 @@ impl LlmResolver for Resolver {
             provider: self.0.clone(),
             model: None,
             boundary: DataBoundary::External,
+            key_source: Default::default(),
         })
     }
 }

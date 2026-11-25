@@ -6,8 +6,12 @@ use warptalk_contracts::events::SttResult;
 use warptalk_contracts::streams::{self, STT_RESULTS};
 use warptalk_kernel::{AppError, AppResult};
 
+use chrono::{DateTime, Utc};
+use warptalk_kernel::{RoomId, UserId};
+
 use crate::application::ports::{
-    Published, RateLimiter, SegmentSink, USAGE_STREAM, UsageEvent, UsageSink,
+    AudioTicketClaims, AudioTicketStore, Published, RateLimiter, SegmentSink, USAGE_STREAM,
+    UsageEvent, UsageSink,
 };
 
 /// Approximate bound of the `stt:results` streams (same as the pipeline).
@@ -121,5 +125,66 @@ impl UsageSink for RedisUsageSink {
             .await
             .map(|_| ())
             .map_err(bus_err)
+    }
+}
+
+/// One-time audio-socket tickets in Redis (`SET .. EX`, consumed with `GETDEL`).
+pub struct RedisTicketStore {
+    conn: ConnectionManager,
+}
+
+impl RedisTicketStore {
+    pub fn new(conn: ConnectionManager) -> Self {
+        Self { conn }
+    }
+}
+
+#[async_trait]
+impl AudioTicketStore for RedisTicketStore {
+    async fn put(
+        &self,
+        key: &str,
+        claims: AudioTicketClaims,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let mut conn = self.conn.clone();
+        let ttl = (expires_at - Utc::now()).num_seconds().max(1);
+        let value = format!("{}:{}:{}", claims.user, claims.session, expires_at.timestamp());
+        redis::cmd("SET")
+            .arg(format!("copilot:audio-ticket:{key}"))
+            .arg(value)
+            .arg("EX")
+            .arg(ttl)
+            .query_async::<()>(&mut conn)
+            .await
+            .map_err(bus_err)
+    }
+
+    async fn take(&self, key: &str, now: DateTime<Utc>) -> AppResult<Option<AudioTicketClaims>> {
+        let mut conn = self.conn.clone();
+        let v: Option<String> = redis::cmd("GETDEL")
+            .arg(format!("copilot:audio-ticket:{key}"))
+            .query_async(&mut conn)
+            .await
+            .map_err(bus_err)?;
+        let Some(v) = v else { return Ok(None) };
+        let mut it = v.split(':');
+        let (Some(u), Some(s), Some(exp)) = (it.next(), it.next(), it.next()) else {
+            return Ok(None);
+        };
+        let (Ok(u), Ok(s), Ok(exp)) = (
+            u.parse::<uuid::Uuid>(),
+            s.parse::<uuid::Uuid>(),
+            exp.parse::<i64>(),
+        ) else {
+            return Ok(None);
+        };
+        if exp <= now.timestamp() {
+            return Ok(None);
+        }
+        Ok(Some(AudioTicketClaims {
+            user: UserId::from(u),
+            session: RoomId::from(s),
+        }))
     }
 }

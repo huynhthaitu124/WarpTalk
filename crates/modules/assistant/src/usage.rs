@@ -1,10 +1,10 @@
 //! Usage metering hook: LLM calls publish `usage:events` entries (consumed by the billing
 //! metering worker). Wire contract shared with `warptalk-billing` (`domain::UsageEvent`).
 //!
-//! Boundary: a `WorkspaceControlled` endpoint is the customer's own (BYO) and is recorded with
-//! cost 0; `External` is the platform's provider and is charged. (`ResolvedLlm` carries no
-//! explicit BYO flag, so a customer key pointing at a third-party endpoint is metered as
-//! platform until the resolver exposes one.)
+//! Boundary: `ResolvedLlm::key_source` decides. A workspace (BYO) key is recorded with cost 0
+//! even when it points at a third-party endpoint; the platform key is charged. `DataBoundary`
+//! is a consent/policy notion only; the legacy `From<DataBoundary> for KeySource` mapping exists
+//! for callers not yet migrated and must not be used for new code.
 
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ use serde::Serialize;
 use uuid::Uuid;
 use warptalk_llm::Usage;
 
-use crate::suggestion::DataBoundary;
+use crate::suggestion::{DataBoundary, KeySource};
 
 /// Redis stream of billable usage.
 pub const USAGE_STREAM: &str = "usage:events";
@@ -47,7 +47,7 @@ impl UsageEvent {
         workspace: Uuid,
         room: Uuid,
         model: String,
-        boundary: DataBoundary,
+        key_source: impl Into<KeySource>,
         tokens_in: u64,
         tokens_out: u64,
         segment_id: Option<Uuid>,
@@ -61,7 +61,7 @@ impl UsageEvent {
             model,
             tokens_in: Some(i64::try_from(tokens_in).unwrap_or(i64::MAX)),
             tokens_out: Some(i64::try_from(tokens_out).unwrap_or(i64::MAX)),
-            boundary: boundary_label(boundary),
+            boundary: key_source_label(key_source.into()),
             occurred_at: Utc::now(),
             segment_id,
         }
@@ -70,6 +70,23 @@ impl UsageEvent {
     /// Normalized provider usage as `(tokens_in, tokens_out)`.
     pub fn tokens_of(u: &Usage) -> (u64, u64) {
         (u64::from(u.total_input()), u64::from(u.output))
+    }
+}
+
+/// Legacy mapping (`WorkspaceControlled` == BYO). Prefer passing `ResolvedLlm::key_source`.
+impl From<DataBoundary> for KeySource {
+    fn from(b: DataBoundary) -> Self {
+        match b {
+            DataBoundary::External => Self::Platform,
+            DataBoundary::WorkspaceControlled => Self::Workspace,
+        }
+    }
+}
+
+pub fn key_source_label(k: KeySource) -> &'static str {
+    match k {
+        KeySource::Platform => "platform",
+        KeySource::Workspace => "byo",
     }
 }
 
@@ -150,6 +167,8 @@ mod tests {
             output: 7,
             reasoning: 3,
         };
+        assert_eq!(key_source_label(KeySource::Platform), "platform");
+        assert_eq!(key_source_label(KeySource::Workspace), "byo");
         assert_eq!(UsageEvent::tokens_of(&u), (16, 7));
         let e = UsageEvent::llm(
             "x".into(),
@@ -157,7 +176,7 @@ mod tests {
             Uuid::nil(),
             Uuid::nil(),
             "m".into(),
-            DataBoundary::WorkspaceControlled,
+            KeySource::Workspace,
             1,
             2,
             None,

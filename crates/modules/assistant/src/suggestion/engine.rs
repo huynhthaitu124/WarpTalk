@@ -35,7 +35,9 @@ use super::ports::{
 use super::prompt;
 use super::slot::{SlotDenied, SlotParams, SuggestionState};
 use super::stage0::{self, Stage0};
+use super::store::{ContextLine, SuggestionRecord, SuggestionStore};
 use super::window::{RollingWindow, estimate_tokens};
+use crate::safety::{self, Fence, Lang};
 use crate::usage::{SharedUsageSink, UsageEvent};
 
 const STAGE_DECIDE: &str = "suggestion_decide";
@@ -97,6 +99,7 @@ pub enum Admission {
 pub struct SuggestionEngine {
     deps: EngineDeps,
     usage: Option<SharedUsageSink>,
+    store: Option<Arc<dyn SuggestionStore>>,
     windows: Mutex<HashMap<RoomId, RollingWindow>>,
     inflight: Arc<Mutex<HashSet<RoomId>>>,
 }
@@ -133,6 +136,7 @@ struct Generated {
     translations: BTreeMap<String, (String, String)>,
     follow_up: Option<Value>,
     tokens: u32,
+    model: String,
 }
 
 fn fin(outcome: Outcome) -> Outcome {
@@ -189,6 +193,7 @@ impl SuggestionEngine {
         Self {
             deps,
             usage: None,
+            store: None,
             windows: Mutex::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -197,6 +202,12 @@ impl SuggestionEngine {
     /// Publish `usage:events` for every LLM call (billing metering).
     pub fn with_usage(mut self, sink: SharedUsageSink) -> Self {
         self.usage = Some(sink);
+        self
+    }
+
+    /// Persist every published suggestion so users can rate it and bad cases become eval data.
+    pub fn with_store(mut self, store: Arc<dyn SuggestionStore>) -> Self {
+        self.store = Some(store);
         self
     }
 
@@ -214,7 +225,7 @@ impl SuggestionEngine {
             a.workspace.as_uuid(),
             a.room.as_uuid(),
             model.to_owned(),
-            llm.boundary,
+            llm.key_source,
             tin,
             tout,
             segment,
@@ -550,23 +561,30 @@ impl SuggestionEngine {
         }
     }
 
-    fn render_transcript(a: &Admitted, with_ids: bool) -> String {
+    /// Transcript block inside the per-call data fence (`<<DATA-nonce:transcript>>`); every turn
+    /// is sanitised and flattened to one line so it cannot forge markers or extra lines.
+    fn render_transcript(a: &Admitted, with_ids: bool, fence: &Fence) -> String {
         let line = |t: &Turn, latest: bool| {
-            let name = t.role.label().unwrap_or(t.speaker_id.as_str());
+            let name = fence.sanitize(t.role.label().unwrap_or(t.speaker_id.as_str()));
             let who = if with_ids {
-                format!("#{} {}", t.segment_id, name)
+                format!("#{} {}", fence.sanitize(&t.segment_id), name)
             } else {
-                name.to_string()
+                name
             };
-            let text = Self::scrub(&a.cfg, &t.text)
-                .replace("</transcript>", "")
-                .replace("<transcript>", "");
+            let text = fence
+                .sanitize(&Self::scrub(&a.cfg, &t.text))
+                .replace('\n', " ");
             let mark = if latest { "   <-- LATEST" } else { "" };
             format!("[{who}] {text}{mark}")
         };
         let mut lines: Vec<String> = a.context.iter().map(|t| line(t, false)).collect();
         lines.push(line(&a.turn, true));
-        format!("<transcript>\n{}\n</transcript>", lines.join("\n"))
+        format!(
+            "{}\n<transcript>\n{}\n</transcript>\n{}",
+            fence.open("transcript"),
+            lines.join("\n"),
+            fence.close("transcript")
+        )
     }
 
     fn request(cfg: &SuggestionConfig, workspace: WorkspaceId, spec: RequestSpec) -> Request {
@@ -613,8 +631,17 @@ impl SuggestionEngine {
         }
     }
 
-    fn untrusted(cfg: &SuggestionConfig) -> String {
-        prompt::resolve(cfg, "untrusted_rule").text
+    /// The untrusted-data rule bound to this call's fence. The embedded template (or a versioned
+    /// override with `{{nonce}}`) is rendered; a custom text that ignores the nonce is still
+    /// safe because the markers themselves carry it.
+    fn untrusted(cfg: &SuggestionConfig, fence: &Fence, lang: &str) -> String {
+        let t = prompt::resolve(cfg, "untrusted_rule");
+        if t.version == prompt::BUILTIN_VERSION {
+            return safety::untrusted_rule(Lang::from_code(lang), fence);
+        }
+        let mut v: BTreeMap<&str, String> = BTreeMap::new();
+        v.insert("nonce", fence.nonce().to_string());
+        prompt::render(&t.text, &v)
     }
 
     async fn decide(
@@ -626,8 +653,12 @@ impl SuggestionEngine {
         let cfg = &a.cfg;
         let sys_t = prompt::resolve(cfg, "decide");
         let user_t = prompt::resolve(cfg, "decide_user");
+        let fence = Fence::new();
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
-        vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert(
+            "untrusted_rule",
+            Self::untrusted(cfg, &fence, &a.stt.language),
+        );
         vars.insert("perspective_rule", Self::perspective(a));
         vars.insert(
             "answer_examples",
@@ -655,7 +686,7 @@ impl SuggestionEngine {
         );
         let system = prompt::render(&sys_t.text, &vars);
         let mut uvars: BTreeMap<&str, String> = BTreeMap::new();
-        uvars.insert("transcript", Self::render_transcript(a, false));
+        uvars.insert("transcript", Self::render_transcript(a, false, &fence));
         let user = prompt::render(&user_t.text, &uvars);
 
         let mut ids: Vec<Value> = categories.iter().map(|c| json!(c.id)).collect();
@@ -784,6 +815,23 @@ impl SuggestionEngine {
         set
     }
 
+    /// Knowledge snippets, each inside its own fence (`<<DATA-nonce:source_sN>>`). Empty string
+    /// when there are none.
+    fn render_sources(snippets: &[GroundedSnippet], fence: &Fence) -> String {
+        if snippets.is_empty() {
+            return String::new();
+        }
+        let mut docs = String::from("\n\n<reference_sources>\n");
+        for (i, s) in snippets.iter().enumerate() {
+            let title = fence.sanitize(&s.title).replace('\n', " ");
+            docs.push_str(&format!("--- Source S{}: {} ---\n", i + 1, title));
+            docs.push_str(&fence.wrap(&format!("source_s{}", i + 1), &s.text));
+            docs.push('\n');
+        }
+        docs.push_str("</reference_sources>");
+        docs
+    }
+
     async fn generate(
         &self,
         a: &Admitted,
@@ -802,8 +850,12 @@ impl SuggestionEngine {
             LanguageMode::Fixed => cfg.language.fixed.clone(),
             _ => a.stt.language.clone(),
         };
+        let fence = Fence::new();
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
-        vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert(
+            "untrusted_rule",
+            Self::untrusted(cfg, &fence, &a.stt.language),
+        );
         vars.insert("perspective_rule", Self::perspective(a));
         vars.insert(
             "answer_examples",
@@ -866,19 +918,7 @@ impl SuggestionEngine {
         vars.insert("reader_languages", readers.join(", "));
         let system = prompt::render(&sys_t.text, &vars);
 
-        let mut docs = String::new();
-        if !snippets.is_empty() {
-            docs.push_str("\n\n<reference_sources>\n");
-            for (i, s) in snippets.iter().enumerate() {
-                docs.push_str(&format!(
-                    "--- Source S{}: {} ---\n{}\n",
-                    i + 1,
-                    s.title,
-                    s.text
-                ));
-            }
-            docs.push_str("</reference_sources>");
-        }
+        let docs = Self::render_sources(snippets, &fence);
         let mut uvars: BTreeMap<&str, String> = BTreeMap::new();
         uvars.insert("category", category.id.clone());
         uvars.insert("reason", decision.reason.clone());
@@ -891,7 +931,7 @@ impl SuggestionEngine {
             },
         );
         uvars.insert("segment_language", a.stt.language.clone());
-        uvars.insert("transcript", Self::render_transcript(a, structured));
+        uvars.insert("transcript", Self::render_transcript(a, structured, &fence));
         uvars.insert("documents", docs);
         let user = prompt::render(&user_t.text, &uvars);
 
@@ -982,6 +1022,7 @@ impl SuggestionEngine {
             translations,
             follow_up: v.get("follow_up").filter(|f| f.is_object()).cloned(),
             tokens,
+            model: req.model.clone(),
         })
     }
 
@@ -1069,6 +1110,50 @@ impl SuggestionEngine {
         })
     }
 
+    /// Snapshot of a suggestion about to be published (best effort: a storage failure is logged
+    /// and never blocks delivery).
+    async fn record_suggestion(&self, a: &Admitted, r: &SuggestionResult, model: &str) {
+        let Some(store) = &self.store else { return };
+        let Ok(id) = r.suggestion_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        let turns: Vec<&Turn> = a.context.iter().chain(std::iter::once(&a.turn)).collect();
+        let t0 = turns.first().map_or(0, |t| t.at_ms);
+        let context = turns
+            .iter()
+            .map(|t| ContextLine {
+                t_ms: (t.at_ms - t0).max(0),
+                channel: match t.role {
+                    Role::SelfSpeaker => "me",
+                    Role::Other => "others",
+                    Role::Unknown => "unknown",
+                }
+                .into(),
+                speaker: t.speaker_id.clone(),
+                text: Self::scrub(&a.cfg, &t.text),
+            })
+            .collect();
+        let rec = SuggestionRecord {
+            id,
+            workspace_id: a.workspace.as_uuid(),
+            room_id: a.room.as_uuid(),
+            segment_id: r.segment_id.clone(),
+            category: r.category.clone(),
+            severity: r.severity.clone(),
+            content: r.content.clone(),
+            detail: r.detail.clone(),
+            language: r.language.clone(),
+            model: model.to_string(),
+            prompt_version: r.prompt_version.clone(),
+            confidence: r.confidence,
+            sources: serde_json::to_value(&r.sources).unwrap_or(Value::Null),
+            context,
+        };
+        if let Err(e) = store.record(&rec).await {
+            tracing::warn!(room = %a.room, error = %e, "could not store suggestion snapshot");
+        }
+    }
+
     /// Output hygiene, dedup and publishing.
     async fn finish(
         &self,
@@ -1088,6 +1173,40 @@ impl SuggestionEngine {
         {
             tracing::warn!(room = %a.room, "generate output contained a blocked phrase");
             return fin(Outcome::HygieneDropped);
+        }
+        if cfg.safety.enabled {
+            let mut outs: Vec<&str> = vec![g.content.as_str(), g.detail.as_str()];
+            for (c, d) in g.translations.values() {
+                outs.push(c);
+                outs.push(d);
+            }
+            let fu_text: Vec<String> = g
+                .follow_up
+                .as_ref()
+                .map(|f| {
+                    ["task", "owner", "due"]
+                        .iter()
+                        .map(|k| str_field(f, k))
+                        .collect()
+                })
+                .unwrap_or_default();
+            outs.extend(fu_text.iter().map(String::as_str));
+            let mut trusted: Vec<&str> = Vec::new();
+            for s in snippets {
+                trusted.push(&s.title);
+                trusted.push(&s.text);
+            }
+            let transcript: Vec<&str> = a
+                .context
+                .iter()
+                .chain(std::iter::once(&a.turn))
+                .map(|t| t.text.as_str())
+                .collect();
+            if let Err(v) = safety::check_output(&outs, &trusted, &transcript, &cfg.safety) {
+                tracing::warn!(room = %a.room, reason = v.label(), "generate output failed safety validation");
+                record_custom(STAGE_GENERATE, "unsafe_output");
+                return fin(Outcome::UnsafeOutput);
+            }
         }
         let clean = |s: &str, max: u32| {
             let c = hygiene::clean_text(s, max as usize);
@@ -1167,6 +1286,14 @@ impl SuggestionEngine {
                 copies.push(copy);
             }
         }
+
+        self.record_suggestion(a, &result, &g.model).await;
+        metrics::counter!(
+            "warptalk_suggestion_shown_total",
+            "category" => result.category.clone(),
+            "model" => g.model.clone()
+        )
+        .increment(1);
 
         let mut conn = self.deps.redis.clone();
         let maxlen = cfg.delivery.stream_maxlen as usize;

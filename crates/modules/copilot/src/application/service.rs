@@ -8,19 +8,48 @@ use warptalk_kernel::{
     AppError, AppResult, Clock, Page, PageRequest, RoomId, UserId, WorkspaceId, WorkspaceRole,
 };
 
+use super::audio::{AudioConfig, AudioPermit, ConnectionGuard, ServerAudio};
 use super::ports::{
-    Metering, NewSessionRoom, Published, RateLimiter, RoomState, SegmentSink, SessionRecord,
-    SessionRepo, SessionRooms, SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest,
-    UsageEvent, WorkspaceMembers,
+    AudioTicketClaims, GlossaryTerms, Metering, NewSessionRoom, NoGlossary, Published, RateLimiter,
+    RoomState, SegmentSink, ServerSttParams, SessionRecord, SessionRepo, SessionRooms,
+    SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest, UsageEvent, WorkspaceMembers,
 };
+use crate::domain::audio::{plan_languages, vocabulary_prompt};
 use crate::domain::{
-    DEFAULT_NAME_ME, DEFAULT_NAME_OTHERS, DEFAULT_TITLE, MAX_SEGMENTS_PER_CALL, Platform, Segment,
-    SessionFacts, others_speaker_uuid, segment_uuid, to_stt_result, valid_language,
+    Channel, DEFAULT_NAME_ME, DEFAULT_NAME_OTHERS, DEFAULT_TITLE, LanguageMode,
+    MAX_SEGMENTS_PER_CALL, Platform, Segment, SessionFacts, base_language, others_speaker_uuid,
+    segment_uuid, to_stt_result, valid_language,
 };
 
 /// `stt-token` calls per user per window.
 pub const STT_TOKEN_LIMIT: u32 = 10;
 pub const STT_TOKEN_WINDOW_SECS: u64 = 60;
+
+/// Client-side language / vocabulary preferences sent with `stt-token` and the audio socket's
+/// `hello`. Every field is optional; the session's declared languages fill the gaps.
+#[derive(Debug, Clone, Default)]
+pub struct LanguagePrefs {
+    pub mode: Option<LanguageMode>,
+    pub languages: Vec<String>,
+    pub vocabulary: Vec<String>,
+}
+
+/// Identity and facts of a running session, loaded once when an audio socket opens.
+#[derive(Debug, Clone)]
+pub struct AudioContext {
+    pub session: RoomId,
+    pub user: UserId,
+    pub record: SessionRecord,
+    pub started_at: DateTime<Utc>,
+}
+
+/// A freshly minted audio-socket ticket.
+#[derive(Debug, Clone)]
+pub struct AudioTicket {
+    pub ticket: String,
+    pub expires_at: DateTime<Utc>,
+    pub ttl_secs: u64,
+}
 
 pub struct CreateSession {
     pub workspace_id: WorkspaceId,
@@ -65,6 +94,9 @@ pub struct CopilotService {
     limiter: Arc<dyn RateLimiter>,
     clock: Arc<dyn Clock>,
     metering: Option<Metering>,
+    audio: Option<ServerAudio>,
+    guard: ConnectionGuard,
+    glossary: Arc<dyn GlossaryTerms>,
 }
 
 fn not_found() -> AppError {
@@ -106,7 +138,30 @@ impl CopilotService {
             limiter,
             clock,
             metering: None,
+            audio: None,
+            guard: ConnectionGuard::default(),
+            glossary: Arc::new(NoGlossary),
         }
+    }
+
+    /// Enable the server-side STT fallback (audio socket + tickets).
+    pub fn set_audio(&mut self, a: ServerAudio) {
+        self.audio = Some(a);
+    }
+
+    pub fn set_glossary(&mut self, g: Arc<dyn GlossaryTerms>) {
+        self.glossary = g;
+    }
+
+    pub fn audio(&self) -> Option<&ServerAudio> {
+        self.audio.as_ref()
+    }
+
+    pub fn audio_config(&self) -> AudioConfig {
+        self.audio
+            .as_ref()
+            .map(|a| a.config.clone())
+            .unwrap_or_default()
     }
 
     /// Enable usage events and the credit gate (billing).
@@ -307,13 +362,28 @@ impl CopilotService {
                 .map_err(|e| AppError::validation("INVALID_SEGMENT", e.to_string()))?;
         }
         let (record, room) = self.load_host_running(id, user).await?;
+        let started_at = room.started_at.unwrap_or(record.created_at);
+        self.ingest_validated(id, user, &record, started_at, &segments)
+            .await
+    }
+
+    /// Write already validated segments of a running session (shared by `POST /segments` and
+    /// the audio socket: same dedup, usage events and credit flag).
+    async fn ingest_validated(
+        &self,
+        id: RoomId,
+        user: UserId,
+        record: &SessionRecord,
+        started_at: DateTime<Utc>,
+        segments: &[Segment],
+    ) -> AppResult<IngestOutcome> {
         let facts = SessionFacts {
             room_id: id,
             host_participant_id: record.host_participant_id,
             others_speaker_id: record.others_speaker_id,
-            name_me: record.name_me,
-            name_others: record.name_others,
-            started_at: room.started_at.unwrap_or(record.created_at),
+            name_me: record.name_me.clone(),
+            name_others: record.name_others.clone(),
+            started_at,
         };
         let now = self.clock.now();
         let mut out = IngestOutcome {
@@ -322,7 +392,7 @@ impl CopilotService {
             segments: Vec::with_capacity(segments.len()),
             insufficient_credits: false,
         };
-        for seg in &segments {
+        for seg in segments {
             let result = to_stt_result(&facts, seg, now, 0);
             let dedup = format!("{id}:{}", seg.client_segment_id);
             let duplicate = match self.sink.publish(&result, &dedup).await? {
@@ -382,8 +452,40 @@ impl CopilotService {
         }
     }
 
+    /// Languages to expect in a session: client preference, else the declared ones.
+    fn language_inputs(record: &SessionRecord, prefs: &LanguagePrefs) -> (LanguageMode, Vec<String>) {
+        let mode = prefs.mode.unwrap_or_default();
+        let mut extra: Vec<String> = prefs.languages.clone();
+        if extra.is_empty() {
+            extra.push(record.language_others.clone());
+        }
+        (mode, extra)
+    }
+
+    /// Vocabulary prompt: the client's terms first, then the workspace glossary.
+    async fn vocabulary(
+        &self,
+        record: &SessionRecord,
+        user: UserId,
+        prefs: &LanguagePrefs,
+    ) -> Option<String> {
+        let cfg = self.audio_config();
+        let mut terms = prefs.vocabulary.clone();
+        terms.extend(
+            self.glossary
+                .terms(record.workspace_id, user, cfg.vocabulary_max_terms)
+                .await,
+        );
+        vocabulary_prompt(&terms, cfg.vocabulary_max_terms, cfg.prompt_max_chars)
+    }
+
     /// Mint a short-lived provider token for the host's app (rate limited per user).
-    pub async fn stt_token(&self, id: RoomId, user: UserId) -> AppResult<SttToken> {
+    pub async fn stt_token(
+        &self,
+        id: RoomId,
+        user: UserId,
+        prefs: LanguagePrefs,
+    ) -> AppResult<SttToken> {
         let (record, _) = self.load_host_running(id, user).await?;
         if let Some(m) = &self.metering
             && let Some(reason) = m.gate.suspended(record.workspace_id).await
@@ -406,10 +508,16 @@ impl CopilotService {
         {
             return Err(AppError::rate_limited("too many STT token requests"));
         }
+        let (mode, extra) = Self::language_inputs(&record, &prefs);
+        let plan = plan_languages(mode, &record.language_me, &extra);
+        let prompt = self.vocabulary(&record, user, &prefs).await;
         self.issuer
             .issue(SttTokenRequest {
                 session: id,
-                language: Some(record.language_me),
+                language: plan.hint,
+                language_mode: mode,
+                languages: plan.languages,
+                prompt,
             })
             .await
             .map_err(|e| match e {
@@ -427,5 +535,183 @@ impl CopilotService {
                     )
                 }
             })
+    }
+
+    // ------------------------------------------------------------ server STT fallback
+
+    fn audio_deps(&self) -> AppResult<&ServerAudio> {
+        self.audio.as_ref().ok_or_else(|| {
+            AppError::coded(
+                503,
+                "SERVER_STT_NOT_CONFIGURED",
+                "Server-side speech-to-text is not configured",
+            )
+        })
+    }
+
+    /// The same credit gate as `stt-token`: the server pays the provider here too.
+    async fn require_credits(&self, ws: WorkspaceId, id: RoomId) -> AppResult<()> {
+        if let Some(m) = &self.metering
+            && let Some(reason) = m.gate.suspended(ws).await
+        {
+            tracing::info!(session = %id, %reason, "audio refused: AI usage suspended");
+            return Err(AppError::coded(
+                402,
+                "INSUFFICIENT_CREDITS",
+                "The workspace has no AI credits left; add credits or upgrade the plan",
+            ));
+        }
+        Ok(())
+    }
+
+    fn ticket_key(ticket: &str) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(ticket.as_bytes()))
+    }
+
+    /// One-time ticket to open the audio socket without an `Authorization` header (browsers,
+    /// WKWebView). Host of a running session only; rate limited; same credit gate as `stt-token`.
+    pub async fn issue_audio_ticket(&self, id: RoomId, user: UserId) -> AppResult<AudioTicket> {
+        let audio = self.audio_deps()?;
+        let (record, _) = self.load_host_running(id, user).await?;
+        self.require_credits(record.workspace_id, id).await?;
+        if !self
+            .limiter
+            .allow(
+                &format!("copilot:audio-ticket:{user}"),
+                audio.config.ticket_limit_per_min,
+                60,
+            )
+            .await?
+        {
+            return Err(AppError::rate_limited("too many audio ticket requests"));
+        }
+        use base64::Engine;
+        use rand::RngCore;
+        let mut raw = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut raw);
+        let ticket = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+        let ttl = audio.config.ticket_ttl_secs;
+        let expires_at = self.clock.now() + chrono::Duration::seconds(ttl as i64);
+        audio
+            .tickets
+            .put(
+                &Self::ticket_key(&ticket),
+                AudioTicketClaims { user, session: id },
+                expires_at,
+            )
+            .await?;
+        Ok(AudioTicket {
+            ticket,
+            expires_at,
+            ttl_secs: ttl,
+        })
+    }
+
+    /// Consume a ticket for `session`. Unknown, used, expired and other-session tickets are all
+    /// the same 401.
+    pub async fn redeem_audio_ticket(&self, id: RoomId, ticket: &str) -> AppResult<UserId> {
+        let audio = self.audio_deps()?;
+        let claims = audio
+            .tickets
+            .take(&Self::ticket_key(ticket), self.clock.now())
+            .await?
+            .filter(|c| c.session == id)
+            .ok_or_else(|| AppError::unauthorized("invalid or expired audio ticket"))?;
+        Ok(claims.user)
+    }
+
+    /// Authorise an audio socket: host of a running session, credits available, below the
+    /// per-user connection limit. Errors are plain HTTP errors (the upgrade has not happened).
+    pub async fn open_audio(
+        &self,
+        id: RoomId,
+        user: UserId,
+    ) -> AppResult<(AudioContext, AudioPermit)> {
+        let audio = self.audio_deps()?;
+        let (record, room) = self.load_host_running(id, user).await?;
+        self.require_credits(record.workspace_id, id).await?;
+        let permit = self
+            .guard
+            .try_acquire(user, audio.config.max_concurrent_per_user)
+            .ok_or_else(|| {
+                AppError::coded(
+                    429,
+                    "TOO_MANY_AUDIO_STREAMS",
+                    "Too many open audio streams for this user",
+                )
+            })?;
+        let started_at = room.started_at.unwrap_or(record.created_at);
+        Ok((
+            AudioContext {
+                session: id,
+                user,
+                record,
+                started_at,
+            },
+            permit,
+        ))
+    }
+
+    /// Provider session parameters for one channel of an audio socket.
+    pub async fn audio_stt_params(
+        &self,
+        ctx: &AudioContext,
+        channel: Channel,
+        prefs: &LanguagePrefs,
+    ) -> ServerSttParams {
+        let (mode, extra) = Self::language_inputs(&ctx.record, prefs);
+        let own = match channel {
+            Channel::Me => &ctx.record.language_me,
+            Channel::Others => &ctx.record.language_others,
+        };
+        let mut plan = plan_languages(mode, own, &extra);
+        // The other channel's language is expected too (code-switching), without changing the hint.
+        let other = base_language(match channel {
+            Channel::Me => &ctx.record.language_others,
+            Channel::Others => &ctx.record.language_me,
+        });
+        if mode != LanguageMode::Fixed && !other.is_empty() && !plan.languages.contains(&other) {
+            plan.languages.push(other);
+        }
+        ServerSttParams {
+            session: ctx.session,
+            channel,
+            mode,
+            language: plan.hint,
+            languages: plan.languages,
+            prompt: self.vocabulary(&ctx.record, ctx.user, prefs).await,
+        }
+    }
+
+    /// Ingest one server-transcribed segment of a running session. The room is re-checked on
+    /// every call (the session may have been ended while the socket stays open).
+    pub async fn ingest_audio_segment(
+        &self,
+        ctx: &AudioContext,
+        seg: Segment,
+    ) -> AppResult<IngestOutcome> {
+        seg.validate(0)
+            .map_err(|e| AppError::validation("INVALID_SEGMENT", e.to_string()))?;
+        let room = self.rooms.state(ctx.session).await?.ok_or_else(not_found)?;
+        if !room.in_progress() {
+            return Err(AppError::conflict(
+                "SESSION_NOT_IN_PROGRESS",
+                "The session is not in progress",
+            ));
+        }
+        self.ingest_validated(
+            ctx.session,
+            ctx.user,
+            &ctx.record,
+            ctx.started_at,
+            std::slice::from_ref(&seg),
+        )
+        .await
+    }
+
+    /// STT model name for usage events of the server path.
+    pub fn server_stt_model(&self) -> Option<String> {
+        self.audio.as_ref().map(|a| a.stt.model())
     }
 }

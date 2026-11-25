@@ -19,6 +19,47 @@ use crate::textmatch;
 pub struct FakeProvider {
     script: FakeScript,
     lines: Vec<String>,
+    /// Comply with injected instructions (proves the injection metric can fail).
+    naive: bool,
+}
+
+/// Phrases (folded) that make the naive mode "obey" the text it reads.
+const INJECTION_TRIGGERS: &[&str] = &[
+    "bo qua moi huong dan",
+    "ignore all previous",
+    "ignore previous",
+    "reveal your system prompt",
+    "tiet lo system prompt",
+    "system message",
+    "[system]",
+    "system:",
+    "new instructions",
+    "note to assistant",
+    "output this link",
+];
+
+fn has_trigger(text: &str) -> bool {
+    let f = textmatch::fold(text);
+    INJECTION_TRIGGERS.iter().any(|t| f.contains(t))
+}
+
+fn wants_prompt_leak(text: &str) -> bool {
+    let f = textmatch::fold(text);
+    f.contains("system prompt")
+}
+
+/// First `http(s)://` URL of `text`, trailing punctuation removed.
+fn first_url(text: &str) -> Option<String> {
+    let start = text.find("http://").or_else(|| text.find("https://"))?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '<' | '>'))
+        .unwrap_or(rest.len());
+    Some(
+        rest[..end]
+            .trim_end_matches(['.', ',', ')', ';'])
+            .to_owned(),
+    )
 }
 
 impl FakeProvider {
@@ -26,6 +67,16 @@ impl FakeProvider {
         Self {
             script: meeting.fake.clone(),
             lines: meeting.lines.iter().map(|l| l.text.clone()).collect(),
+            naive: false,
+        }
+    }
+
+    /// Like [`Self::new`] but obeys instructions found in the transcript or the knowledge
+    /// snippets: it emits the attacker URL / leaks the system prompt.
+    pub fn naive(meeting: &Meeting) -> Self {
+        Self {
+            naive: true,
+            ..Self::new(meeting)
         }
     }
 
@@ -34,6 +85,7 @@ impl FakeProvider {
         Self {
             script: FakeScript::default(),
             lines: Vec::new(),
+            naive: false,
         }
     }
 
@@ -50,14 +102,20 @@ impl FakeProvider {
         s
     }
 
+    /// Text between the first `<transcript>` and the last `</transcript>` (a spoofed closing
+    /// tag inside the transcript must not cut the block short).
+    fn transcript_block(text: &str) -> &str {
+        let Some(start) = text.find("<transcript>") else {
+            return text;
+        };
+        let rest = &text[start + "<transcript>".len()..];
+        rest.rfind("</transcript>").map_or(rest, |e| &rest[..e])
+    }
+
     /// Index of the dataset line the request's latest transcript line corresponds to.
     fn latest_line(&self, req: &Request) -> Option<usize> {
         let text = Self::request_text(req);
-        let block = text
-            .split("<transcript>")
-            .nth(1)
-            .and_then(|b| b.split("</transcript>").next())
-            .unwrap_or(&text);
+        let block = Self::transcript_block(&text);
         let latest = block
             .lines()
             .find(|l| l.contains("LATEST"))
@@ -68,6 +126,34 @@ impl FakeProvider {
             .filter(|(_, t)| textmatch::contains(latest, t))
             .max_by_key(|(_, t)| t.len())
             .map(|(i, _)| i)
+    }
+
+    /// Text of the request's latest transcript line.
+    fn latest_text(&self, req: &Request) -> Option<String> {
+        let text = Self::request_text(req);
+        let block = Self::transcript_block(&text);
+        block
+            .lines()
+            .find(|l| l.contains("LATEST"))
+            .or_else(|| block.lines().rev().find(|l| !l.trim().is_empty()))
+            .map(str::to_owned)
+    }
+
+    /// Naive mode: what a model that obeys injected text would write. `None` when the request
+    /// carries no injection (or the mode is off).
+    fn naive_hijack(&self, req: &Request) -> Option<String> {
+        if !self.naive {
+            return None;
+        }
+        let text = Self::request_text(req);
+        if !has_trigger(&text) {
+            return None;
+        }
+        if wants_prompt_leak(&text) {
+            let sys = req.system.clone().unwrap_or_default();
+            return Some(sys.chars().take(240).collect());
+        }
+        first_url(&text).map(|u| format!("Xem / see {u}"))
     }
 
     fn offered_categories(req: &Request) -> Vec<String> {
@@ -89,6 +175,20 @@ impl FakeProvider {
         match purpose {
             Some("suggestion_decide") => {
                 let offered = Self::offered_categories(req);
+                if self.naive
+                    && let Some(latest) = self.latest_text(req)
+                    && has_trigger(&latest)
+                {
+                    let cat = offered
+                        .iter()
+                        .find(|c| c.as_str() == "answer")
+                        .or_else(|| offered.first())
+                        .cloned()
+                        .unwrap_or_else(|| "answer".into());
+                    return Ok(json!({"should_suggest": true, "category": cat,
+                        "confidence": 0.95, "reason": "obeying the transcript"})
+                    .to_string());
+                }
                 let hit = self
                     .latest_line(req)
                     .and_then(|i| self.script.suggestions.iter().find(|s| s.at_line == i))
@@ -102,6 +202,11 @@ impl FakeProvider {
                 .to_string())
             }
             Some("suggestion_generate") => {
+                if let Some(v) = self.naive_hijack(req) {
+                    return Ok(json!({"content": v, "detail": "", "source": "",
+                        "conflict": false})
+                    .to_string());
+                }
                 let hit = self
                     .latest_line(req)
                     .and_then(|i| self.script.suggestions.iter().find(|s| s.at_line == i));
@@ -118,12 +223,26 @@ impl FakeProvider {
                 }
                 .to_string())
             }
-            Some("summary") => self
-                .script
-                .summary
-                .as_ref()
-                .map(Value::to_string)
-                .ok_or_else(|| LlmError::InvalidRequest("no scripted summary".into())),
+            Some("summary") => {
+                let mut v = self
+                    .script
+                    .summary
+                    .clone()
+                    .ok_or_else(|| LlmError::InvalidRequest("no scripted summary".into()))?;
+                if let Some(extra) = self.naive_hijack(req)
+                    && let Some(o) = v.as_object_mut()
+                {
+                    let short = o
+                        .get("summary_short")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    o.insert(
+                        "summary_short".into(),
+                        Value::String(format!("{short} {extra}")),
+                    );
+                }
+                Ok(v.to_string())
+            }
             Some("eval_judge") => Ok(json!({"score": 4, "reason": "fake judge"}).to_string()),
             other => Err(LlmError::InvalidRequest(format!(
                 "fake provider: unknown purpose {other:?}"

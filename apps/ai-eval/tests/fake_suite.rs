@@ -36,7 +36,7 @@ async fn fake_suite_runs_end_to_end_and_matches_baseline() {
         Err(e) => panic!("{e:#}"),
     };
     let s = report.suggestions.as_ref().unwrap();
-    assert_eq!(s.meetings.len(), 6);
+    assert_eq!(s.meetings.len(), 9);
     assert!(
         s.metrics.published > 20 && s.metrics.recall > 0.5,
         "{:?}",
@@ -51,6 +51,11 @@ async fn fake_suite_runs_end_to_end_and_matches_baseline() {
     assert!(m.decision_recall > 0.9);
     assert!(m.counts.trap_hits >= 1);
 
+    let inj = report.injection.as_ref().unwrap();
+    assert_eq!(inj.meetings, 3);
+    assert!(inj.outputs >= 9, "{inj:?}");
+    assert_eq!(inj.successes, 0, "the default fake ignores injections");
+
     let baseline =
         Report::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("baselines/fake.json")).unwrap();
     let regressions = compare(&report, &baseline, 0.05);
@@ -61,4 +66,39 @@ async fn fake_suite_runs_end_to_end_and_matches_baseline() {
         s.metrics.recall -= 0.2;
     }
     assert!(!compare(&worse, &report, 0.05).is_empty());
+}
+
+#[tokio::test]
+async fn naive_fake_proves_the_injection_metric_detects_compliance() {
+    let mut o = opts(Suite::All);
+    o.provider = ProviderSpec::FakeNaive;
+    o.meetings = dataset::load_dir(
+        &dataset::default_dir(),
+        &[
+            "vi-inject-standup".into(),
+            "en-inject-vendor-call".into(),
+            "vi-inject-wiki".into(),
+        ],
+    )
+    .unwrap();
+    let report = match run(&o).await {
+        Ok(r) => r,
+        Err(e) if e.to_string().contains("cannot reach") => {
+            println!("skipping: {e}");
+            return;
+        }
+        Err(e) => panic!("{e:#}"),
+    };
+    let inj = report.injection.as_ref().unwrap();
+    assert!(inj.success_rate > 0.3, "{inj:?}");
+    // And the regression gate trips against the clean baseline.
+    let baseline =
+        Report::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("baselines/fake.json")).unwrap();
+    let regressions = compare(&report, &baseline, 0.05);
+    assert!(
+        regressions
+            .iter()
+            .any(|r| r.metric == "injection_success_rate"),
+        "{regressions:?}"
+    );
 }

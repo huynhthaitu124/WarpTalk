@@ -11,9 +11,7 @@ use uuid::Uuid;
 use warptalk_assistant::suggestion::ports::RetrieveError;
 use warptalk_assistant::suggestion::{GroundedSnippet, KnowledgeQuery, KnowledgeRetriever};
 use warptalk_kernel::{AppError, AppResult, SystemClock, UserId, WorkspaceId, WorkspaceRole};
-use warptalk_knowledge::application::{
-    DocumentSource, DocumentSourceError, NoopOcr, ResultPublisher,
-};
+use warptalk_knowledge::application::{DocumentSource, DocumentSourceError, ResultPublisher};
 use warptalk_knowledge::domain::CitationKind;
 use warptalk_knowledge::infrastructure::ExtractLimits;
 use warptalk_knowledge::{
@@ -141,8 +139,12 @@ pub async fn build_knowledge_module(p: KnowledgeParts) -> KnowledgeModule {
         results: p.results,
     });
     match documents {
-        // TODO(ocr): pass a real engine here to index scanned PDFs / images.
-        Some(src) => module.with_document_source(src, extract_limits_from_env(), Arc::new(NoopOcr)),
+        // `KNOWLEDGE_OCR=none|tesseract|openai`; missing binaries / keys fall back to none (WARN).
+        Some(src) => module.with_document_source(
+            src,
+            extract_limits_from_env(),
+            warptalk_knowledge::infrastructure::ocr_from_env().await,
+        ),
         None => module,
     }
 }

@@ -272,6 +272,63 @@ impl DocumentRepo for PgDocumentRepo {
         Ok(r.rows_affected() > 0)
     }
 
+    async fn begin_reindex(
+        &self,
+        ws: WorkspaceId,
+        id: Uuid,
+        statuses: &[&str],
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<DocumentRecord>> {
+        let sql = format!(
+            "UPDATE workspace.workspace_documents SET ingestion_status = 'pending', \
+               ingestion_failure_reason = NULL, ai_eligible = false, revision = revision + 1, \
+               updated_at = $3 \
+             WHERE workspace_id = $1 AND id = $2 AND status = 'active' AND deleted_at IS NULL \
+               AND is_ai_allowed AND ingestion_status = ANY($4) \
+             RETURNING {COLUMNS}"
+        );
+        let statuses: Vec<String> = statuses.iter().map(|s| (*s).to_owned()).collect();
+        let row: Option<Row> = sqlx::query_as(&sql)
+            .bind(ws.as_uuid())
+            .bind(id)
+            .bind(now)
+            .bind(statuses)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        row.map(Row::into_record).transpose()
+    }
+
+    async fn reindex_candidates(
+        &self,
+        ws: WorkspaceId,
+        statuses: &[&str],
+        limit: i64,
+    ) -> AppResult<(Vec<Uuid>, i64)> {
+        let statuses: Vec<String> = statuses.iter().map(|s| (*s).to_owned()).collect();
+        let filter = "workspace_id = $1 AND status = 'active' AND deleted_at IS NULL \
+                      AND is_ai_allowed AND ingestion_status = ANY($2)";
+        let total: i64 = sqlx::query_scalar(&format!(
+            "SELECT count(*) FROM workspace.workspace_documents WHERE {filter}"
+        ))
+        .bind(ws.as_uuid())
+        .bind(&statuses)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT id FROM workspace.workspace_documents WHERE {filter} \
+             ORDER BY updated_at ASC NULLS FIRST, id ASC LIMIT $3"
+        ))
+        .bind(ws.as_uuid())
+        .bind(&statuses)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok((ids, total))
+    }
+
     async fn apply_index_result(
         &self,
         ws: WorkspaceId,

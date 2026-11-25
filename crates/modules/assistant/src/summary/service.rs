@@ -16,11 +16,12 @@ use super::model::{
     SummaryStatus, Trigger, codes, output_schema,
 };
 use super::ports::{
-    ExternalLlmGate, FollowUpSource, LiveFollowUp, RoomMeta, RoomMetaSource, SummaryBus,
-    TranscriptData, TranscriptSource,
+    ExternalLlmGate, FollowUpSource, RoomMetaSource, SummaryBus, TranscriptData, TranscriptSource,
 };
 use super::prompt;
+use super::prompt::Speakers;
 use super::repo::{Enqueued, PgSummaryRepository};
+use crate::memory::{MeetingMemory, PgMeetingMemory, PriorContext, PriorQuery};
 use crate::suggestion::{DataBoundary, LlmResolver, Purpose, ResolveError};
 use crate::usage::{SharedUsageSink, UsageEvent};
 
@@ -93,14 +94,71 @@ struct Tally {
 pub struct SummaryService {
     pub(crate) d: SummaryDeps,
     usage: Option<SharedUsageSink>,
+    memory: Arc<dyn MeetingMemory>,
 }
 
 impl SummaryService {
     pub fn new(deps: SummaryDeps) -> Self {
+        let memory = Arc::new(PgMeetingMemory::new(deps.repo.pool().clone()));
         Self {
             d: deps,
             usage: None,
+            memory,
         }
+    }
+
+    /// Replace the default Postgres meeting memory (tests, other stores).
+    pub fn with_memory(mut self, memory: Arc<dyn MeetingMemory>) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// The cross-meeting memory this service feeds into summaries.
+    pub fn memory(&self) -> Arc<dyn MeetingMemory> {
+        self.memory.clone()
+    }
+
+    /// Prior context of `room` (empty when memory is disabled, the room has no known host, or
+    /// the memory fails: it is best-effort background, never a reason to fail).
+    pub async fn prior_context(
+        &self,
+        ws: WorkspaceId,
+        room: RoomId,
+        cfg: &SummaryConfig,
+        ctx: Option<&super::ports::RoomContext>,
+    ) -> PriorContext {
+        let Some(ctx) = ctx.filter(|_| cfg.memory_enabled) else {
+            return PriorContext::default();
+        };
+        let before = match self.d.repo.first_created_at(room).await {
+            Ok(Some(t)) => t,
+            _ => self.d.clock.now(),
+        };
+        let q = PriorQuery {
+            workspace_id: ws,
+            room_id: room,
+            host: ctx.host_user_id,
+            series_id: ctx.series_id,
+            title: Some(ctx.title.clone()).filter(|t| !t.trim().is_empty()),
+            before,
+            max_open_items: cfg.memory_max_open_items,
+            max_summaries: cfg.memory_max_summaries,
+        };
+        self.memory.prior_context(&q).await.unwrap_or_else(|e| {
+            tracing::warn!(%room, error = %e, "meeting memory unavailable; no prior context");
+            PriorContext::default()
+        })
+    }
+
+    /// Room context for the HTTP prior-context endpoint (config of the room's scope applied).
+    pub async fn prior_context_for_room(
+        &self,
+        ws: WorkspaceId,
+        room: RoomId,
+    ) -> AppResult<PriorContext> {
+        let cfg = self.config(ws, room).await;
+        let ctx = self.d.rooms.context(room).await?;
+        Ok(self.prior_context(ws, room, &cfg, ctx.as_ref()).await)
     }
 
     /// Publish a `usage:events` entry per completed summary (billing metering).
@@ -440,31 +498,70 @@ impl SummaryService {
             cfg.language.trim().to_owned()
         };
         let followups = self.d.followups.for_room(room, cfg.max_followups).await;
-        let ids: Vec<Uuid> = t.segments.iter().map(|s| s.id).collect();
-        let hay = prompt::haystack(&t.segments);
+        let room_ctx = self.d.rooms.context(room).await.unwrap_or_else(|e| {
+            tracing::warn!(%room, error = %e, "room context unavailable; raw speaker names");
+            None
+        });
+        let speakers = Speakers::from_context(room_ctx.as_ref());
+        if let Some(c) = &room_ctx {
+            // Lets the meeting memory find this meeting later (best effort).
+            let _ = self
+                .d
+                .repo
+                .stamp_room(
+                    job.id,
+                    c.host_user_id.map(|u| u.as_uuid()),
+                    c.series_id,
+                    &c.title,
+                )
+                .await;
+        }
+        let prior = self
+            .prior_context(job.workspace_id, room, cfg, room_ctx.as_ref())
+            .await;
+        let prior_block =
+            crate::memory::prompt::prior_block(&prior, cfg.memory_line_chars as usize);
+        let prior_tasks: Vec<String> = prior
+            .open_action_items
+            .iter()
+            .map(|i| i.task.clone())
+            .collect();
+        let segments = match &speakers {
+            Some(sp) => sp.relabel(&t.segments),
+            None => t.segments.clone(),
+        };
+        let ids: Vec<Uuid> = segments.iter().map(|s| s.id).collect();
+        let hay = prompt::haystack_with(&segments, speakers.as_ref());
         let max_line = (cfg.window_tokens as f32 * cfg.chars_per_token) as usize;
-        let lines = prompt::transcript_lines(&t.segments, max_line.max(200));
+        let lines = prompt::transcript_lines(&segments, max_line.max(200));
         let wins = prompt::windows(&lines, cfg.window_tokens, cfg.chars_per_token);
 
         let run = Run {
             provider: resolved.provider.clone(),
             model: model.clone(),
             cfg,
-            system: prompt::system_prompt(cfg, &language),
+            system: prompt::system_prompt_for(
+                cfg,
+                &language,
+                speakers.as_ref(),
+                !prior_block.is_empty(),
+            ),
             tally: std::sync::Mutex::new(Tally::default()),
             repo: &self.d.repo,
             clock: self.d.clock.as_ref(),
             job_id: job.id,
         };
-        let meta_block = prompt::meta_block(&meta, &followups);
+        let meta_block =
+            prompt::meta_block_with(&meta, &followups, speakers.as_ref(), &prior_block);
         let raw = if wins.len() == 1 {
             let user = format!("{meta_block}\n{}", prompt::transcript_block(&wins[0]));
             run.call(&prompt::single_instruction(cfg), &user, "single")
                 .await?
         } else {
-            self.map_reduce(&run, &wins, &meta, &followups).await?
+            let head = prompt::meta_block_with(&meta, &[], speakers.as_ref(), &prior_block);
+            self.map_reduce(&run, &wins, &head, &meta_block).await?
         };
-        let mut content = prompt::validate(raw, &ids, &hay);
+        let mut content = prompt::validate_with(raw, &ids, &hay, speakers.as_ref(), &prior_tasks);
         content.language = language;
         let tally = run.tally.into_inner().unwrap_or_default();
         content.meta = SummaryMeta {
@@ -487,12 +584,11 @@ impl SummaryService {
         &self,
         run: &Run<'_>,
         wins: &[Vec<&str>],
-        meta: &RoomMeta,
-        followups: &[LiveFollowUp],
+        meta_head: &str,
+        meta_full: &str,
     ) -> Result<RawOutput, JobError> {
         let cfg = run.cfg;
         let total = wins.len();
-        let meta_head = prompt::meta_block(meta, &[]);
         let conc = cfg.map_concurrency.max(1) as usize;
         let mut parts: Vec<RawOutput> = Vec::with_capacity(total);
         for (ci, chunk) in wins.chunks(conc).enumerate() {
@@ -526,11 +622,7 @@ impl SummaryService {
             }
             parts = next;
         }
-        let user = format!(
-            "{}\nPartial records:\n{}",
-            prompt::meta_block(meta, followups),
-            partials_json(&parts)
-        );
+        let user = format!("{meta_full}\nPartial records:\n{}", partials_json(&parts));
         run.call(&instruction, &user, "reduce").await
     }
 }
@@ -556,6 +648,9 @@ fn partials_json(parts: &[RawOutput]) -> String {
                 })).collect::<Vec<_>>(),
                 "open_questions": p.open_questions,
                 "topics": p.topics,
+                "previous_items": p.previous_items.iter().map(|x| serde_json::json!({
+                    "task": x.task, "status": x.status, "source_segments": x.source_segments,
+                })).collect::<Vec<_>>(),
             })
         })
         .collect();

@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
 use crate::application::ports::{SttIssueError, SttToken, SttTokenIssuer, SttTokenRequest};
+use crate::domain::LanguageMode;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 pub const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
@@ -72,11 +73,44 @@ fn language_hint(tag: &str) -> Option<String> {
     (primary.len() == 2 && primary.bytes().all(|b| b.is_ascii_lowercase())).then_some(primary)
 }
 
-/// UNVERIFIED request body.
-fn request_body(model: &str, language: Option<&str>) -> (Value, Value) {
+/// Models that take the plural `languages` hint (same list as `warptalk-stt`).
+const PLURAL_LANGUAGE_MODELS: &[&str] = &["gpt-transcribe", "gpt-live-transcribe"];
+
+/// UNVERIFIED request body. `fixed`: one `language`. `auto`: the primary language is hinted and
+/// the others stay expected (plural-hint models get the list; single-hint models only the
+/// primary, with the vocabulary prompt carrying the code-switched terms). `multi`: no language
+/// hint at all.
+fn request_body(model: &str, req: &SttTokenRequest) -> (Value, Value) {
     let mut transcription = json!({ "model": model });
-    if let Some(l) = language.and_then(language_hint) {
-        transcription["language"] = json!(l);
+    let hint = req.language.as_deref().and_then(language_hint);
+    match req.language_mode {
+        LanguageMode::Multi => {
+            if PLURAL_LANGUAGE_MODELS.contains(&model) {
+                let list: Vec<String> = req.languages.iter().filter_map(|l| language_hint(l)).collect();
+                if !list.is_empty() {
+                    transcription["languages"] = json!(list);
+                }
+            }
+        }
+        LanguageMode::Auto if PLURAL_LANGUAGE_MODELS.contains(&model) => {
+            let mut list: Vec<String> = hint.iter().cloned().collect();
+            for l in req.languages.iter().filter_map(|l| language_hint(l)) {
+                if !list.contains(&l) {
+                    list.push(l);
+                }
+            }
+            if !list.is_empty() {
+                transcription["languages"] = json!(list);
+            }
+        }
+        _ => {
+            if let Some(l) = hint {
+                transcription["language"] = json!(l);
+            }
+        }
+    }
+    if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+        transcription["prompt"] = json!(p);
     }
     let session = json!({
         "type": "transcription",
@@ -124,7 +158,7 @@ fn websocket_url(base: &str) -> String {
 #[async_trait]
 impl SttTokenIssuer for OpenAiSttTokenIssuer {
     async fn issue(&self, req: SttTokenRequest) -> Result<SttToken, SttIssueError> {
-        let (body, session) = request_body(&self.cfg.model, req.language.as_deref());
+        let (body, session) = request_body(&self.cfg.model, &req);
         let url = format!("{}{ENDPOINT_PATH}", self.cfg.base_url.trim_end_matches('/'));
         let resp = self
             .http
@@ -180,6 +214,9 @@ mod tests {
         SttTokenRequest {
             session: RoomId::new(),
             language: Some(lang.into()),
+            language_mode: LanguageMode::Fixed,
+            languages: Vec::new(),
+            prompt: None,
         }
     }
 

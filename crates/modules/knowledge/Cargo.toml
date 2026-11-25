@@ -33,7 +33,10 @@ sha2 = { workspace = true }
 pdf-extract = { workspace = true }
 zip = { workspace = true }
 quick-xml = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 warptalk-config = { workspace = true }
 tower = { workspace = true, features = ["util"] }
+wiremock = { workspace = true }

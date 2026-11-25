@@ -82,6 +82,26 @@ impl CopilotModule {
         self
     }
 
+    /// Enable the server-side STT fallback: `POST .../audio-ticket` and the
+    /// `GET .../audio` WebSocket (see `http::audio_ws`). Without it both answer 503
+    /// `SERVER_STT_NOT_CONFIGURED`.
+    pub fn with_server_stt(mut self, audio: application::audio::ServerAudio) -> Self {
+        match Arc::get_mut(&mut self.service) {
+            Some(svc) => svc.set_audio(audio),
+            None => tracing::error!("copilot service already shared; server stt not enabled"),
+        }
+        self
+    }
+
+    /// Workspace glossary terms as vocabulary hints for STT providers.
+    pub fn with_glossary(mut self, glossary: Arc<dyn application::ports::GlossaryTerms>) -> Self {
+        match Arc::get_mut(&mut self.service) {
+            Some(svc) => svc.set_glossary(glossary),
+            None => tracing::error!("copilot service already shared; glossary not enabled"),
+        }
+        self
+    }
+
     /// Routes relative to the API prefix (`/api/v1`), state applied.
     pub fn router(&self) -> axum::Router {
         http::router(http::AppState {

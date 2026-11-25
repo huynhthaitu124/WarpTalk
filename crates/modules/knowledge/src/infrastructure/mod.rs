@@ -2,6 +2,7 @@
 
 mod consumers;
 mod extractors;
+pub mod ocr;
 mod pg_repo;
 mod publisher;
 
@@ -12,5 +13,6 @@ pub use consumers::{
 pub use extractors::{
     DocxExtractor, ExtractLimits, HtmlExtractor, PdfExtractor, default_chain, full_chain,
 };
+pub use ocr::{OcrMode, OcrSettings, build_ocr, ocr_from_env};
 pub use pg_repo::PgKnowledgeRepository;
 pub use publisher::{MemoryResultPublisher, RedisResultPublisher};

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use crate::bench;
 use crate::cost::Price;
 use crate::dataset;
 use crate::harness::{DEFAULT_DATABASE_URL, DEFAULT_REDIS_URL, JudgeSetup, RunOptions, Suite, run};
@@ -18,12 +19,14 @@ warptalk-ai-eval: offline evaluation of the AI core
 
 USAGE
   warptalk-ai-eval run [OPTIONS]
+  warptalk-ai-eval bench-latency [OPTIONS]
   warptalk-ai-eval report --in report.json [--compare baseline.json] [--threshold 0.03]
 
 run OPTIONS
   --suite suggestions|summary|all     default all
-  --provider fake|openai|anthropic|gemini   default fake (keys from OPENAI_API_KEY,
-                                      ANTHROPIC_API_KEY, GEMINI_API_KEY)
+  --provider fake|fake-naive|openai|anthropic|gemini   default fake (keys from OPENAI_API_KEY,
+                                      ANTHROPIC_API_KEY, GEMINI_API_KEY). fake-naive obeys prompt
+                                      injections: it must score a high injection_success_rate
   --model NAME                        required for real providers
   --judge-provider P --judge-model M  optional LLM-as-judge (faithfulness 1-5)
   --out report.json                   write the JSON report
@@ -36,6 +39,20 @@ run OPTIONS
   --summary-config file.json          overrides for the summary config
   --price-in X --price-out Y          USD per 1M tokens for the cost estimate
   --redis-url URL / --database-url URL   default REDIS_URL / DATABASE_URL, then localhost
+
+bench-latency OPTIONS  (segment end -> suggestion published, via the worker's engine path)
+  --provider / --model                as for run (fake uses simulated model latency)
+  --meeting ID                        meeting(s) to replay (default: the first dataset meeting)
+  --sessions 1,10,50                  concurrent sessions, one level each (default 1,10,50)
+  --speed X                           replay speed (default 1; model latency is not scaled, so
+                                      X > 1 raises the load)
+  --stagger-ms N                      spread session starts over N ms (default 3000)
+  --max-pipelines N                   global model pipelines, like the worker (default 8)
+  --decide-ms MEAN[:SD] --generate-ms MEAN[:SD]   fake latency (default 300:100 / 700:200)
+  --seed N                            fake latency seed (default 1)
+  --suggestion-config file.json       engine config overrides
+  --out bench.json --md-out bench.md  write the JSON / markdown report
+  --target-answer-p95-ms N            exit 1 when the answer p95 of any level exceeds N
 
 Exit codes: 0 ok, 1 regression against the baseline, 2 error.
 ";
@@ -105,6 +122,7 @@ pub async fn main(args: Vec<String>) -> ExitCode {
 async fn dispatch(args: &[String]) -> Result<ExitCode> {
     match args.first().map(String::as_str) {
         Some("run") => cmd_run(&Flags::parse(&args[1..])?).await,
+        Some("bench-latency") => cmd_bench(&Flags::parse(&args[1..])?).await,
         Some("report") => cmd_report(&Flags::parse(&args[1..])?),
         Some("help" | "--help" | "-h") | None => {
             print!("{USAGE}");
@@ -141,6 +159,85 @@ fn cmd_report(flags: &Flags) -> Result<ExitCode> {
         .transpose()?;
     print!("{}", to_markdown(&report, baseline.as_ref()));
     check_baseline(&report, flags)
+}
+
+async fn cmd_bench(flags: &Flags) -> Result<ExitCode> {
+    let provider_name = flags.get("provider").unwrap_or("fake");
+    let provider = providers::build(provider_name)?;
+    let model = match flags.get("model") {
+        Some(m) => m.to_owned(),
+        None if provider.is_fake() => "fake-1".to_owned(),
+        None => bail!("--model is required for provider {provider_name}"),
+    };
+    let dir = flags
+        .get("dataset-dir")
+        .map_or_else(dataset::default_dir, PathBuf::from);
+    let ids = flags.all("meeting");
+    let mut meetings = dataset::load_dir(&dir, &ids)?;
+    if ids.is_empty() {
+        meetings.truncate(1);
+    }
+    let sessions = flags
+        .get("sessions")
+        .unwrap_or("1,10,50")
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|n| *n > 0)
+                .with_context(|| format!("--sessions: bad count `{s}`"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let dist = |k: &str, d: &str| bench::Dist::parse(flags.get(k).unwrap_or(d));
+    let opts = bench::BenchOptions {
+        provider,
+        model,
+        meetings,
+        sessions,
+        speed: flags.number::<f64>("speed")?.unwrap_or(1.0),
+        stagger_ms: flags.number::<i64>("stagger-ms")?.unwrap_or(3000),
+        max_pipelines: flags.number::<usize>("max-pipelines")?.unwrap_or(8),
+        decide: dist("decide-ms", "300:100")?,
+        generate: dist("generate-ms", "700:200")?,
+        seed: flags.number::<u64>("seed")?.unwrap_or(1),
+        suggestion_overrides: flags.json_file("suggestion-config")?,
+        redis_url: std::env::var("REDIS_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| flags.get("redis-url").map(str::to_owned))
+            .unwrap_or_else(|| DEFAULT_REDIS_URL.to_owned()),
+    };
+    let report = bench::run_bench(&opts).await?;
+    if let Some(out) = flags.get("out") {
+        report.save(Path::new(out))?;
+        eprintln!("bench report written to {out}");
+    }
+    let md = bench::to_markdown(&report);
+    if let Some(p) = flags.get("md-out") {
+        if let Some(dir) = Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(p, &md).with_context(|| format!("writing {p}"))?;
+    }
+    print!("{md}");
+    if let Some(target) = flags.number::<f64>("target-answer-p95-ms")? {
+        let mut ok = true;
+        for l in &report.levels {
+            let pass = l.answer.n > 0 && l.answer.p95_ms <= target;
+            ok &= pass;
+            eprintln!(
+                "{} sessions: answer p95 {:.0} ms vs target {target:.0} ms: {}",
+                l.sessions,
+                l.answer.p95_ms,
+                if pass { "PASS" } else { "FAIL" }
+            );
+        }
+        if !ok {
+            return Ok(ExitCode::from(1));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn cmd_run(flags: &Flags) -> Result<ExitCode> {

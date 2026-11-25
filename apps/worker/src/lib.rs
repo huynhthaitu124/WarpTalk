@@ -168,7 +168,7 @@ pub async fn build_ai_plane(
         redis.clone(),
     ));
     let engine = SuggestionEngine::new(EngineDeps {
-        rooms: Arc::new(PgSuggestionRoomDirectory::new(pool)),
+        rooms: Arc::new(PgSuggestionRoomDirectory::new(pool.clone())),
         signals: Arc::new(RedisRoomSignals::new(redis.clone())),
         consent: Arc::new(RedisConsentPolicy::new(redis.clone())),
         llm: ai.clone(),
@@ -178,7 +178,10 @@ pub async fn build_ai_plane(
         state: SuggestionState::new(redis.clone()),
         redis,
     })
-    .with_usage(usage);
+    .with_usage(usage)
+    .with_store(Arc::new(
+        warptalk_assistant::suggestion::PgSuggestionStore::new(pool.clone()),
+    ));
     let suggestion = Arc::new(SuggestionWorker::new(
         Arc::new(engine),
         SUGGESTION_MAX_PIPELINES,

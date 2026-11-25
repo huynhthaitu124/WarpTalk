@@ -1,5 +1,6 @@
 //! HTTP surface of the copilot module.
 
+mod audio_ws;
 mod dto;
 mod handlers;
 
@@ -38,5 +39,10 @@ pub fn router(state: AppState) -> Router {
             "/copilot/sessions/{id}/stt-token",
             post(handlers::stt_token),
         )
+        .route(
+            "/copilot/sessions/{id}/audio-ticket",
+            post(handlers::audio_ticket),
+        )
+        .route("/copilot/sessions/{id}/audio", get(audio_ws::audio_ws))
         .with_state(state)
 }

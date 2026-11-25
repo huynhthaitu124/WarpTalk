@@ -73,7 +73,7 @@ impl TryFrom<JobRow> for SummaryJob {
 }
 
 const ITEM_COLS: &str = "id, workspace_id, room_id, summary_id, task, owner, due, status, \
-     source_segment_ids, created_at, updated_at";
+     source_segment_ids, assignee_user_id, created_at, updated_at";
 
 #[derive(sqlx::FromRow)]
 struct ItemRow {
@@ -86,6 +86,7 @@ struct ItemRow {
     due: Option<String>,
     status: String,
     source_segment_ids: Vec<Uuid>,
+    assignee_user_id: Option<Uuid>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -102,6 +103,7 @@ impl From<ItemRow> for ActionItem {
             due: r.due,
             status: r.status,
             source_segment_ids: r.source_segment_ids,
+            assignee_user_id: r.assignee_user_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -144,6 +146,43 @@ pub struct PgSummaryRepository {
 impl PgSummaryRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// When the room's first summary job was created (the "now" of its prior context).
+    pub async fn first_created_at(&self, room: RoomId) -> AppResult<Option<DateTime<Utc>>> {
+        sqlx::query_scalar(
+            "SELECT MIN(created_at) FROM assistant.meeting_summaries WHERE room_id = $1",
+        )
+        .bind(room.as_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    /// Stamp the room facts the meeting memory selects on (host, series, title).
+    pub async fn stamp_room(
+        &self,
+        id: Uuid,
+        host: Option<Uuid>,
+        series: Option<Uuid>,
+        title: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE assistant.meeting_summaries SET host_user_id = $2, series_id = $3, title = $4 \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(host)
+        .bind(series)
+        .bind(truncate(title, 255))
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     /// Insert the next version of a room's summary as `pending`. An automatic job is unique per
@@ -455,6 +494,7 @@ impl PgSummaryRepository {
             "UPDATE assistant.action_items SET \
                  task = COALESCE($3, task), \
                  owner = CASE WHEN $4 THEN $5 ELSE owner END, \
+                 assignee_user_id = CASE WHEN $4 THEN NULL ELSE assignee_user_id END, \
                  due = CASE WHEN $6 THEN $7 ELSE due END, \
                  status = COALESCE($8, status), \
                  updated_at = $9 \
@@ -473,6 +513,46 @@ impl PgSummaryRepository {
         .await
         .map_err(map_sqlx_error)?
         .map(ActionItem::from))
+    }
+
+    /// Items assigned to `user` in the latest completed summaries of `workspaces` (the caller
+    /// has checked membership), newest first.
+    pub async fn items_for_assignee(
+        &self,
+        user: Uuid,
+        workspaces: &[Uuid],
+        status: Option<&str>,
+        limit: i64,
+    ) -> AppResult<Vec<ActionItem>> {
+        let rows = sqlx::query_as::<_, ItemRow>(&format!(
+            "SELECT {ITEM_COLS} FROM assistant.action_items a \
+             WHERE a.assignee_user_id = $1 AND a.workspace_id = ANY($2) \
+               AND ($3::text IS NULL OR a.status = $3) \
+               AND a.summary_id = ( \
+                   SELECT s.id FROM assistant.meeting_summaries s \
+                   WHERE s.room_id = a.room_id AND s.workspace_id = a.workspace_id \
+                     AND s.status = 'completed' ORDER BY s.version DESC LIMIT 1) \
+             ORDER BY a.created_at DESC, a.id LIMIT $4"
+        ))
+        .bind(user)
+        .bind(workspaces)
+        .bind(status)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows.into_iter().map(ActionItem::from).collect())
+    }
+
+    /// Workspaces in which `user` has assigned action items.
+    pub async fn assignee_workspaces(&self, user: Uuid) -> AppResult<Vec<Uuid>> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT workspace_id FROM assistant.action_items WHERE assignee_user_id = $1",
+        )
+        .bind(user)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)
     }
 
     /// Items of the workspace's latest completed summaries, newest first.
@@ -519,8 +599,8 @@ async fn insert_item(
     sqlx::query(
         "INSERT INTO assistant.action_items \
            (id, workspace_id, room_id, summary_id, task, owner, due, status, source_segment_ids, \
-            created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)",
+            created_at, updated_at, assignee_user_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)",
     )
     .bind(Uuid::now_v7())
     .bind(job.workspace_id.as_uuid())
@@ -532,6 +612,7 @@ async fn insert_item(
     .bind(status)
     .bind(&it.source_segment_ids)
     .bind(now)
+    .bind(it.assignee_user_id)
     .execute(&mut **tx)
     .await
     .map_err(map_sqlx_error)?;

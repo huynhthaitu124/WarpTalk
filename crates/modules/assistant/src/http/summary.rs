@@ -53,6 +53,8 @@ pub fn router(api: SummaryApi, jwt: JwtKeys) -> Router {
             patch(patch_item),
         )
         .route("/workspaces/{id}/action-items", get(list_workspace_items))
+        .route("/me/action-items", get(list_my_items))
+        .route("/meetings/{room_id}/prior-context", get(prior_context))
         .with_state(State_ { api, jwt })
 }
 
@@ -124,6 +126,8 @@ pub struct ActionItemView {
     pub due: Option<String>,
     pub status: String,
     pub source_segment_ids: Vec<Uuid>,
+    /// The user the item is assigned to (e.g. the host); `GET /me/action-items` lists by it.
+    pub assignee_user_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -139,6 +143,7 @@ impl From<ActionItem> for ActionItemView {
             due: a.due,
             status: a.status,
             source_segment_ids: a.source_segment_ids,
+            assignee_user_id: a.assignee_user_id,
             created_at: a.created_at,
             updated_at: a.updated_at,
         }
@@ -361,4 +366,69 @@ async fn list_workspace_items(
     Ok(Json(ItemsResponse {
         items: items.into_iter().map(Into::into).collect(),
     }))
+}
+
+#[derive(Deserialize)]
+pub struct MyItemsQuery {
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// `GET /me/action-items?status=`: the caller's own items ("Việc của tôi") across the
+/// workspaces they still belong to.
+async fn list_my_items(
+    State(s): State<State_>,
+    auth: AuthUser,
+    Query(q): Query<MyItemsQuery>,
+) -> AppResult<Json<ItemsResponse>> {
+    let status = q
+        .status
+        .as_deref()
+        .map(parse_status)
+        .transpose()?
+        .map(str::to_owned);
+    let user = auth.user_id();
+    let repo = s.api.service.repo();
+    let mut member_of = Vec::new();
+    for ws in repo.assignee_workspaces(user.as_uuid()).await? {
+        if s.api
+            .access
+            .workspace_scope(WorkspaceId::from_uuid(ws), user)
+            .await?
+            .is_some()
+        {
+            member_of.push(ws);
+        }
+    }
+    let items = if member_of.is_empty() {
+        Vec::new()
+    } else {
+        repo.items_for_assignee(
+            user.as_uuid(),
+            &member_of,
+            status.as_deref(),
+            q.limit.unwrap_or(100).clamp(1, 500),
+        )
+        .await?
+    };
+    Ok(Json(ItemsResponse {
+        items: items.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// `GET /meetings/{roomId}/prior-context`: what the memory would feed into this meeting's
+/// summary (same access rule as the summary).
+async fn prior_context(
+    State(s): State<State_>,
+    auth: AuthUser,
+    Path(room): Path<Uuid>,
+) -> AppResult<Json<crate::memory::PriorContext>> {
+    let room = RoomId::from_uuid(room);
+    let info = room_access(&s, room, &auth).await?;
+    Ok(Json(
+        s.api
+            .service
+            .prior_context_for_room(info.workspace_id, room)
+            .await?,
+    ))
 }

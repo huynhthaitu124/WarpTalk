@@ -5,6 +5,8 @@ use uuid::Uuid;
 use warptalk_contracts::events::SttResult;
 use warptalk_kernel::RoomId;
 
+pub mod audio;
+
 /// Segments accepted per ingest call.
 pub const MAX_SEGMENTS_PER_CALL: usize = 50;
 /// Characters of one segment's text.
@@ -73,6 +75,46 @@ impl Channel {
             _ => None,
         }
     }
+}
+
+/// How the STT provider is told about the spoken language(s) (ADR 0001 language handling).
+///
+/// * `fixed`: one hinted language (the channel's declared one).
+/// * `auto` (default for sessions with code-switching): the primary language is hinted, the other
+///   declared languages are expected too and a vocabulary prompt carries the glossary. A single
+///   hard hint on a Vietnamese meeting full of English product terms makes the model
+///   transliterate the terms; pure auto-detection mis-detects short Vietnamese utterances.
+/// * `multi`: no hint at all; the language of every segment is detected afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LanguageMode {
+    Fixed,
+    #[default]
+    Auto,
+    Multi,
+}
+
+impl LanguageMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Auto => "auto",
+            Self::Multi => "multi",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fixed" => Some(Self::Fixed),
+            "auto" => Some(Self::Auto),
+            "multi" => Some(Self::Multi),
+            _ => None,
+        }
+    }
+}
+
+/// Base ISO code of a language tag (`vi-VN` -> `vi`), lowercase.
+pub fn base_language(tag: &str) -> String {
+    tag.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase()
 }
 
 /// A language tag is 1..=15 ASCII letters, digits or `-`.

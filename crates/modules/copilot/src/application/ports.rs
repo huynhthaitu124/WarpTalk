@@ -11,7 +11,7 @@ use uuid::Uuid;
 use warptalk_contracts::events::SttResult;
 use warptalk_kernel::{AppError, AppResult, RoomId, UserId, WorkspaceId, WorkspaceRole};
 
-use crate::domain::Platform;
+use crate::domain::{Channel, LanguageMode, Platform};
 
 // ---------------------------------------------------------------- persistence
 
@@ -145,6 +145,12 @@ pub struct SttTokenRequest {
     pub session: RoomId,
     /// Primary language hint (the channel language of the host), if known.
     pub language: Option<String>,
+    /// How to hint the provider (`fixed` keeps the single `language`).
+    pub language_mode: LanguageMode,
+    /// Other languages to expect besides `language` (base codes).
+    pub languages: Vec<String>,
+    /// Vocabulary prompt (glossary terms), for providers that take one.
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -304,5 +310,135 @@ impl SegmentSink for MemorySegmentSink {
             .map_err(|_| AppError::internal("poisoned"))?
             .push(result.clone());
         Ok(Published::Written)
+    }
+}
+
+// ---------------------------------------------------------------- server-side STT (fallback)
+
+/// Per-channel provider session parameters.
+#[derive(Debug, Clone)]
+pub struct ServerSttParams {
+    pub session: RoomId,
+    pub channel: Channel,
+    pub mode: LanguageMode,
+    /// Primary language hint (`None` in `multi`).
+    pub language: Option<String>,
+    /// All languages to expect, primary first.
+    pub languages: Vec<String>,
+    /// Vocabulary prompt.
+    pub prompt: Option<String>,
+}
+
+/// Output of a server STT session, in commit order per channel: zero or more `Segment`s, then
+/// exactly one `UtteranceDone`, for each commit.
+#[derive(Debug, Clone)]
+pub enum ServerSttEvent {
+    Segment {
+        text: String,
+        /// Resolved language (adapters apply the vi/en heuristic); `None` = unknown.
+        language: Option<String>,
+        confidence: Option<f32>,
+        /// More of the same utterance follows.
+        early: bool,
+    },
+    UtteranceDone { ok: bool },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ServerSttError {
+    #[error("server speech-to-text is not configured")]
+    NotConfigured,
+    #[error("speech-to-text provider error: {0}")]
+    Provider(String),
+}
+
+/// Streaming STT run by the server for the fallback audio socket. `apps/api` wires an adapter
+/// over `warptalk-stt` (modules do not depend on pipeline crates); [`FakeServerStt`] serves
+/// tests and key-less demos.
+///
+/// [`FakeServerStt`]: crate::infrastructure::fake_stt::FakeServerStt
+#[async_trait]
+pub trait ServerStt: Send + Sync {
+    async fn open(
+        &self,
+        params: ServerSttParams,
+        events: tokio::sync::mpsc::Sender<ServerSttEvent>,
+    ) -> Result<Box<dyn ServerSttSession>, ServerSttError>;
+    /// Model name recorded on usage events.
+    fn model(&self) -> String;
+}
+
+#[async_trait]
+pub trait ServerSttSession: Send {
+    /// Speech audio of the utterance in progress (PCM16, 16 kHz, mono), in order.
+    async fn feed(&mut self, pcm: &[i16]) -> Result<(), ServerSttError>;
+    /// The utterance ended: transcribe it. Returns once the commit is issued.
+    async fn commit(&mut self) -> Result<(), ServerSttError>;
+    /// Throw away the audio fed since the last commit.
+    async fn discard(&mut self) -> Result<(), ServerSttError>;
+    /// Finish in-flight commits, then release.
+    async fn close(self: Box<Self>);
+}
+
+/// Claims behind a one-time audio-socket ticket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioTicketClaims {
+    pub user: UserId,
+    pub session: RoomId,
+}
+
+/// Short-lived, single-use tickets for browsers / WKWebView, which cannot set an
+/// `Authorization` header on a WebSocket. The key is a hash of the ticket (never the ticket).
+#[async_trait]
+pub trait AudioTicketStore: Send + Sync {
+    async fn put(&self, key: &str, claims: AudioTicketClaims, expires_at: DateTime<Utc>)
+    -> AppResult<()>;
+    /// Remove and return the claims; `None` when unknown, used or expired at `now`.
+    async fn take(&self, key: &str, now: DateTime<Utc>) -> AppResult<Option<AudioTicketClaims>>;
+}
+
+/// In-process store (tests, single instance).
+#[derive(Default)]
+pub struct MemoryTicketStore {
+    items: Mutex<HashMap<String, (AudioTicketClaims, DateTime<Utc>)>>,
+}
+
+#[async_trait]
+impl AudioTicketStore for MemoryTicketStore {
+    async fn put(
+        &self,
+        key: &str,
+        claims: AudioTicketClaims,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        self.items
+            .lock()
+            .map_err(|_| AppError::internal("poisoned"))?
+            .insert(key.to_owned(), (claims, expires_at));
+        Ok(())
+    }
+
+    async fn take(&self, key: &str, now: DateTime<Utc>) -> AppResult<Option<AudioTicketClaims>> {
+        let mut m = self
+            .items
+            .lock()
+            .map_err(|_| AppError::internal("poisoned"))?;
+        m.retain(|_, (_, exp)| *exp > now);
+        Ok(m.remove(key).map(|(c, _)| c))
+    }
+}
+
+/// Glossary terms of a workspace, as vocabulary hints. Best effort: failures yield no terms.
+#[async_trait]
+pub trait GlossaryTerms: Send + Sync {
+    async fn terms(&self, ws: WorkspaceId, user: UserId, max: usize) -> Vec<String>;
+}
+
+pub struct NoGlossary;
+
+#[async_trait]
+impl GlossaryTerms for NoGlossary {
+    async fn terms(&self, _: WorkspaceId, _: UserId, _: usize) -> Vec<String> {
+        Vec::new()
     }
 }

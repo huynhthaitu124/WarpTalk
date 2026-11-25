@@ -16,14 +16,23 @@ pub enum ExtractError {
     /// The content needs OCR (image or scanned PDF) and no OCR engine is configured.
     #[error("OCR is not available")]
     OcrUnavailable,
+    /// OCR would send the document to an external model but the workspace forbids it.
+    #[error("OCR needs an external model but externalLlmAllowed is off")]
+    ExternalLlmDisallowed,
     #[error("extraction failed: {0}")]
     Failed(String),
+    /// A backend the extraction depends on is temporarily unavailable (retried by the indexer).
+    #[error("extraction backend unavailable: {0}")]
+    Unavailable(String),
 }
 
 pub struct ExtractInput<'a> {
     pub bytes: &'a [u8],
     pub mime: &'a str,
     pub file_name: Option<&'a str>,
+    /// Workspace `externalLlmAllowed`: engines that send content to a third party must refuse
+    /// when false.
+    pub external_llm_allowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,14 +48,18 @@ pub trait TextExtractor: Send + Sync {
 
 /// OCR engine port (images, scanned PDFs).
 ///
-/// TODO(ocr): no engine ships with this crate on purpose (no heavy native dependency). Implement
-/// this trait in `apps/worker` (e.g. a Tesseract sidecar or a vision-LLM call) and register it
-/// with [`OcrTextExtractor`]. Until then [`NoopOcr`] makes image / scanned documents fail with
-/// [`ExtractError::OcrUnavailable`] (spec 14 gap G6).
+/// Engines live in `infrastructure::ocr` (Tesseract CLI, OpenAI vision). [`NoopOcr`] makes image
+/// / scanned documents fail with [`ExtractError::OcrUnavailable`] (spec 14 gap G6).
 #[async_trait]
 pub trait OcrEngine: Send + Sync {
     /// Recognise text, one entry per page / image.
     async fn recognize(&self, bytes: &[u8], mime: &str) -> Result<Vec<PageText>, ExtractError>;
+
+    /// True when document content leaves the platform (hosted vision model). Such engines are
+    /// skipped for workspaces with `externalLlmAllowed = false`.
+    fn sends_content_externally(&self) -> bool {
+        false
+    }
 }
 
 /// Placeholder OCR engine: always reports that OCR is unavailable.
@@ -161,6 +174,9 @@ impl TextExtractor for OcrTextExtractor {
     }
 
     async fn extract(&self, input: &ExtractInput<'_>) -> Result<ExtractedText, ExtractError> {
+        if self.ocr.sends_content_externally() && !input.external_llm_allowed {
+            return Err(ExtractError::ExternalLlmDisallowed);
+        }
         let pages = self.ocr.recognize(input.bytes, input.mime).await?;
         Ok(ExtractedText { pages })
     }
@@ -177,7 +193,8 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Content type from magic bytes, when the bytes are conclusive: `%PDF-` within the first KiB,
+/// Content type from magic bytes, when the bytes are conclusive: PNG / JPEG / WebP images (these
+/// are routed to OCR whatever the declared type), `%PDF-` within the first KiB,
 /// or a zip (`PK\x03\x04`) whose entry names (local headers at the start, central directory at
 /// the end) identify OOXML word / presentation / spreadsheet packages.
 pub fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
@@ -186,6 +203,15 @@ pub fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
         .any(|w| w == b"%PDF-")
     {
         return Some(PDF_MIME);
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"\xFF\xD8\xFF") {
+        return Some("image/jpeg");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
     }
     if !bytes.starts_with(b"PK\x03\x04") {
         return None;
@@ -234,6 +260,7 @@ impl ExtractorChain {
                     bytes: input.bytes,
                     mime,
                     file_name: None,
+                    external_llm_allowed: input.external_llm_allowed,
                 };
                 &sniffed
             }
@@ -258,6 +285,7 @@ mod tests {
             bytes,
             mime,
             file_name: name,
+            external_llm_allowed: true,
         }
     }
 

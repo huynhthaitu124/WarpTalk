@@ -865,19 +865,33 @@ pub async fn build(
         None => summary_service,
     });
     let assistant = assistant.with_summary(SummaryHttpDeps {
-        service: summary_service,
+        service: summary_service.clone(),
         access: Arc::new(PgRoomAccess::new(
             pool.clone(),
             Arc::new(AssistantWorkspaceAccess(workspace.queries())),
         )),
         clock: Arc::new(SystemClock),
     });
+    let assistant = assistant.with_suggestion_feedback(
+        warptalk_assistant::suggestion::feedback_http::FeedbackApi {
+            store: Arc::new(warptalk_assistant::suggestion::PgSuggestionStore::new(
+                pool.clone(),
+            )),
+            access: Arc::new(PgRoomAccess::new(
+                pool.clone(),
+                Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+            )),
+            members: Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+            clock: Arc::new(SystemClock),
+        },
+    );
     let vectors = opts.vectors.unwrap_or_else(|| {
         build_vector_store().unwrap_or_else(|e| {
             tracing::error!(error = %e, "vector store unavailable; using in-memory");
             Arc::new(warptalk_qdrant::InMemoryVectorStore::new())
         })
     });
+    let chat_llm = ai.clone();
     let knowledge = build_knowledge_module(KnowledgeParts {
         pool: pool.clone(),
         jwt: jwt.clone(),
@@ -889,6 +903,53 @@ pub async fn build(
         documents: None,
     })
     .await;
+    // WarpBot "ask the meeting": SSE/JSON Q&A, recap, history (settings namespace `assistant_chat`).
+    warptalk_assistant::chat::register_config(&settings);
+    let (chat_limiter, chat_cache): (
+        Arc<dyn warptalk_assistant::chat::RateLimiter>,
+        Arc<dyn warptalk_assistant::chat::RecapCache>,
+    ) = match &summary_redis {
+        Some(c) => (
+            Arc::new(warptalk_assistant::chat::RedisRateLimiter::new(c.clone())),
+            Arc::new(warptalk_assistant::chat::RedisRecapCache::new(c.clone())),
+        ),
+        None => (
+            Arc::new(warptalk_assistant::chat::MemoryRateLimiter::default()),
+            Arc::new(warptalk_assistant::chat::MemoryRecapCache::default()),
+        ),
+    };
+    let chat_usage: warptalk_assistant::usage::SharedUsageSink = match &summary_redis {
+        Some(c) => Arc::new(warptalk_assistant::usage::RedisUsageSink::new(c.clone())),
+        None => Arc::new(warptalk_assistant::usage::NoUsageSink),
+    };
+    let assistant = assistant.with_chat(warptalk_assistant::chat::ChatApi {
+        service: Arc::new(warptalk_assistant::chat::ChatService::new(
+            warptalk_assistant::chat::ChatDeps {
+                repo: warptalk_assistant::chat::PgChatRepository::new(pool.clone()),
+                transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
+                rooms: Arc::new(PgRoomMetaSource::new(pool.clone())),
+                knowledge: Arc::new(warptalk_ai_plane::knowledge::ServiceRetriever::new(
+                    knowledge.service(),
+                )),
+                prior: Arc::new(warptalk_assistant::chat::SummaryMemoryPriorContext::new(
+                    summary_service,
+                )),
+                llm: chat_llm,
+                policy: Arc::new(warptalk_assistant::summary::PgExternalLlmGate::new(
+                    pool.clone(),
+                )),
+                settings: settings.clone(),
+                limiter: chat_limiter,
+                recap_cache: chat_cache,
+                usage: chat_usage,
+                clock: Arc::new(SystemClock),
+            },
+        )),
+        access: Arc::new(PgRoomAccess::new(
+            pool.clone(),
+            Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+        )),
+    });
     let suggestions_router = suggestions_redis.map(|redis| {
         suggestions_http::router(SuggestionsState {
             redis,

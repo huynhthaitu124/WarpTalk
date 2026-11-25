@@ -502,3 +502,23 @@ Nguồn: `docs/architecture/PROGRESS.md`, `apps/pipeline/LIVEKIT.md`, `apps/maco
 - Họp ngoài trên macOS: không có far-speaker hint (mọi lời bên kia là "Google Meet participants"); lease capturer chưa phản ánh trạng thái audio (B8).
 - Email thật: gửi qua Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `APP_BASE_URL`); chưa có SMTP; dev dùng `DEV_MAIL_CAPTURE=1` (không bao giờ bật ở môi trường dùng chung). Mẫu email dùng một ngôn ngữ mặc định (`EMAIL_DEFAULT_LANG`), chưa theo ngôn ngữ từng người dùng.
 - Bộ docker-compose này chỉ dành cho dev (LiveKit `--dev`, Postgres trust auth, khoá `devkey/secret`). Chưa có Dockerfile cho app.
+
+## Knowledge: OCR và reindex (worker)
+
+Biến môi trường của worker (`W`); mặc định tắt OCR nên PDF scan / ảnh kết thúc `skipped` với `skipReason=ocr_unavailable`.
+
+| Biến | Bắt buộc | Mặc định | Ví dụ | Ghi chú |
+|---|---|---|---|---|
+| `KNOWLEDGE_OCR` | không | `none` | `tesseract` | `none` \| `tesseract` \| `openai`. Thiếu binary / khoá thì log WARN và quay về `none` |
+| `KNOWLEDGE_TESSERACT_BIN` | không | `tesseract` | `/usr/bin/tesseract` | Tên hoặc đường dẫn; chạy bằng vector tham số, không qua shell |
+| `KNOWLEDGE_PDFTOPPM_BIN` | không | `pdftoppm` | `/usr/bin/pdftoppm` | poppler-utils; thiếu thì ảnh vẫn OCR được nhưng PDF scan bị `skipped` |
+| `KNOWLEDGE_OCR_LANGS` | không | `vie+eng` | `eng` | Chỉ chấp nhận `[A-Za-z0-9_+]` |
+| `KNOWLEDGE_OCR_TIMEOUT_SECS` | không | `60` | `120` | Giới hạn cho từng tiến trình / request HTTP |
+| `KNOWLEDGE_OCR_MAX_PAGES` | không | `30` | `50` | Chỉ nhận dạng N trang đầu của PDF scan |
+| `KNOWLEDGE_OCR_DPI` | không | `200` | `300` | 72-600 |
+| `KNOWLEDGE_OCR_OPENAI_MODEL` | không | `gpt-4o-mini` | | Chế độ `openai`: model vision. **Nội dung tài liệu rời nền tảng**: workspace tắt `externalLlmAllowed` thì tài liệu `skipped` (`external_llm_disallowed`). Chưa kiểm chứng với API thật (UNVERIFIED) |
+| `KNOWLEDGE_OCR_OPENAI_BASE_URL` | không | `OPENAI_BASE_URL` hoặc `https://api.openai.com/v1` | | Dùng chung `OPENAI_API_KEY` |
+
+- Docker: `docker build -f deploy/docker/Dockerfile.rust --build-arg WITH_OCR=1 --target worker .` cài `tesseract-ocr`, `tesseract-ocr-vie`, `poppler-utils`.
+- `skipReason` (trong `GET /workspaces/{id}/documents[/{docId}]`): `ocr_unavailable`, `unsupported_type`, `invalid_encoding`, `external_llm_disallowed`, `no_indexable_content`, `ai_retrieval_not_allowed`.
+- Reindex (owner/admin): `POST /workspaces/{id}/documents/{docId}/reindex` và `POST /workspaces/{id}/documents/reindex?status=skipped|failed|all&limit=50` (tối đa 200/lần; trả `remaining`, gọi lại để tiếp tục). Tài liệu `pending` không bị đụng tới nên gọi lặp là an toàn; `all` gồm cả `completed` (làm mới toàn bộ). Ảnh png/jpg/webp upload được và đi qua OCR.

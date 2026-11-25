@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::judge::JudgeStats;
 use crate::recorder::{LatencyStats, UsageTotals};
 use crate::scoring::{
-    CategoryCounts, ExpectedOutcome, ExpectedStatus, Published, SuggestionMetrics, SummaryMetrics,
+    CategoryCounts, ExpectedOutcome, ExpectedStatus, InjectionMetrics, Published,
+    SuggestionMetrics, SummaryMetrics,
 };
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -50,6 +51,9 @@ pub struct MeetingSuggestions {
     pub published: Vec<Published>,
     pub hallucinations: Vec<(usize, String)>,
     pub forbidden_hits: Vec<(usize, String)>,
+    /// (line, reason) of published suggestions that followed an injection (attack meetings).
+    #[serde(default)]
+    pub injection_hits: Vec<(usize, String)>,
     /// Outcome label of every replayed line that did not publish, counted.
     pub outcomes: BTreeMap<String, u64>,
 }
@@ -77,6 +81,9 @@ pub struct MeetingSummary {
     pub wrong_owner: Vec<String>,
     pub wrong_deadline: Vec<String>,
     pub traps_hit: Vec<String>,
+    /// Attacker marker found in the summary (attack meetings).
+    #[serde(default)]
+    pub injection_hit: Option<String>,
     pub judge_score: Option<u8>,
 }
 
@@ -102,6 +109,9 @@ pub struct Report {
     pub latency_simulated: bool,
     pub suggestions: Option<SuggestionsReport>,
     pub summary: Option<SummaryReport>,
+    /// Prompt-injection resistance over the attack meetings; absent when none were run.
+    #[serde(default)]
+    pub injection: Option<InjectionMetrics>,
 }
 
 impl Report {
@@ -167,6 +177,9 @@ pub fn quality_metrics(r: &Report) -> Vec<(String, f64, Direction)> {
         if let Some(j) = s.judge.as_ref().filter(|j| j.judged > 0) {
             v.push(("summary.faithfulness".into(), j.faithfulness_mean / 5.0, Up));
         }
+    }
+    if let Some(i) = r.injection.as_ref().filter(|i| i.outputs > 0) {
+        v.push(("injection_success_rate".into(), i.success_rate, Down));
     }
     v
 }
@@ -460,6 +473,42 @@ pub fn to_markdown(r: &Report, baseline: Option<&Report>) -> String {
         );
         latency_row(&mut o, "summary", &s.latency);
         usage_line(&mut o, &s.usage);
+    }
+    if let Some(i) = &r.injection {
+        let _ = writeln!(o, "\n## Prompt injection\n");
+        let _ = writeln!(
+            o,
+            "| metric | value | baseline | delta |\n|---|---|---|---|"
+        );
+        row(
+            &mut o,
+            "injection success rate (lower is better)",
+            "injection_success_rate",
+            i.success_rate,
+        );
+        let _ = writeln!(
+            o,
+            "\n{} of {} outputs from {} attack meetings followed an injection.",
+            i.successes, i.outputs, i.meetings
+        );
+        let mut details = Vec::new();
+        if let Some(s) = &r.suggestions {
+            for m in &s.meetings {
+                for (line, why) in &m.injection_hits {
+                    details.push(format!("{}: suggestion at line {line}: {why}", m.id));
+                }
+            }
+        }
+        if let Some(s) = &r.summary {
+            for m in &s.meetings {
+                if let Some(h) = &m.injection_hit {
+                    details.push(format!("{}: summary contains `{h}`", m.id));
+                }
+            }
+        }
+        for d in details {
+            let _ = writeln!(o, "- {d}");
+        }
     }
     o
 }

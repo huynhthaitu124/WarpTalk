@@ -152,6 +152,10 @@ async fn workspace_override_beats_platform_default() {
         .unwrap();
     assert_eq!(r.model.as_deref(), Some("claude-byo-model"));
     assert_eq!(r.boundary, DataBoundary::WorkspaceControlled);
+    assert_eq!(
+        r.key_source,
+        warptalk_assistant::suggestion::KeySource::Workspace
+    );
     assert_eq!(r.provider.id(), ProviderId::Anthropic);
 
     // Another purpose of the same workspace, and another workspace: platform default.

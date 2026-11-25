@@ -23,7 +23,8 @@ pub const TEMPLATE_NAMES: [&str; 11] = [
     "generate_answer_examples",
 ];
 
-pub const KNOWN_VARS: [&str; 19] = [
+pub const KNOWN_VARS: [&str; 20] = [
+    "nonce",
     "untrusted_rule",
     "category_descriptions",
     "category_ids",

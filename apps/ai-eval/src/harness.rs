@@ -46,13 +46,14 @@ use crate::report::{
     SuggestionsReport, SummaryReport,
 };
 use crate::scoring::{
-    CategoryCounts, Counts, OutAction, Published, SummaryCounts, SummaryOutput, score_suggestions,
-    score_summary,
+    CategoryCounts, Counts, InjectionMetrics, OutAction, Published, SummaryCounts, SummaryOutput,
+    injection_hit_summary, injection_hits_suggestions, is_attack, score_suggestions, score_summary,
 };
 use crate::textmatch;
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://postgres@localhost:5432/warptalk";
 pub const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
+pub(crate) const EPOCH_MS_PUB: i64 = EPOCH_MS;
 const STATE_PREFIX: &str = "evalsuggest";
 /// Fixed replay epoch so window ages are reproducible.
 const EPOCH_MS: i64 = 1_800_000_000_000;
@@ -74,9 +75,9 @@ impl Clock for ReplayClock {
     }
 }
 
-struct FixedResolver {
-    provider: Arc<dyn LlmProvider>,
-    model: String,
+pub(crate) struct FixedResolver {
+    pub(crate) provider: Arc<dyn LlmProvider>,
+    pub(crate) model: String,
 }
 
 #[async_trait]
@@ -86,11 +87,12 @@ impl LlmResolver for FixedResolver {
             provider: self.provider.clone(),
             model: Some(self.model.clone()),
             boundary: DataBoundary::External,
+            key_source: Default::default(),
         })
     }
 }
 
-struct OneRoom(WorkspaceId);
+pub(crate) struct OneRoom(pub(crate) WorkspaceId);
 
 #[async_trait]
 impl RoomDirectory for OneRoom {
@@ -104,7 +106,7 @@ impl RoomDirectory for OneRoom {
 }
 
 /// Toy retriever: ranks the meeting's snippets by word overlap with the query.
-struct SnippetRetriever(Vec<Snippet>);
+pub(crate) struct SnippetRetriever(pub(crate) Vec<Snippet>);
 
 #[async_trait]
 impl KnowledgeRetriever for SnippetRetriever {
@@ -593,9 +595,40 @@ pub async fn run(opts: &RunOptions) -> Result<Report> {
         }),
         line_tolerance: opts.tolerance,
         latency_simulated: opts.provider.is_fake(),
+        injection: injection_metrics(&opts.meetings, suggestions.as_ref(), summary.as_ref()),
         suggestions,
         summary,
     })
+}
+
+/// Aggregate the injection check; `None` when no attack meeting was run.
+fn injection_metrics(
+    meetings: &[Meeting],
+    suggestions: Option<&SuggestionsReport>,
+    summary: Option<&SummaryReport>,
+) -> Option<InjectionMetrics> {
+    let attacks: Vec<&Meeting> = meetings.iter().filter(|m| is_attack(m)).collect();
+    if attacks.is_empty() {
+        return None;
+    }
+    let (mut outputs, mut successes) = (0u64, 0u64);
+    for m in attacks.iter() {
+        if let Some(ms) = suggestions.and_then(|s| s.meetings.iter().find(|x| x.id == m.id)) {
+            outputs += ms.published.len() as u64;
+            successes += ms.injection_hits.len() as u64;
+        }
+        if let Some(ms) = summary.and_then(|s| s.meetings.iter().find(|x| x.id == m.id))
+            && ms.error.is_none()
+        {
+            outputs += 1;
+            successes += u64::from(ms.injection_hit.is_some());
+        }
+    }
+    Some(InjectionMetrics::from_counts(
+        attacks.len() as u64,
+        outputs,
+        successes,
+    ))
 }
 
 async fn run_suggestions(
@@ -636,9 +669,10 @@ async fn run_suggestions(
             id: m.id.clone(),
             metrics: score.counts.metrics(),
             expected: score.expected,
-            published: run.published,
             hallucinations: score.hallucinations,
+            injection_hits: injection_hits_suggestions(m, &run.published, &score.forbidden_hits),
             forbidden_hits: score.forbidden_hits,
+            published: run.published,
             outcomes: run.outcomes,
         });
     }
@@ -706,6 +740,10 @@ async fn run_summaries(
             wrong_owner: score.wrong_owner,
             wrong_deadline: score.wrong_deadline,
             traps_hit: score.traps_hit,
+            injection_hit: run
+                .output
+                .as_ref()
+                .and_then(|o| injection_hit_summary(m, o)),
             judge_score,
         });
     }

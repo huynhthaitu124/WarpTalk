@@ -274,6 +274,24 @@ fn gate_segments(
         .collect()
 }
 
+/// Result of the extraction step of [`IndexingService`].
+enum Extracted {
+    Nothing,
+    Content(Box<IndexRequest>),
+    Skip(&'static str),
+}
+
+/// Machine-readable reason a document ended `skipped` because its text could not be extracted.
+fn skip_reason(e: &ExtractError) -> &'static str {
+    match e {
+        ExtractError::Unsupported(_) => "unsupported_type",
+        ExtractError::OcrUnavailable => "ocr_unavailable",
+        ExtractError::InvalidEncoding => "invalid_encoding",
+        ExtractError::ExternalLlmDisallowed => "external_llm_disallowed",
+        ExtractError::Failed(_) | ExtractError::Unavailable(_) => "extraction_failed",
+    }
+}
+
 impl IndexingService {
     pub fn new(d: IndexingDeps) -> Self {
         Self {
@@ -298,20 +316,18 @@ impl IndexingService {
     }
 
     /// For a `needs_extraction` request: fetch the object and extract its pages into
-    /// `content`. `Ok(None)` = nothing to do (or the type cannot be extracted: the document
-    /// then indexes nothing and is reported as skipped, as before).
-    async fn with_extracted_content(
-        &self,
-        req: &IndexRequest,
-    ) -> Result<Option<IndexRequest>, IndexError> {
+    /// `content`. `Nothing` = no extraction was needed or possible (the document then indexes
+    /// nothing, as before); `Skip(reason)` = the content cannot be extracted (the document is
+    /// reported `skipped` with that reason, see [`skip_reason`]).
+    async fn with_extracted_content(&self, req: &IndexRequest) -> Result<Extracted, IndexError> {
         if !req.needs_extraction || req.content.is_some() || !req.chunks.is_empty() {
-            return Ok(None);
+            return Ok(Extracted::Nothing);
         }
         let (Some(ex), Some(key)) = (
             &self.extraction,
             req.object_key.as_deref().filter(|k| !k.is_empty()),
         ) else {
-            return Ok(None);
+            return Ok(Extracted::Nothing);
         };
         let bytes = ex.source.fetch(key).await.map_err(|e| match e {
             DocumentSourceError::NotFound(m) => IndexError::Permanent(m),
@@ -321,23 +337,24 @@ impl IndexingService {
             bytes: &bytes,
             mime: req.mime_type.as_deref().unwrap_or(""),
             file_name: req.file_name.as_deref(),
+            external_llm_allowed: req.external_llm_allowed,
         };
         match ex.chain.extract(&input).await {
-            Ok(t) => Ok(Some(IndexRequest {
+            Ok(t) => Ok(Extracted::Content(Box::new(IndexRequest {
                 content: Some(IndexContent::Document { pages: t.pages }),
                 ..req.clone()
-            })),
-            Err(
-                e @ (ExtractError::Unsupported(_)
-                | ExtractError::OcrUnavailable
-                | ExtractError::InvalidEncoding),
-            ) => {
-                tracing::warn!(job = %req.job_id, error = %e, "document cannot be extracted; skipping");
-                Ok(None)
-            }
+            }))),
             Err(ExtractError::Failed(m)) => Err(IndexError::Permanent(format!(
                 "text extraction failed: {m}"
             ))),
+            Err(ExtractError::Unavailable(m)) => Err(IndexError::Transient(format!(
+                "text extraction backend unavailable: {m}"
+            ))),
+            Err(e) => {
+                let reason = skip_reason(&e);
+                tracing::warn!(job = %req.job_id, error = %e, reason, "document cannot be extracted; skipping");
+                Ok(Extracted::Skip(reason))
+            }
         }
     }
 
@@ -592,7 +609,16 @@ impl IndexingService {
             ));
         }
 
-        let extracted = self.with_extracted_content(req).await?;
+        let extracted = match self.with_extracted_content(req).await? {
+            Extracted::Skip(reason) => {
+                // A reindex may turn a previously indexed document into a skipped one.
+                self.purge_source(ws, Some(req.source_type), Some(source_id))
+                    .await?;
+                return Ok(Outcome::simple(ResultStatus::Blocked, reason, profile));
+            }
+            Extracted::Content(r) => Some(*r),
+            Extracted::Nothing => None,
+        };
         let req = extracted.as_ref().unwrap_or(req);
 
         let row = self.d.repo.register_profile(ws, &profile).await?;

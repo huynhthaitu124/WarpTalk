@@ -170,6 +170,9 @@ impl TextExtractor for PdfExtractor {
         match pages_from_pdf(&raw) {
             Some(pages) => Ok(ExtractedText { pages }),
             // No text layer: scanned document, hand over to OCR.
+            None if self.ocr.sends_content_externally() && !input.external_llm_allowed => {
+                Err(ExtractError::ExternalLlmDisallowed)
+            }
             None => Ok(ExtractedText {
                 pages: self.ocr.recognize(input.bytes, PDF_MIME).await?,
             }),
@@ -703,6 +706,7 @@ mod tests {
             bytes,
             mime,
             file_name: name,
+            external_llm_allowed: true,
         }
     }
 

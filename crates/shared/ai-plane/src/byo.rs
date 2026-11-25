@@ -13,7 +13,7 @@ use warptalk_assistant::domain::byo::{
     AI_CONFIG_CHANNEL, ConfigChanged, ConfigStatus, FallbackPolicy, LlmConfig, LlmProviderKind,
     LlmPurpose,
 };
-use warptalk_assistant::suggestion::{DataBoundary, ResolveError, ResolvedLlm};
+use warptalk_assistant::suggestion::{DataBoundary, KeySource, ResolveError, ResolvedLlm};
 use warptalk_kernel::WorkspaceId;
 use warptalk_llm::{ProviderConfig, ProviderId, ProviderRegistry};
 
@@ -243,6 +243,8 @@ impl ByoResolver {
                 provider,
                 model: Some(cfg.model.clone()).filter(|m| !m.trim().is_empty()),
                 boundary: DataBoundary::from(cfg.data_boundary),
+                // A workspace credential is BYO whatever endpoint it points at.
+                key_source: KeySource::Workspace,
             })),
             Err(e) => {
                 tracing::warn!(workspace_id = %ws, provider = cfg.provider.as_str(), error = %e, "cannot build workspace provider");

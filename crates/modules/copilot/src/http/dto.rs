@@ -6,8 +6,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::application::ports::SttToken;
-use crate::application::service::{CreateSession, IngestOutcome, SessionView};
-use crate::domain::{Channel, Segment};
+use crate::application::service::{
+    AudioTicket, CreateSession, IngestOutcome, LanguagePrefs, SessionView,
+};
+use warptalk_kernel::{AppError, AppResult};
+use crate::domain::{Channel, LanguageMode, Segment};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,6 +216,70 @@ impl From<SttToken> for SttTokenResponse {
             expires_at: t.expires_at,
             websocket_url: t.websocket_url,
             session_config: t.session_config,
+        }
+    }
+}
+
+/// Optional body of `stt-token`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttTokenBody {
+    /// `fixed | auto | multi`; default `auto`.
+    pub language_mode: Option<String>,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub vocabulary: Vec<String>,
+}
+
+impl SttTokenBody {
+    pub fn into_prefs(self) -> AppResult<LanguagePrefs> {
+        let mode = match self.language_mode.as_deref() {
+            None => None,
+            Some(m) => Some(LanguageMode::parse(m).ok_or_else(|| {
+                AppError::validation(
+                    "INVALID_LANGUAGE_MODE",
+                    "languageMode must be fixed, auto or multi",
+                )
+            })?),
+        };
+        if self.languages.len() > 8
+            || self.languages.iter().any(|l| !crate::domain::valid_language(l))
+        {
+            return Err(AppError::validation(
+                "INVALID_LANGUAGE",
+                "languages must be at most 8 language tags such as `en` or `vi`",
+            ));
+        }
+        if self.vocabulary.len() > 500 {
+            return Err(AppError::validation(
+                "INVALID_VOCABULARY",
+                "vocabulary must have at most 500 terms",
+            ));
+        }
+        Ok(LanguagePrefs {
+            mode,
+            languages: self.languages,
+            vocabulary: self.vocabulary,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTicketResponse {
+    /// Pass as `?token=` on `GET /copilot/sessions/{id}/audio` (single use).
+    pub ticket: String,
+    pub expires_at: DateTime<Utc>,
+    pub ttl_seconds: u64,
+}
+
+impl From<AudioTicket> for AudioTicketResponse {
+    fn from(t: AudioTicket) -> Self {
+        Self {
+            ticket: t.ticket,
+            expires_at: t.expires_at,
+            ttl_seconds: t.ttl_secs,
         }
     }
 }

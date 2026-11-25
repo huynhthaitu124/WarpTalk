@@ -5,6 +5,7 @@
 //! meeting's expectations ([`scoring`]) and written as a [`report::Report`]. See
 //! `docs/architecture/ai-eval.md`.
 
+pub mod bench;
 pub mod cli;
 pub mod cost;
 pub mod dataset;
