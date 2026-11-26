@@ -87,7 +87,7 @@ const BODY_MAP: Array<[RegExp, (body: Record<string, unknown>) => Record<string,
     provider: provider ?? "google_meet",
     code: code ?? meetCode,
   })],
-  // Rust keeps the one room setting it has at the top level.
+  // Rust takes `settings` as-is; the top-level copy keeps older API builds working.
   [/^\/translation-rooms$/, (body) => ({
     ...body,
     requiresApproval: body.requiresApproval ?? (body.settings as { requiresApproval?: boolean } | undefined)?.requiresApproval,
@@ -316,6 +316,14 @@ const SYNTHETIC: Array<[string, RegExp, (client: AxiosInstance, m: RegExpExecArr
     await client.post(`/meetings/${m[1]}/chat/messages/${m[2]}/hide`, { reason: body?.reason ?? null });
     broadcastChat({ type: "chat.hidden", messageId: m[2] });
     return null;
+  }],
+  // Room invitations ride on the room for its host (`invitedEmails`); the old screens list them.
+  ["get", /^\/translation-rooms\/([^/]+)\/invitations$/, async (client, m) => {
+    const { data } = await client.get<{ invitedEmails?: string[]; createdAt: string; updatedAt?: string }>(`/translation-rooms/${m[1]}`);
+    return (data.invitedEmails ?? []).map((email) => ({
+      id: `${m[1]}:${email}`, translationRoomId: m[1], email, status: "PENDING",
+      createdAt: data.createdAt, updatedAt: data.updatedAt ?? data.createdAt,
+    }));
   }],
   ["get", /^\/translation-rooms\/history$/, (client, _m, params) => roomHistory(client, params, true)],
   ["get", /^\/translation-rooms\/my-meetings$/, (client, _m, params) => roomHistory(client, params, false)],

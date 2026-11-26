@@ -12,7 +12,8 @@ use uuid::Uuid;
 use warptalk_config::JwtConfig;
 use warptalk_kernel::{Clock, FixedClock, RoomId, SystemClock, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_room::application::ports::{
-    InMemoryWorkspacePolicy, NoopVoiceConsentDirectory, VoiceConsentDirectory,
+    InMemoryWorkspacePolicy, NoopVoiceConsentDirectory, RecordingInviteNotifier,
+    VoiceConsentDirectory,
 };
 use warptalk_room::infrastructure::redis_publisher::RedisRoomEventPublisher;
 use warptalk_room::{MIGRATIONS, RoomDeps, RoomModule};
@@ -1819,4 +1820,130 @@ async fn host_updates_room_properties() {
         .call(Method::PATCH, &uri, member, Some(json!({"title": "x"})))
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+fn sent_emails(rec: &RecordingInviteNotifier) -> Vec<Vec<String>> {
+    rec.sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|i| i.emails.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn room_options_and_invitations_for_native_and_bridge() {
+    let Some(mut c) = ctx().await else { return };
+    let rec = Arc::new(RecordingInviteNotifier::default());
+    let module = c.module.with_invite_notifier(rec.clone());
+    c.router = module.router();
+    c.module = module;
+    let (ws, u) = members(&c, 2);
+    let (host, other) = (u[0], u[1]);
+    let rooms = "/translation-rooms";
+
+    // invalid email refused before anything is created
+    let (st, v) = c
+        .call(
+            Method::POST,
+            rooms,
+            host,
+            Some(
+                json!({"workspaceId": ws, "title": "Bad", "sourceLanguage": "vi",
+                        "targetLanguages": ["en"], "invitedEmails": ["nope"]}),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["code"], "INVALID_EMAIL");
+
+    // native create: settings + invites (deduped, lowercased)
+    let (st, v) = c
+        .call(
+            Method::POST,
+            rooms,
+            host,
+            Some(
+                json!({"workspaceId": ws, "title": "Opts", "sourceLanguage": "vi",
+                        "targetLanguages": ["en"],
+                        "settings": {"requiresApproval": false, "saveTranscript": false,
+                                     "participantsCanStartTranslation": true},
+                        "invitedEmails": ["A@x.io", "a@x.io", "b@x.io"]}),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["requiresApproval"], false);
+    assert_eq!(v["settings"]["requiresApproval"], false);
+    assert_eq!(v["settings"]["saveTranscript"], false);
+    assert_eq!(v["settings"]["autoShareRecord"], true);
+    assert_eq!(v["settings"]["participantsCanStartTranslation"], true);
+    assert_eq!(v["invitedEmails"], json!(["a@x.io", "b@x.io"]));
+    assert_eq!(sent_emails(&rec), vec![vec!["a@x.io", "b@x.io"]]);
+    let room = v["id"].as_str().unwrap().to_owned();
+
+    // non-host member sees the room but not the invitation list
+    let (st, v) = c
+        .call(Method::GET, &format!("{rooms}/{room}"), other, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(v.get("invitedEmails").is_none());
+
+    // update: patch one option, replace invites -> only the new address is notified
+    let (st, v) = c
+        .call(
+            Method::PATCH,
+            &format!("{rooms}/{room}"),
+            host,
+            Some(json!({"settings": {"autoShareRecord": false},
+                        "invitedEmails": ["b@x.io", "c@x.io"]})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["settings"]["autoShareRecord"], false);
+    assert_eq!(v["settings"]["saveTranscript"], false);
+    assert_eq!(v["settings"]["requiresApproval"], false);
+    assert_eq!(v["invitedEmails"], json!(["b@x.io", "c@x.io"]));
+    assert_eq!(
+        sent_emails(&rec).last().unwrap(),
+        &vec!["c@x.io".to_owned()]
+    );
+
+    // legacy top-level requiresApproval still works
+    let (st, v) = c
+        .call(
+            Method::PATCH,
+            &format!("{rooms}/{room}"),
+            host,
+            Some(json!({"requiresApproval": true})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["settings"]["requiresApproval"], true);
+    assert_eq!(v["settings"]["autoShareRecord"], false);
+
+    // external bridge claim: options + invites on create
+    let code = meet_code();
+    let mut body = claim_body(ws, &code);
+    body["settings"] = json!({"saveTranscript": false});
+    body["invitedEmails"] = json!(["guest@y.io"]);
+    let (st, v) = c.call(Method::POST, CLAIM, host, Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["settings"]["requiresApproval"], false);
+    assert_eq!(v["settings"]["saveTranscript"], false);
+    assert_eq!(v["invitedEmails"], json!(["guest@y.io"]));
+    assert_eq!(
+        sent_emails(&rec).last().unwrap(),
+        &vec!["guest@y.io".to_owned()]
+    );
+
+    // a second claimer does not change options or invites
+    let mut body = claim_body(ws, &code);
+    body["settings"] = json!({"saveTranscript": true});
+    body["invitedEmails"] = json!(["intruder@y.io"]);
+    let (st, v) = c.call(Method::POST, CLAIM, other, Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["settings"]["saveTranscript"], false);
+    assert!(v.get("invitedEmails").is_none());
+    assert_eq!(rec.sent.lock().unwrap().len(), 3);
 }

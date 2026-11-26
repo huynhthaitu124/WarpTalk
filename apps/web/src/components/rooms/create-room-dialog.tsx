@@ -361,7 +361,9 @@ export function CreateRoomDialog() {
             sourceLanguage: sourceLanguage,
             targetLanguages: targetLanguages,
             scheduledAt: scheduledAt ? scheduledAt.toISOString() : undefined,
-            invitedEmails: invitedEmails.length > 0 ? invitedEmails : undefined,
+            // The whole list: the server replaces the room's invitations with it, so an emptied
+            // picker clears them.
+            invitedEmails,
             // WT-826: a settings PATCH, so only the field that moved. The server carries the
             // room's sharing level with the toggle while the meeting has not happened yet.
             ...(loadedAutoShareRecord !== null && autoShareRecord !== loadedAutoShareRecord
@@ -376,6 +378,28 @@ export function CreateRoomDialog() {
           failSubmit(t("errors.selectWorkspace"));
           return;
         }
+        // WT-341. Sent only when the host actually chose: RoomSettingsRequest makes every
+        // member nullable precisely so "not sent" stays distinguishable from "sent false".
+        // Shared by the External Meeting claim and the room create below.
+        const settingsPatch =
+        requiresApproval === null &&
+        !participantsCanStartTranslation &&
+        saveTranscript &&
+        autoShareRecord
+          ? undefined
+          : {
+              ...(requiresApproval === null ? {} : { requiresApproval }),
+              ...(participantsCanStartTranslation
+                ? { participantsCanStartTranslation: true }
+                : {}),
+              // WT-587: sent only as `false`. True is the server's own default, and echoing
+              // it back would pin the value against any future change — the same reasoning
+              // as requiresApproval above.
+              ...(saveTranscript ? {} : { saveTranscript: false }),
+              // WT-826: likewise sent only as `false`.
+              ...(autoShareRecord ? {} : { autoShareRecord: false }),
+            };
+
         if (parsedExternalLink?.ok) {
           const claim = await claimExternalRoomMutation.mutateAsync({
             workspaceId: activeWorkspaceId,
@@ -386,6 +410,9 @@ export function CreateRoomDialog() {
             title: title.trim(),
             sourceLanguage,
             targetLanguages,
+            // Applied only when this claim creates the room; invites only when the caller hosts it.
+            settings: settingsPatch,
+            invitedEmails: invitedEmails.length > 0 ? invitedEmails : undefined,
           });
           setCreatedRoomId(claim.room.id);
           setCreatedRoomCode(claim.room.translationRoomCode);
@@ -413,24 +440,7 @@ export function CreateRoomDialog() {
           // member nullable precisely so "not sent" stays distinguishable from "sent false", and
           // that is what lets the meeting type seed the rest. Echoing the type's own default back
           // at it would work today and quietly pin the value if a type's profile ever changed.
-          settings:
-            requiresApproval === null &&
-            !participantsCanStartTranslation &&
-            saveTranscript &&
-            autoShareRecord
-              ? undefined
-              : {
-                  ...(requiresApproval === null ? {} : { requiresApproval }),
-                  ...(participantsCanStartTranslation
-                    ? { participantsCanStartTranslation: true }
-                    : {}),
-                  // WT-587: sent only as `false`. True is the server's own default, and echoing
-                  // it back would pin the value against any future change — the same reasoning
-                  // as requiresApproval above.
-                  ...(saveTranscript ? {} : { saveTranscript: false }),
-                  // WT-826: likewise sent only as `false`.
-                  ...(autoShareRecord ? {} : { autoShareRecord: false }),
-                },
+          settings: settingsPatch,
         };
 
         if (dailyRecurrence) {
@@ -660,14 +670,12 @@ export function CreateRoomDialog() {
 
               {/* Pill Options Row */}
               <div className="px-5 pb-[5px] pt-2 flex flex-wrap items-center gap-2 mt-2 shrink-0">
-                {/* An external call's people are invited on Meet / Zoom / Teams, and its time is
-                    that call's: only the languages apply to the room claimed for it. */}
-                {!isExternalMeeting && (
-                  <InvitePeoplePicker
-                    emails={invitedEmails}
-                    onChange={setInvitedEmails}
-                  />
-                )}
+                {/* An external call's time is that call's, but its WarpTalk room can still invite
+                    people (to the translation) and carry the host's options. */}
+                <InvitePeoplePicker
+                  emails={invitedEmails}
+                  onChange={setInvitedEmails}
+                />
                 <LanguageSelector
                   languages={meetingLanguages}
                   onLanguagesChange={setMeetingLanguages}
@@ -701,29 +709,29 @@ export function CreateRoomDialog() {
                 {/* WT-327: the hour is asked for, never assumed — but the asking happens in
                     the menu row itself now. A modal, and then a panel in this dialog, both
                     answered "ask for the hour" by opening a second surface over the first. */}
-                {!isExternalMeeting && (
-                  <OptionsMenu
-                    hasScheduledAt={!!scheduledAt || !!dailyRecurrence}
-                    onAddScheduledAt={() => setScheduledAt(getDefaultStartTime())}
-                    daily={dailyRecurrence}
-                    onDailyChange={(draft) => {
-                      setDailyRecurrence(draft);
-                      // A one-off time cannot coexist with a rule that decides every
-                      // occurrence's time.
-                      if (draft) setScheduledAt(null);
-                    }}
-                    requiresApproval={effectiveRequiresApproval}
-                    participantsCanStartTranslation={participantsCanStartTranslation}
-                    onParticipantsCanStartTranslationChange={
-                      setParticipantsCanStartTranslation
-                    }
-                    saveTranscript={saveTranscript}
-                    onSaveTranscriptChange={setSaveTranscript}
-                    autoShareRecord={autoShareRecord}
-                    onAutoShareRecordChange={setAutoShareRecord}
-                    onRequiresApprovalChange={setRequiresApproval}
-                  />
-                )}
+                <OptionsMenu
+                  hasScheduledAt={!!scheduledAt || !!dailyRecurrence}
+                  onAddScheduledAt={
+                    isExternalMeeting ? undefined : () => setScheduledAt(getDefaultStartTime())
+                  }
+                  daily={dailyRecurrence}
+                  onDailyChange={isExternalMeeting ? undefined : (draft) => {
+                    setDailyRecurrence(draft);
+                    // A one-off time cannot coexist with a rule that decides every
+                    // occurrence's time.
+                    if (draft) setScheduledAt(null);
+                  }}
+                  requiresApproval={effectiveRequiresApproval}
+                  participantsCanStartTranslation={participantsCanStartTranslation}
+                  onParticipantsCanStartTranslationChange={
+                    setParticipantsCanStartTranslation
+                  }
+                  saveTranscript={saveTranscript}
+                  onSaveTranscriptChange={setSaveTranscript}
+                  autoShareRecord={autoShareRecord}
+                  onAutoShareRecordChange={setAutoShareRecord}
+                  onRequiresApprovalChange={setRequiresApproval}
+                />
               </div>
 
               {/* WT-327 put a summary here — "Every day at 09:00 · 31 meetings · Asia/Saigon"

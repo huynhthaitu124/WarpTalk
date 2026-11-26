@@ -5,7 +5,7 @@ use warptalk_contracts::events::AudioRoutesSnapshot;
 use warptalk_kernel::{Page, PageRequest, ParticipantId, RoomId, UserId, WorkspaceId};
 
 use crate::application::ports::{ClaimOutcome, ParticipantRecord, RoomRecord};
-use crate::domain::{BridgeConfig, BridgeState};
+use crate::domain::{BridgeConfig, BridgeState, RoomSettings, RoomSettingsPatch};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,7 +17,53 @@ pub struct CreateRoomRequest {
     pub scheduled_at: Option<DateTime<Utc>>,
     pub source_language: String,
     pub target_languages: Vec<String>,
+    /// Legacy top-level flag; `settings.requiresApproval` wins when both are sent.
     pub requires_approval: Option<bool>,
+    pub settings: Option<SettingsRequest>,
+    pub invited_emails: Option<Vec<String>>,
+}
+
+/// Room options; absent fields keep their current (or default) value.
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsRequest {
+    pub requires_approval: Option<bool>,
+    pub participants_can_start_translation: Option<bool>,
+    pub save_transcript: Option<bool>,
+    pub auto_share_record: Option<bool>,
+}
+
+impl SettingsRequest {
+    /// Merge with the legacy top-level `requiresApproval` flag.
+    pub fn patch(s: Option<Self>, legacy_requires_approval: Option<bool>) -> RoomSettingsPatch {
+        let s = s.unwrap_or_default();
+        RoomSettingsPatch {
+            requires_approval: s.requires_approval.or(legacy_requires_approval),
+            participants_can_start_translation: s.participants_can_start_translation,
+            save_transcript: s.save_transcript,
+            auto_share_record: s.auto_share_record,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDto {
+    pub requires_approval: bool,
+    pub participants_can_start_translation: bool,
+    pub save_transcript: bool,
+    pub auto_share_record: bool,
+}
+
+impl From<RoomSettings> for SettingsDto {
+    fn from(s: RoomSettings) -> Self {
+        Self {
+            requires_approval: s.requires_approval,
+            participants_can_start_translation: s.participants_can_start_translation,
+            save_transcript: s.save_transcript,
+            auto_share_record: s.auto_share_record,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -64,6 +110,9 @@ pub struct UpdateRoomRequest {
     pub source_language: Option<String>,
     pub target_languages: Option<Vec<String>>,
     pub requires_approval: Option<bool>,
+    pub settings: Option<SettingsRequest>,
+    /// Replaces the pending invitation list.
+    pub invited_emails: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -100,6 +149,10 @@ pub struct RoomDto {
     pub source_language: String,
     pub target_languages: Vec<String>,
     pub requires_approval: bool,
+    pub settings: SettingsDto,
+    /// Pending invitations; only on single-room responses to the effective host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invited_emails: Option<Vec<String>>,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -148,6 +201,11 @@ impl BridgeDto {
 }
 
 impl RoomDto {
+    pub fn with_invites(mut self, invites: Option<Vec<String>>) -> Self {
+        self.invited_emails = invites;
+        self
+    }
+
     pub fn new(r: RoomRecord, cfg: &BridgeConfig, now: DateTime<Utc>) -> Self {
         Self {
             effective_host_id: r.effective_host(),
@@ -161,7 +219,9 @@ impl RoomDto {
             status: r.status.as_str(),
             source_language: r.source_language,
             target_languages: r.target_languages,
-            requires_approval: r.requires_approval,
+            requires_approval: r.settings.requires_approval,
+            settings: r.settings.into(),
+            invited_emails: None,
             scheduled_at: r.scheduled_at,
             started_at: r.started_at,
             ended_at: r.ended_at,
@@ -186,6 +246,10 @@ pub struct ClaimBridgeRequest {
     pub target_languages: Vec<String>,
     /// Caption language when joining as listener (default: first target language).
     pub listen_language: Option<String>,
+    /// Applied only when the claim creates the room.
+    pub settings: Option<SettingsRequest>,
+    /// Added when the caller is the room's host.
+    pub invited_emails: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -216,6 +280,11 @@ pub struct ClaimBridgeResponse {
 }
 
 impl ClaimBridgeResponse {
+    pub fn with_invites(mut self, invites: Option<Vec<String>>) -> Self {
+        self.room.invited_emails = invites;
+        self
+    }
+
     pub fn new(o: ClaimOutcome, cfg: BridgeConfig, now: DateTime<Utc>) -> Self {
         let room = RoomDto::new(o.room, &cfg, now);
         Self {

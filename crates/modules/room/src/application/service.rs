@@ -9,12 +9,13 @@ use warptalk_kernel::{
 };
 
 use super::ports::{
-    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
-    ParticipantRecord, RoomEventPublisher, RoomRecord, RoomRepo, UpdateLanguagesInput,
-    UpdateRoomInput, WorkspacePolicy,
+    Caller, ClaimOutcome, Heartbeat, JoinInput, LogInviteNotifier, Mutation, NewBridgeRoom,
+    NewRoom, ParticipantRecord, RoomEventPublisher, RoomInvite, RoomInviteNotifier, RoomRecord,
+    RoomRepo, UpdateLanguagesInput, UpdateRoomInput, WorkspacePolicy,
 };
 use crate::domain::{
-    AudioMode, BridgeConfig, BridgeProvider, RoomAction, RoomStatus, generate_room_code,
+    AudioMode, BridgeConfig, BridgeProvider, MAX_INVITES, RoomAction, RoomSettings,
+    RoomSettingsPatch, RoomStatus, generate_room_code, normalize_invite_emails,
     normalize_meeting_ref, valid_language,
 };
 
@@ -30,6 +31,10 @@ pub struct ClaimBridge {
     pub target_languages: Vec<String>,
     /// Caption language of the caller as listener (default: first target language).
     pub listen_language: Option<String>,
+    /// Applied only when this claim creates the room (default: no lobby approval).
+    pub settings: RoomSettingsPatch,
+    /// Added (never removed) when the caller is the room's host.
+    pub invited_emails: Option<Vec<String>>,
 }
 
 pub struct CreateRoom {
@@ -40,7 +45,8 @@ pub struct CreateRoom {
     pub scheduled_at: Option<DateTime<Utc>>,
     pub source_language: String,
     pub target_languages: Vec<String>,
-    pub requires_approval: Option<bool>,
+    pub settings: RoomSettingsPatch,
+    pub invited_emails: Option<Vec<String>>,
 }
 
 #[derive(Default)]
@@ -50,7 +56,9 @@ pub struct UpdateRoom {
     pub scheduled_at: Option<Option<DateTime<Utc>>>,
     pub source_language: Option<String>,
     pub target_languages: Option<Vec<String>>,
-    pub requires_approval: Option<bool>,
+    pub settings: RoomSettingsPatch,
+    /// Replaces the pending invitation list.
+    pub invited_emails: Option<Vec<String>>,
 }
 
 pub struct JoinRoom {
@@ -65,6 +73,7 @@ pub struct RoomService {
     events: Arc<dyn RoomEventPublisher>,
     clock: Arc<dyn Clock>,
     bridge: BridgeConfig,
+    invites: Arc<dyn RoomInviteNotifier>,
 }
 
 fn not_found() -> AppError {
@@ -89,7 +98,70 @@ impl RoomService {
             events,
             clock,
             bridge,
+            invites: Arc::new(LogInviteNotifier),
         }
+    }
+
+    /// Replace the outbound invitation notifier (default: log only).
+    pub fn with_invite_notifier(mut self, n: Arc<dyn RoomInviteNotifier>) -> Self {
+        self.invites = n;
+        self
+    }
+
+    /// Validated, normalized invite list.
+    fn check_invites(raw: Option<&Vec<String>>) -> AppResult<Option<Vec<String>>> {
+        let Some(raw) = raw else { return Ok(None) };
+        let emails = normalize_invite_emails(raw)
+            .map_err(|e| validation("INVALID_EMAIL", &format!("Invalid email: {e}")))?;
+        if emails.len() > MAX_INVITES {
+            return Err(validation(
+                "TOO_MANY_INVITES",
+                &format!("At most {MAX_INVITES} invitations per request"),
+            ));
+        }
+        Ok(Some(emails))
+    }
+
+    /// Store invitations and notify the newly invited ones (notification failures are logged).
+    async fn apply_invites(
+        &self,
+        room: &RoomRecord,
+        inviter: UserId,
+        emails: Option<Vec<String>>,
+        replace: bool,
+    ) -> AppResult<()> {
+        let Some(emails) = emails else { return Ok(()) };
+        let added = self
+            .repo
+            .set_invitations(room.id, &emails, replace, self.clock.now())
+            .await?;
+        if added.is_empty() {
+            return Ok(());
+        }
+        let invite = RoomInvite {
+            room_id: room.id,
+            workspace_id: room.workspace_id,
+            room_title: room.title.clone(),
+            room_code: room.code.clone(),
+            inviter,
+            emails: added,
+        };
+        if let Err(e) = self.invites.notify(invite).await {
+            tracing::warn!(room = %room.id, error = %e, "invitation notification failed");
+        }
+        Ok(())
+    }
+
+    /// Pending invitations, shown only to the room's effective host.
+    pub async fn invitations_for(
+        &self,
+        room: &RoomRecord,
+        user: UserId,
+    ) -> AppResult<Option<Vec<String>>> {
+        if room.effective_host() != user {
+            return Ok(None);
+        }
+        Ok(Some(self.repo.invitations(room.id).await?))
     }
 
     pub fn bridge_config(&self) -> BridgeConfig {
@@ -133,6 +205,7 @@ impl RoomService {
     }
 
     pub async fn create(&self, user: UserId, req: CreateRoom) -> AppResult<RoomRecord> {
+        let invites = Self::check_invites(req.invited_emails.as_ref())?;
         let title = req.title.trim().to_owned();
         if title.is_empty() || title.chars().count() > 255 {
             return Err(validation(
@@ -200,12 +273,17 @@ impl RoomService {
                 status,
                 source_language: req.source_language.clone(),
                 target_languages: targets.clone(),
-                requires_approval: req.requires_approval.unwrap_or(true),
+                settings: req.settings.apply(RoomSettings::default()),
                 scheduled_at: req.scheduled_at,
                 now,
             };
             match self.repo.create(new).await {
                 Err(AppError::Conflict { code, .. }) if code == "DUPLICATE" => continue,
+                Ok(room) => {
+                    self.apply_invites(&room, user, invites.clone(), false)
+                        .await?;
+                    return Ok(room);
+                }
                 other => return other,
             }
         }
@@ -325,6 +403,7 @@ impl RoomService {
     }
 
     pub async fn update(&self, id: RoomId, user: UserId, req: UpdateRoom) -> AppResult<RoomRecord> {
+        let invites = Self::check_invites(req.invited_emails.as_ref())?;
         let title = match req.title {
             Some(t) => {
                 let t = t.trim().to_owned();
@@ -390,11 +469,12 @@ impl RoomService {
                 scheduled_at: req.scheduled_at,
                 source_language: req.source_language,
                 target_languages,
-                requires_approval: req.requires_approval,
+                settings: req.settings,
                 now: self.clock.now(),
             })
             .await?;
         self.publish(&m, false).await?;
+        self.apply_invites(&m.room, user, invites, true).await?;
         Ok(m.room)
     }
 
@@ -517,6 +597,7 @@ impl RoomService {
     /// Find-or-create the open bridge room for a meeting; the caller becomes capturer when the
     /// room is new or has none.
     pub async fn claim_bridge(&self, user: UserId, req: ClaimBridge) -> AppResult<ClaimOutcome> {
+        let invites = Self::check_invites(req.invited_emails.as_ref())?;
         let provider = BridgeProvider::parse(req.provider.trim()).ok_or_else(|| {
             validation(
                 "INVALID_PROVIDER",
@@ -606,6 +687,10 @@ impl RoomService {
                 target_languages: targets.clone(),
                 display_name: req.display_name.clone(),
                 listen_language: req.listen_language.clone(),
+                settings: req.settings.apply(RoomSettings {
+                    requires_approval: false,
+                    ..RoomSettings::default()
+                }),
                 now: self.clock.now(),
             };
             match self.repo.claim_bridge(new, self.bridge).await {
@@ -615,6 +700,10 @@ impl RoomService {
                         && let Err(e) = self.events.publish_routes(out.room.id, &s).await
                     {
                         tracing::warn!(room = %out.room.id, error = %e, "route publication failed");
+                    }
+                    if out.room.effective_host() == user {
+                        self.apply_invites(&out.room, user, invites.clone(), false)
+                            .await?;
                     }
                     return Ok(out);
                 }

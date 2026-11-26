@@ -25,8 +25,8 @@ use crate::application::ports::{
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
     ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction,
-    RoomStatus, RoomType, RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes,
-    room_languages,
+    RoomSettings, RoomStatus, RoomType, RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID,
+    plan_routes, room_languages,
 };
 
 /// Name of the partial unique index "one open bridge room per workspace + provider + meeting".
@@ -146,11 +146,7 @@ impl RoomRow {
             status,
             source_language: self.source_language,
             target_languages: targets,
-            requires_approval: self
-                .settings
-                .get("requires_approval")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
+            settings: RoomSettings::from_json(&self.settings),
             scheduled_at: self.scheduled_at,
             started_at: self.started_at,
             ended_at: self.ended_at,
@@ -703,7 +699,8 @@ async fn ensure_bridge_listener(
 impl RoomRepo for PgRoomRepo {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-        let settings = serde_json::json!({ "requires_approval": new.requires_approval });
+        let settings =
+            serde_json::to_value(new.settings).map_err(|e| AppError::internal(e.to_string()))?;
         sqlx::query(
             "INSERT INTO translation_room.translation_rooms \
              (id, workspace_id, host_id, title, translation_room_code, status, source_language, \
@@ -745,6 +742,57 @@ impl RoomRepo for PgRoomRepo {
             .ok_or_else(|| AppError::internal("room vanished after insert"))?;
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(rec)
+    }
+
+    async fn invitations(&self, room: RoomId) -> AppResult<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT email FROM translation_room.translation_room_invitations \
+             WHERE translation_room_id = $1 AND status = 'PENDING' ORDER BY created_at, email",
+        )
+        .bind(room.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)
+    }
+
+    async fn set_invitations(
+        &self,
+        room: RoomId,
+        emails: &[String],
+        replace: bool,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<String>> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        if replace {
+            sqlx::query(
+                "DELETE FROM translation_room.translation_room_invitations \
+                 WHERE translation_room_id = $1 AND status = 'PENDING' AND NOT (email = ANY($2))",
+            )
+            .bind(room.as_uuid())
+            .bind(emails)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+        let mut added = Vec::new();
+        for email in emails {
+            let row: Option<String> = sqlx::query_scalar(
+                "INSERT INTO translation_room.translation_room_invitations \
+                 (id, translation_room_id, email, status, created_at, updated_at) \
+                 VALUES ($1, $2, $3, 'PENDING', $4, $4) \
+                 ON CONFLICT (translation_room_id, email) DO NOTHING RETURNING email",
+            )
+            .bind(Uuid::now_v7())
+            .bind(room.as_uuid())
+            .bind(email)
+            .bind(now)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+            added.extend(row);
+        }
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(added)
     }
 
     async fn list(
@@ -978,7 +1026,7 @@ impl RoomRepo for PgRoomRepo {
         let new_status = domain::join_status(
             existing.as_ref().map(|p| p.status),
             is_host,
-            rec.requires_approval,
+            rec.settings.requires_approval,
         )
         .map_err(domain_error)?;
         let now = input.now;
@@ -1282,7 +1330,7 @@ impl RoomRepo for PgRoomRepo {
         sqlx::query(
             "UPDATE translation_room.translation_rooms SET title = $2, description = $3, \
              scheduled_at = $4, source_language = $5, target_languages = $6, \
-             settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object('requires_approval', $7::bool), \
+             settings = COALESCE(settings, '{}'::jsonb) || $7::jsonb, \
              status = $8, updated_at = $9, updated_by = $10 \
              WHERE id = $1",
         )
@@ -1292,7 +1340,10 @@ impl RoomRepo for PgRoomRepo {
         .bind(scheduled_at)
         .bind(&source)
         .bind(serde_json::json!(targets))
-        .bind(input.requires_approval.unwrap_or(rec.requires_approval))
+        .bind(
+            serde_json::to_value(input.settings.apply(rec.settings))
+                .map_err(|e| AppError::internal(e.to_string()))?,
+        )
         .bind(status.as_str())
         .bind(input.now)
         .bind(input.caller.user.as_uuid())
@@ -1448,7 +1499,7 @@ impl RoomRepo for PgRoomRepo {
         .bind(ROOM_TYPE_EXTERNAL_BRIDGE)
         .bind(&new.source_language)
         .bind(serde_json::json!(new.target_languages))
-        .bind(serde_json::json!({ "requires_approval": false }))
+        .bind(serde_json::to_value(new.settings).map_err(|e| AppError::internal(e.to_string()))?)
         .bind(new.now)
         .bind(new.provider.as_str())
         .bind(&new.meeting_code)

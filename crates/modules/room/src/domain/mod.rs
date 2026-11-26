@@ -2,6 +2,7 @@
 
 mod bridge;
 mod routes;
+mod settings;
 mod status;
 
 pub use bridge::{
@@ -10,6 +11,7 @@ pub use bridge::{
     normalize_meeting_ref,
 };
 pub use routes::{ExistingRoute, LISTEN_ONLY, NewRoute, RoutePlan, RouteSpeaker, plan_routes};
+pub use settings::{MAX_INVITES, RoomSettings, RoomSettingsPatch, normalize_invite_emails};
 pub use status::{DomainError, RoomAction, RoomStatus, transition};
 
 use rand::Rng;

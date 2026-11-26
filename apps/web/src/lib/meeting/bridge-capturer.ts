@@ -110,6 +110,15 @@ export type BridgeClaimRequest = {
   targetLanguages?: string[];
   externalMeetingLanguage?: string;
   displayName?: string;
+  /** Room options, applied only when this claim creates the room. */
+  settings?: {
+    requiresApproval?: boolean;
+    participantsCanStartTranslation?: boolean;
+    saveTranscript?: boolean;
+    autoShareRecord?: boolean;
+  };
+  /** People to invite; stored only when the caller ends up hosting the room. */
+  invitedEmails?: string[];
   /**
    * Text-only bridge (backend #509): "voice" | "text". Omitted keeps this participant's current
    * mode (voice on a first claim) — see claimAudioModeFor in bridge-audio-mode for when it is sent.

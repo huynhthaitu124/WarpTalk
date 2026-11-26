@@ -164,7 +164,7 @@ export function OptionsMenu({
         align="start"
         className="w-[262px] rounded-xl border-border/50 bg-surface-1 p-1.5 shadow-xl"
       >
-        {!hasScheduledAt && (
+        {!hasScheduledAt && onAddScheduledAt && (
           <button
             type="button"
             onClick={onAddScheduledAt}
