@@ -27,7 +27,7 @@ use warptalk_pipeline_runtime::{
     CommitRequest, SessionParams, SpeechToText, SttError, SttEvent, SttMode, SttSegment, SttSession,
 };
 
-use crate::config::OpenAiSttConfig;
+use crate::config::{OpenAiSttConfig, base_language};
 use crate::pool::{WarmPool, WsStream};
 use crate::protocol::{
     ClientEvent, REALTIME_SAMPLE_RATE, ServerEvent, SessionConfig, TranscriptionConfig,
@@ -70,7 +70,13 @@ impl OpenAiRealtimeStt {
     /// Like [`Self::session_config`] with extra hints: more expected languages (plural-hint
     /// models only; single-hint models get the primary) and a vocabulary prompt.
     pub fn session_config_with(&self, lang: Option<&str>, hints: &SessionHints) -> SessionConfig {
-        let lang = lang.or(self.cfg.language_hint.as_deref());
+        // The realtime API takes ISO-639-1 codes only ("en", not "en-US"): a region tag is
+        // rejected with `invalid_value` and the session then transcribes nothing.
+        let lang = lang
+            .or(self.cfg.language_hint.as_deref())
+            .map(base_language);
+        let lang = lang.as_deref();
+        let extras: Vec<String> = hints.languages.iter().map(|l| base_language(l)).collect();
         let mut t = TranscriptionConfig {
             model: self.cfg.model.clone(),
             prompt: hints.prompt.clone().filter(|p| !p.trim().is_empty()),
@@ -81,7 +87,7 @@ impl OpenAiRealtimeStt {
                 // Declared language first; English stays expected so embedded English product
                 // terms are not forced into a phonetic rendering (upstream finding).
                 t.languages.push(l.to_string());
-                for extra in &hints.languages {
+                for extra in &extras {
                     if extra != l && !t.languages.contains(extra) {
                         t.languages.push(extra.clone());
                     }
@@ -92,8 +98,12 @@ impl OpenAiRealtimeStt {
             } else {
                 t.language = Some(l.to_string());
             }
-        } else if self.cfg.uses_plural_languages() && !hints.languages.is_empty() {
-            t.languages = hints.languages.clone();
+        } else if self.cfg.uses_plural_languages() && !extras.is_empty() {
+            for extra in extras {
+                if !t.languages.contains(&extra) {
+                    t.languages.push(extra);
+                }
+            }
         }
         SessionConfig::transcription(t, self.cfg.wants_logprobs())
     }

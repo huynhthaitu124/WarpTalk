@@ -141,21 +141,7 @@ impl MeetingService {
                 self.repo.activate(m.id, now).await?;
                 m
             }
-            None => {
-                // CreateRoom is idempotent on the LiveKit side; do it before the row exists so a
-                // failure leaves nothing behind and the next join retries.
-                self.room_service
-                    .create_room(&room_name, EMPTY_TIMEOUT_SECS, "")
-                    .await
-                    .map_err(lk_err)?;
-                self.repo
-                    .insert_room(room, &room_name, info.host_id, now)
-                    .await?;
-                self.repo
-                    .find_current(room)
-                    .await?
-                    .ok_or_else(|| AppError::internal("meeting room vanished after insert"))?
-            }
+            None => self.create_meeting(room, info.host_id, now).await?,
         };
         if is_host && meeting.active_host_id.is_none() {
             self.repo.claim_host(meeting.id, user, now).await?;
@@ -244,11 +230,15 @@ impl MeetingService {
                 "only the current capturer can publish the external meeting audio",
             ));
         }
-        let meeting = self
-            .repo
-            .find_current(room)
-            .await?
-            .ok_or_else(|| AppError::not_found("meeting has not started"))?;
+        // The capturer may ask for its seat before anyone has joined the call (the copilot starts
+        // capture and captions at the same time), so open the meeting here as `join` would.
+        let meeting = match self.repo.find_current(room).await? {
+            Some(m) => m,
+            None => {
+                self.create_meeting(room, info.host_id, self.clock.now())
+                    .await?
+            }
+        };
         if meeting.status == STATUS_FINISHED {
             return Err(AppError::conflict(
                 "INVALID_STATE",
@@ -275,6 +265,28 @@ impl MeetingService {
             token,
             participant_identity: BRIDGE_IDENTITY.to_owned(),
         })
+    }
+
+    /// Creates the LiveKit room and the current meeting row for `room`. CreateRoom is idempotent
+    /// on the LiveKit side; it runs before the row exists so a failure leaves nothing behind.
+    async fn create_meeting(
+        &self,
+        room: RoomId,
+        host_id: UserId,
+        now: DateTime<Utc>,
+    ) -> AppResult<MeetingRoom> {
+        let room_name = room.to_string();
+        self.room_service
+            .create_room(&room_name, EMPTY_TIMEOUT_SECS, "")
+            .await
+            .map_err(lk_err)?;
+        self.repo
+            .insert_room(room, &room_name, host_id, now)
+            .await?;
+        self.repo
+            .find_current(room)
+            .await?
+            .ok_or_else(|| AppError::internal("meeting room vanished after insert"))
     }
 
     // ------------------------------------------------------------ chat (spec: 11 §5.4)

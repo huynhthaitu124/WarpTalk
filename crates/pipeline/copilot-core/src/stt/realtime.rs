@@ -60,7 +60,9 @@ impl EphemeralRealtimeStt {
             model: model.to_string(),
             ..TranscriptionConfig::default()
         };
-        if let Some(l) = lang.filter(|l| *l != "auto") {
+        // ISO-639-1 only: the realtime API rejects region tags like "en-US".
+        let lang = lang.map(warptalk_stt::base_language);
+        if let Some(l) = lang.as_deref().filter(|l| *l != "auto") {
             if next_gen {
                 t.languages.push(l.to_string());
                 if l != "en" {

@@ -533,7 +533,21 @@ export function ExternalPage() {
 
   // Copilot mode (opened from "Create meeting"): the overlay pill is the whole UI; this page renders nothing and only
   // keeps the capture, captions and state relay alive.
-  if (copilot && native && current) return <>{captionsNode}</>;
+  if (copilot && native && current) {
+    return (
+      <>
+        {captionsNode}
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center" data-testid="copilot-host">
+          <p className="text-body font-medium text-ink">Copilot is running in the floating pill.</p>
+          <p className="max-w-sm text-body-sm text-ink-subtle">Keep this window open while the meeting runs: it carries the capture and the captions.</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={openCopilot}>Show copilot</Button>
+            <Button variant="ghost" onClick={() => void endSession().finally(() => window.location.assign('/'))}>End and go back</Button>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>

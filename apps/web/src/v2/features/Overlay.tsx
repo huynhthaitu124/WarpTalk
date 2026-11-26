@@ -528,11 +528,27 @@ function TabButton({ active, onClick, label, dot, testId, children }: { active: 
   );
 }
 
-const QUICK_ASKS = ['Tóm tắt cuộc họp đến giờ', 'Đã chốt những gì?', 'Còn câu hỏi nào chưa được trả lời?'];
+/** WarpBot strings follow the app locale (the legacy UI's WARPTALK_LOCALE cookie, else the browser). */
+const BOT_TEXT = {
+  en: { quick: ['Summarize the meeting so far', 'What has been decided?', 'Any open questions left?'], title: 'Ask WarpBot about this meeting', hint: 'WarpBot reads the transcript and workspace documents.', thinking: 'Thinking…', cut: '(answer was cut off)', placeholder: 'Ask WarpBot…' },
+  vi: { quick: ['Tóm tắt cuộc họp đến giờ', 'Đã chốt những gì?', 'Còn câu hỏi nào chưa được trả lời?'], title: 'Hỏi WarpBot về cuộc họp này', hint: 'WarpBot đọc transcript và tài liệu workspace.', thinking: 'Đang suy nghĩ…', cut: '{t.cut}', placeholder: 'Hỏi WarpBot…' },
+  ja: { quick: ['ここまでの会議を要約', '何が決まりましたか？', '未解決の質問はありますか？'], title: 'この会議について WarpBot に質問', hint: 'WarpBot は文字起こしとワークスペースの資料を参照します。', thinking: '考え中…', cut: '（回答が途中で終了しました）', placeholder: 'WarpBot に質問…' },
+} as const;
+type BotLocale = keyof typeof BOT_TEXT;
+function botLocale(): BotLocale {
+  const isBot = (v: string | undefined): v is BotLocale => !!v && v in BOT_TEXT;
+  try {
+    const c = document.cookie.split('; ').find((p) => p.startsWith('WARPTALK_LOCALE='))?.split('=')[1];
+    if (isBot(c)) return c;
+  } catch { /* no cookie access */ }
+  const nav = navigator.language?.slice(0, 2);
+  return isBot(nav) ? nav : 'en';
+}
 
 /** WarpBot chat for this meeting. The main page runs the conversation; this only renders it and sends questions. */
 function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }) {
   const [text, setText] = useState('');
+  const [t] = useState(() => BOT_TEXT[botLocale()]);
   const ref = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const last = ask.messages[ask.messages.length - 1];
@@ -558,10 +574,10 @@ function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }
           <div className="grid h-full place-items-center text-center">
             <div>
               <Sparkle size={26} weight="fill" className="mx-auto mb-2 text-primary" />
-              <p className="text-[13px] font-medium">Hỏi WarpBot về cuộc họp này</p>
-              <p className="mt-0.5 text-[11.5px] text-ink-muted">WarpBot đọc transcript và tài liệu workspace.</p>
+              <p className="text-[13px] font-medium">{t.title}</p>
+              <p className="mt-0.5 text-[11.5px] text-ink-muted">{t.hint}</p>
               <div className="mt-3 flex flex-wrap justify-center gap-1.5">
-                {QUICK_ASKS.map((q) => (
+                {t.quick.map((q) => (
                   <button key={q} type="button" onClick={() => onAsk(q)}
                     className="rounded-full bg-white/5 px-2.5 py-1 text-[11.5px] text-ink-muted ring-1 ring-white/10 hover:bg-white/10 hover:text-ink">{q}</button>
                 ))}
@@ -570,22 +586,22 @@ function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }
           </div>
         ) : ask.messages.map((m) => (m.role === 'user' ? (
           <div key={m.key} className="flex justify-end">
-            <p className="line-clamp-4 max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3 py-1.5 text-[12.5px] text-white">{m.content}</p>
+            <p className="line-clamp-4 max-w-[85%] whitespace-pre-wrap break-words text-right text-[12.5px] text-ink-muted">{m.content}</p>
           </div>
         ) : (
           <div key={m.key} className="flex gap-2" data-testid="warpbot-answer" data-status={m.status ?? 'done'}>
             <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/20 text-primary"><Sparkle size={12} weight="fill" /></span>
-            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm border border-border bg-surface-2/60 px-3 py-2 text-[12.5px] leading-relaxed">
-              {m.content ? <Markdown text={m.content} className="space-y-1.5" /> : m.status === 'streaming' ? <span className="wt-shimmer">Đang suy nghĩ…</span> : null}
+            <div className="min-w-0 flex-1 text-[13px] font-medium leading-relaxed text-white">
+              {m.content ? <Markdown text={m.content} className="space-y-1.5" /> : m.status === 'streaming' ? <span className="wt-shimmer">{t.thinking}</span> : null}
               {m.incomplete && <p className="mt-1 text-[11px] text-ink-subtle">(câu trả lời bị ngắt)</p>}
               {m.error && <p className="mt-1 text-[11.5px] text-danger-text">{m.error}</p>}
             </div>
           </div>
         )))}
       </div>
-      <form className="flex shrink-0 items-end gap-1.5 border-t border-border px-3 py-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <form className="flex shrink-0 items-end gap-1.5 px-3 py-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} maxLength={1000} aria-label="Ask WarpBot" data-testid="warpbot-input"
-          placeholder="Hỏi WarpBot…"
+          placeholder={t.placeholder}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
           className="max-h-24 min-h-[30px] min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent" />
         {ask.busy ? (
