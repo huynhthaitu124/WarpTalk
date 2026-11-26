@@ -2,7 +2,7 @@
 .env
 .env.*
 node_modules/
-bin/
+/bin/
 obj/
 .vscode/
 .idea/
@@ -14,3 +14,7 @@ dump.rdb
 .logs/
 !.env.example
 .data/
+
+# CopilotCore build outputs (make core)
+apps/macos/CopilotCore/CopilotCore.xcframework/
+apps/macos/CopilotCore/Sources/CopilotCore/CopilotCore.swift

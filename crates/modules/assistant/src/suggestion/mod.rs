@@ -8,6 +8,7 @@
 pub mod config;
 pub mod config_source;
 pub mod engine;
+pub mod feedback_http;
 pub mod hygiene;
 pub mod model;
 pub mod ports;
@@ -16,6 +17,7 @@ pub mod redis_ports;
 pub mod scripted;
 pub mod slot;
 pub mod stage0;
+pub mod store;
 pub mod window;
 pub mod worker;
 
@@ -23,15 +25,16 @@ pub use config::{SuggestionConfig, register as register_config};
 pub use config_source::{ConfigSource, SettingsConfigSource, StaticConfig};
 pub use engine::{EngineDeps, SuggestionEngine};
 pub use model::{
-    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, SUGGESTION_GROUP,
-    SuggestionResult,
+    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, Role,
+    SUGGESTION_GROUP, SuggestionResult,
 };
 pub use ports::{
-    AllowAllConsent, ConsentPolicy, DataBoundary, GroundedSnippet, KnowledgeQuery,
+    AllowAllConsent, ConsentPolicy, DataBoundary, GroundedSnippet, KeySource, KnowledgeQuery,
     KnowledgeRetriever, LlmResolver, NoSignals, NoopRetriever, Purpose, ResolveError, ResolvedLlm,
     RoomDirectory, RoomInfo, RoomSignals,
 };
 pub use redis_ports::{RedisConsentPolicy, RedisRoomSignals};
 pub use scripted::ScriptedResolver;
 pub use slot::SuggestionState;
+pub use store::{PgSuggestionStore, SuggestionRecord, SuggestionStore};
 pub use worker::SuggestionWorker;

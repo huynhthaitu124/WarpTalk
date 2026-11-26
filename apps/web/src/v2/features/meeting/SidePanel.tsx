@@ -9,6 +9,9 @@ import type { Participant } from '@v2/lib/schemas';
 import { CaptionList, type TimedCaptionLine } from '../MeetingParts';
 import type { ChatMessage } from './protocol';
 import { SuggestionsTab, type SuggestionsView } from './Suggestions';
+import { AskPanel } from './AskPanel';
+import { ASK } from '@v2/lib/strings';
+import type { Citation } from '@v2/lib/ask';
 
 const TAB =
   'relative inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap pb-2 text-[13px] font-medium text-ink-subtle transition-colors hover:text-ink focus-ring ' +
@@ -22,7 +25,7 @@ function Count({ children, tone, testid }: { children: React.ReactNode; tone?: '
   );
 }
 
-export type PanelTab = 'transcript' | 'people' | 'chat' | 'suggestions';
+export type PanelTab = 'transcript' | 'people' | 'chat' | 'suggestions' | 'ask';
 
 export interface PersonRow {
   p: Participant;
@@ -204,7 +207,7 @@ function ChatTab({ chat }: { chat: ChatView }) {
 }
 
 export function SidePanel({
-  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, suggestions, className, roomCode, onInvite, onCollapse,
+  tab, onTab, lines, translationLang, transcriptPlaceholder, rows, canModerate, onAdmit, onDeny, onAdmitAll, moderating, chat, unread, suggestions, askRoomId, onCitation, className, roomCode, onInvite, onCollapse,
 }: {
   tab: PanelTab;
   onTab(t: PanelTab): void;
@@ -221,6 +224,10 @@ export function SidePanel({
   unread: number;
   /** Undefined when the backend has no suggestions endpoint: the tab is not shown. */
   suggestions?: SuggestionsView;
+  /** Room whose assistant the "Ask AI" tab talks to; the tab is hidden without it. */
+  askRoomId?: string;
+  /** A transcript citation was clicked in the Ask AI tab. */
+  onCitation?(c: Citation): void;
   className?: string;
   /** Shown in the People tab's Room Code card. */
   roomCode?: string;
@@ -238,6 +245,7 @@ export function SidePanel({
           <RT.Trigger value="chat" className={TAB}>Chat{unread > 0 && <Count tone="primary" testid="chat-unread">{unread}<span className="sr-only"> unread</span></Count>}</RT.Trigger>
           <RT.Trigger value="people" className={TAB}>People<Count>{inRoom}<span className="sr-only"> in the meeting</span></Count>{lobby > 0 && <Count tone="warn" testid="lobby-badge">{lobby}<span className="sr-only"> waiting</span></Count>}</RT.Trigger>
           {suggestions && <RT.Trigger value="suggestions" className={TAB}>Suggestions{suggestions.items.length > 0 && <Count tone="primary" testid="suggestions-badge">{suggestions.items.length}<span className="sr-only"> new</span></Count>}</RT.Trigger>}
+          {askRoomId && <RT.Trigger value="ask" className={TAB}>{ASK.title}</RT.Trigger>}
         </RT.List>
         {onCollapse && (
           <button type="button" aria-label="Collapse side panel" title="Collapse side panel" onClick={onCollapse} className="mt-2 flex size-7 shrink-0 items-center justify-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-ink focus-ring">
@@ -257,6 +265,11 @@ export function SidePanel({
       {suggestions && (
         <TabsContent value="suggestions" className="mt-0 min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
           <SuggestionsTab view={suggestions} />
+        </TabsContent>
+      )}
+      {askRoomId && (
+        <TabsContent value="ask" className="mt-0 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
+          <AskPanel roomId={askRoomId} onCitation={onCitation} className="min-h-0 flex-1" />
         </TabsContent>
       )}
     </RT.Root>

@@ -76,6 +76,16 @@ pub struct IndexRequest {
     pub revision: Option<String>,
     #[serde(default)]
     pub timestamp_ms: i64,
+    /// pdf/docx: the producer sent no text; the indexer reads `object_key` through its
+    /// `DocumentSource` and runs the text extractors.
+    #[serde(default)]
+    pub needs_extraction: bool,
+    #[serde(default)]
+    pub object_key: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
 }
 
 fn new_job_id() -> String {
@@ -128,6 +138,10 @@ impl IndexRequest {
             timestamp_ms: get("timestamp_ms")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0),
+            needs_extraction: flag(fields.get("needs_extraction"), false),
+            object_key: get("object_key").filter(|s| !s.is_empty()),
+            mime_type: get("mime_type").filter(|s| !s.is_empty()),
+            file_name: get("file_name").filter(|s| !s.is_empty()),
         })
     }
 }

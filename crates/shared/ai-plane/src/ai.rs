@@ -18,7 +18,7 @@ use futures::stream::BoxStream;
 use tokio::task::JoinHandle;
 use warptalk_assistant::domain::byo::LlmPurpose;
 use warptalk_assistant::suggestion::{
-    DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm,
+    DataBoundary, KeySource, LlmResolver, Purpose, ResolveError, ResolvedLlm,
 };
 use warptalk_kernel::WorkspaceId;
 use warptalk_llm::{
@@ -210,6 +210,7 @@ impl AiProviders {
             model: Some(choice.model).filter(|m| !m.trim().is_empty()),
             // Platform keys reach third-party endpoints.
             boundary: DataBoundary::External,
+            key_source: KeySource::Platform,
         })
     }
 
@@ -222,10 +223,34 @@ impl AiProviders {
         workspace: WorkspaceId,
         purpose: LlmPurpose,
     ) -> Result<ResolvedLlm, ResolveError> {
+        self.llm_for_chain(workspace, &[purpose]).await
+    }
+
+    /// Like [`Self::llm_for_purpose`] over several purposes: the first one with a workspace
+    /// override decides (own provider, or an error / platform fallback per its policy); none
+    /// means the platform default.
+    async fn llm_for_chain(
+        &self,
+        workspace: WorkspaceId,
+        chain: &[LlmPurpose],
+    ) -> Result<ResolvedLlm, ResolveError> {
         let Some(byo) = &self.byo else {
             return self.platform_llm().await;
         };
-        match byo.resolve(workspace, purpose).await? {
+        let mut found = None;
+        for purpose in chain {
+            match byo.resolve(workspace, *purpose).await? {
+                Outcome::NoOverride => continue,
+                other => {
+                    found = Some((*purpose, other));
+                    break;
+                }
+            }
+        }
+        let Some((purpose, outcome)) = found else {
+            return self.platform_llm().await;
+        };
+        match outcome {
             Outcome::NoOverride => self.platform_llm().await,
             Outcome::Byo(r) => Ok(r),
             Outcome::Unavailable { reason, fallback } => {
@@ -248,7 +273,8 @@ impl AiProviders {
         workspace: WorkspaceId,
         purpose: Purpose,
     ) -> Result<ResolvedLlm, ResolveError> {
-        self.llm_for_purpose(workspace, purpose.into()).await
+        self.llm_for_chain(workspace, &LlmPurpose::resolution_chain(purpose))
+            .await
     }
 
     /// Provider name recorded in the knowledge embedding profile.

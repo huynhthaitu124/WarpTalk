@@ -54,6 +54,14 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - [ ] macOS app: build thật trên Mac + sửa VERIFY; pipeline `livekit-rtc` build thật (cần clang ≥ 21)
 - [ ] Còn thiếu backend: documents upload, voice profile/consent, billing, notification, WarpBot chat, forgot-password, calendar
 
+## P0 copilot (ADR 0001) — xong 2026-11-24
+
+- Rust 737 pass / 0 fail, clippy -D warnings sạch; Playwright 339 pass / 0 fail / 12 skip.
+- Backend: feature flags (`GET /features`), phiên copilot (`COPILOT_SESSION`), `POST .../segments` → `stt:results`, `POST .../stt-token` (ephemeral, UNVERIFIED endpoint OpenAI), tóm tắt/biên bản/action item sau phiên.
+- `copilot-core`: engine 2 kênh (Tôi/Người khác), STT ephemeral token, echo guard, sink HTTP có buffer offline, facade sẵn UniFFI, `copilot-cli`.
+- Web: dịch họp ẩn mặc định; trang Sessions/Session detail/Action items; compose mặc định không LiveKit.
+- P1 tiếp theo: UniFFI binding + màn Phiên copilot + overlay trên macOS; quyết định: tóm tắt có tôn trọng `externalLlmAllowed` không.
+
 ## Trạng thái cuối 2026-11-22
 
 - Rust: 677 test pass toàn workspace, clippy -D warnings sạch.
@@ -84,3 +92,36 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - Outbox chưa có lease khi claim (consumer phải idempotent)
 - Voice consent đang là Noop
 - WarpBot plugin chưa làm (catalog/install/connect OAuth+API key, MCP client, tool policy, requests/approvals, marketplace, audits, insights); endpoint trả 404, UI plugin phải ẩn. Đính kèm chat tắt.
+
+## Thương mại hoá — 2026-11-24
+
+- Rust 815 pass / 0 fail, clippy -D warnings sạch; Playwright 400 pass / 0 fail / 12 skip.
+- P1 web: chế độ phiên copilot live qua native bridge (start dialog, partial, overlay, resume).
+- Auth: email Resend (UNVERIFIED với API thật) + template vi/en, quên/đặt lại/đổi mật khẩu, gửi lại xác minh, đăng nhập/liên kết Google (ID token, JWKS cache). UI web đầy đủ.
+- Billing: Stripe checkout/portal/webhook (chữ ký, idempotent), gói + ví credit + rate card, metering `usage:events` (copilot STT, suggestion, summary; BYO cost 0), stt-token 402 `INSUFFICIENT_CREDITS`. Trang Billing + banner trạng thái trên web.
+- Deploy: `deploy/docker/Dockerfile.{rust,web}`, `docker-compose.prod.yml` + Caddy TLS, `.github/workflows/{ci,docker,macos}.yml`, `docs/DEPLOY.md`. Chưa build image thật (không có Docker daemon).
+- Còn mở: entitlement (số phiên đồng thời, phút/tháng) chưa enforce; boundary BYO cần cờ trên `ResolvedLlm`; email theo ngôn ngữ user; rate limit theo IP; native bridge `googleSignIn`/`openExternal`; UI copy tiếng Anh (chưa i18n); `usage:events` contract nên chuyển vào `shared/contracts`.
+
+## Lõi AI — 2026-11-24
+
+- Rust 835 pass / 0 fail (trừ ai-eval: 13 pass riêng), clippy -D warnings sạch.
+- Suggestion theo vai người nói (`SttResult.channel` me/others → Role), category `answer` (chỉ `other`, bỏ cooldown, giữ dedupe), heuristic câu hỏi vi/en, few-shot tiếng Việt.
+- Knowledge: trích PDF (theo trang)/DOCX (heading, bảng)/HTML trong worker; scanned → OCR (chưa có engine → skipped).
+- `apps/ai-eval`: 6 meeting tổng hợp (4 vi, 2 en), metric suggestion/summary, judge tuỳ chọn, baseline fake + `--compare`. Chưa chạy với model thật.
+- Còn: hỏi AI trong họp + tóm tắt cuốn chiếu (WarpBot), STT dự phòng phía server, trí nhớ giữa các cuộc họp, OCR, reindex hàng loạt.
+
+## Lõi AI vòng 2 — 2026-11-25 (dừng giữa chừng theo yêu cầu)
+
+Đã xong (mỗi agent tự chạy clippy + test crate của mình):
+- Summary biết người nói (tên host, `assigneeUserId`, `GET /me/action-items`), trí nhớ giữa các cuộc họp (`memory`, `GET /meetings/{id}/prior-context`).
+- Prompt safety (`assistant::safety`: fence nonce, sanitize, check_output) cho suggestion/summary/chat; feedback gợi ý + quality + export sang ai-eval; cờ BYO `key_source`.
+- WarpBot: `POST /meetings/{id}/ask`, `/recap` (SSE + citations), history, rate limit, metering.
+- STT dự phòng phía server (WS `/copilot/sessions/{id}/audio` + ticket), auto fallback trong copilot-core, chế độ ngôn ngữ fixed/auto/multi + vocabulary.
+- OCR (tesseract/openai), tài liệu ảnh, `skipReason`, reindex đơn lẻ/hàng loạt.
+- ai-eval: bench độ trễ copilot, dataset tấn công injection, `scripts/real-provider-check.sh`.
+
+Đang dở (commit cuối là WIP; `cargo check --workspace --all-targets` và `tsc` qua, CHƯA chạy clippy/test toàn bộ):
+- Agent dọn dẹp: sửa test `assistant/tests/suggestion.rs` bị treo, cô lập test summary, thay đọc cross-schema trong summary bằng port, fence cho fact extraction (knowledge), cập nhật fake provider ai-eval theo prompt fence mới, chat giữ dòng mới nhất + `Purpose::Chat`, giới hạn WS audio qua Redis, cấu hình số pipeline worker.
+- Web: panel Hỏi AI, nút feedback gợi ý, trang Việc của tôi, trang chất lượng, reindex/skipReason, badge Server STT.
+
+Việc đầu tiên khi quay lại: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (DATABASE_URL/REDIS_URL), `cd apps/web && npm run lint && npx playwright test --trace off`; xem `git diff HEAD~1` để biết phần dở. Sau đó owner chạy `scripts/real-provider-check.sh` với key thật.

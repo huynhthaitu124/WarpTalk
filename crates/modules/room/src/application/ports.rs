@@ -264,6 +264,22 @@ pub struct NewRoom {
     pub now: DateTime<Utc>,
 }
 
+/// A copilot session room (type `COPILOT_SESSION`): created `IN_PROGRESS` with the host as the
+/// only (connected) participant.
+pub struct NewCopilotRoom {
+    pub id: RoomId,
+    pub workspace_id: WorkspaceId,
+    pub host: UserId,
+    pub host_display_name: String,
+    pub title: String,
+    pub code: String,
+    /// Language of the host's own channel (stored as the room's source language).
+    pub source_language: String,
+    /// Language of the other side (stored as the single target language).
+    pub target_language: String,
+    pub now: DateTime<Utc>,
+}
+
 pub struct NewBridgeRoom {
     pub id: RoomId,
     pub workspace_id: WorkspaceId,
@@ -376,6 +392,9 @@ pub trait RoomRepo: Send + Sync {
         replace: bool,
         now: DateTime<Utc>,
     ) -> AppResult<Vec<String>>;
+    /// Insert an `IN_PROGRESS` copilot room and its host participant; returns the room and the
+    /// host's participant id. `Conflict DUPLICATE` when the room code is taken.
+    async fn create_copilot(&self, new: NewCopilotRoom) -> AppResult<(RoomRecord, ParticipantId)>;
     async fn list(
         &self,
         workspace: WorkspaceId,
@@ -383,6 +402,15 @@ pub trait RoomRepo: Send + Sync {
         page: &PageRequest,
     ) -> AppResult<Page<RoomRecord>>;
     async fn get(&self, id: RoomId) -> AppResult<Option<RoomRecord>>;
+    /// Recurring-meeting series of a room (`None` when standalone or unknown).
+    async fn series_of(&self, id: RoomId) -> AppResult<Option<uuid::Uuid>>;
+    /// Rooms of `workspace` the user hosts or took part in, plus the display names the user
+    /// used in the workspace's rooms (distinct).
+    async fn user_scope(
+        &self,
+        workspace: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<(Vec<RoomId>, Vec<String>)>;
     async fn find_by_code(&self, code: &str) -> AppResult<Option<RoomRecord>>;
     async fn has_participant(&self, room: RoomId, user: UserId) -> AppResult<bool>;
     async fn participants(&self, room: RoomId) -> AppResult<Vec<ParticipantRecord>>;

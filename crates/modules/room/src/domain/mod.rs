@@ -7,8 +7,8 @@ mod status;
 
 pub use bridge::{
     AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, InvalidMeetingRef,
-    ROOM_TYPE_EXTERNAL_BRIDGE, RoomType, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID,
-    normalize_meeting_ref,
+    ROOM_TYPE_COPILOT_SESSION, ROOM_TYPE_EXTERNAL_BRIDGE, RoomType, STAND_IN_DISPLAY_NAME,
+    STAND_IN_USER_ID, normalize_meeting_ref,
 };
 pub use routes::{ExistingRoute, LISTEN_ONLY, NewRoute, RoutePlan, RouteSpeaker, plan_routes};
 pub use settings::{MAX_INVITES, RoomSettings, RoomSettingsPatch, normalize_invite_emails};

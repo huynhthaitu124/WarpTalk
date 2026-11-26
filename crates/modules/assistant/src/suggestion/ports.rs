@@ -11,6 +11,11 @@ use warptalk_llm::LlmProvider;
 pub enum Purpose {
     SuggestionDecide,
     SuggestionGenerate,
+    /// Post-session summary / minutes / action items.
+    Summary,
+    /// WarpBot "ask the meeting" Q&A / recap. Resolves a workspace `assistant` override first and
+    /// falls back to the `summary` override (configs predating this purpose keep working).
+    Chat,
 }
 
 impl Purpose {
@@ -18,6 +23,8 @@ impl Purpose {
         match self {
             Self::SuggestionDecide => "suggestion_decide",
             Self::SuggestionGenerate => "suggestion_generate",
+            Self::Summary => "summary",
+            Self::Chat => "chat",
         }
     }
 }
@@ -31,12 +38,32 @@ pub enum DataBoundary {
     WorkspaceControlled,
 }
 
+/// Whose credential pays for the call. Independent of [`DataBoundary`] (a policy question): a
+/// customer key may point at a third-party endpoint (`External` + `Workspace`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeySource {
+    /// The platform's own key: metered and charged.
+    #[default]
+    Platform,
+    /// The workspace's own (BYO) key: metered at cost 0.
+    Workspace,
+}
+
+impl KeySource {
+    pub fn is_byo(self) -> bool {
+        self == Self::Workspace
+    }
+}
+
 #[derive(Clone)]
 pub struct ResolvedLlm {
     pub provider: Arc<dyn LlmProvider>,
     /// Model chosen by the resolver (BYO). `None` means use the model from `SuggestionConfig`.
     pub model: Option<String>,
+    /// Data-handling policy (consent gate). Not used for billing.
     pub boundary: DataBoundary,
+    /// Who owns the key; drives usage metering (`platform | byo`).
+    pub key_source: KeySource,
 }
 
 #[derive(Debug, thiserror::Error)]

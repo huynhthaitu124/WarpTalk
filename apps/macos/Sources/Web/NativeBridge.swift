@@ -11,19 +11,31 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
     weak var webView: WKWebView?
 
     private let capture: NativeCaptureController
+    private let copilot: CopilotSessionController
     private let overlay: OverlayController
     private let overlayModel: OverlayModel
     private let overlayWeb: OverlayWebController
     private let permissions: PermissionsManager
     private let settings: SettingsStore
 
-    init(capture: NativeCaptureController, overlay: OverlayController, overlayModel: OverlayModel,
+    init(capture: NativeCaptureController, copilot: CopilotSessionController, overlay: OverlayController, overlayModel: OverlayModel,
          overlayWeb: OverlayWebController, permissions: PermissionsManager, settings: SettingsStore) {
-        self.capture = capture; self.overlay = overlay; self.overlayModel = overlayModel; self.overlayWeb = overlayWeb
+        self.capture = capture; self.copilot = copilot; self.overlay = overlay; self.overlayModel = overlayModel; self.overlayWeb = overlayWeb
         self.permissions = permissions; self.settings = settings
         super.init()
         overlayWeb.onClosed = { [weak self] in self?.dispatch("overlay-command", ["command": "closed"]) }
         capture.emit = { [weak self] type, payload in self?.dispatch(type, payload) }
+        copilot.emit = { [weak self] type, payload in self?.dispatch(type, payload) }
+        // Copilot mode of the overlay follows the session; the web app drives suggestions (pushOverlaySuggestion).
+        copilot.onOverlayEvent = { [overlayModel] ev in overlayModel.applyCopilot(ev) }
+        copilot.onSessionActive = { [overlay, overlayModel, settings] active, req in
+            if active {
+                overlayModel.enterCopilotMode(meName: req?.meName, othersName: req?.othersName)
+                if settings.copilotAutoShowOverlay { overlay.show() }
+            } else {
+                overlayModel.exitCopilotMode()
+            }
+        }
         // Opt-in (`nativeOverlayCaptions`): the native listener's own `captions` packets drive the overlay.
         capture.onCaption = { [overlayModel] u in
             overlayModel.push(speaker: u.speaker, text: u.text, translation: u.translation, segmentId: u.segmentId, isFinal: u.isFinal)
@@ -80,8 +92,20 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             return capture.status()
         case "captureStatus": return capture.status()
         case "updateAuth":
-            capture.updateToken(try r.string("accessToken"))
+            let token = try r.string("accessToken")
+            capture.updateToken(token)
+            copilot.updateBearer(token)
             return ["updated": true]
+        case "startCopilotSession":
+            return try await copilot.startCopilotSession(try CopilotStartRequest.parse(r))
+        case "stopCopilotSession": return await copilot.stopCopilotSession()
+        case "copilotStatus": return copilot.copilotStatus()
+        case "pushOverlaySuggestion":
+            overlayModel.upsertSuggestion(try OverlaySuggestion.parse(r))
+            return NSNull()
+        case "clearOverlaySuggestion":
+            overlayModel.removeSuggestion(id: try r.string("id"))
+            return NSNull()
         case "showOverlay":
             guard let v = r.optBool("visible") else { throw BridgeError(code: "INVALID_ARGUMENT", message: "Thiếu 'visible' (bool).") }
             overlay.setVisible(v)
@@ -160,6 +184,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             "voiceMode": true,
             "overlay": true,
             "overlayWindow": true,
+            "copilot": CopilotEngines.isAvailable,   // false: built without `make core`, startCopilotSession fails ENGINE_UNAVAILABLE
+            "inputDevices": DeviceManager.inputDevices().map { ["uid": $0.uid, "name": $0.name] },
             "supportedApps": MeetingAppSpec.all.map { ["name": $0.name, "bundleIds": $0.bundleIDs] },
             "outputDevices": outs.map { ["uid": $0.uid, "name": $0.name, "isVirtual": DeviceManager.isVirtual($0)] },
             "blackHoleInstalled": outs.contains { $0.name.lowercased().contains("blackhole") },

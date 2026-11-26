@@ -39,6 +39,8 @@ impl ProfileService {
         let system_admin = self.repo.is_system_admin(id).await?;
         Ok(MeView {
             user_id: id,
+            has_password: auth.password_hash.is_some(),
+            google_linked: auth.google_id.is_some(),
             email: auth.email,
             profile,
             email_verified: auth.flags.email_verified,
@@ -114,6 +116,9 @@ pub struct MeView {
     pub profile: Profile,
     pub email_verified: bool,
     pub system_admin: bool,
+    /// A local password is set (needed to unlink Google, change password).
+    pub has_password: bool,
+    pub google_linked: bool,
 }
 
 #[derive(Debug, Clone)]

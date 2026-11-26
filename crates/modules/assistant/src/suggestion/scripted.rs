@@ -29,7 +29,7 @@ use warptalk_llm::{
     StreamEvent, Usage,
 };
 
-use super::ports::{DataBoundary, LlmResolver, Purpose, ResolveError, ResolvedLlm};
+use super::ports::{DataBoundary, KeySource, LlmResolver, Purpose, ResolveError, ResolvedLlm};
 
 const LATEST_MARK: &str = "<-- LATEST";
 
@@ -220,6 +220,7 @@ impl LlmResolver for ScriptedResolver {
             provider: self.provider.clone(),
             model: Some("test-script".into()),
             boundary: DataBoundary::WorkspaceControlled,
+            key_source: KeySource::Workspace,
         })
     }
 }

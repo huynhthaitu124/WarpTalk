@@ -34,5 +34,5 @@ futures = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true }
 warptalk-config = { workspace = true }
-

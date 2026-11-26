@@ -1,5 +1,5 @@
+import { test as raw } from '../fixtures';
 import type { Page } from '@playwright/test';
-import { test as raw } from '@playwright/test';
 import { call, createRoom, createWorkspace, expect, installNativeMock, login, ok, verifyEmail, rnd, seedSession } from '../fixtures';
 
 async function setTheme(page: Page, theme: 'dark' | 'light') {

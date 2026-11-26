@@ -18,15 +18,15 @@ use warptalk_kernel::{
 };
 
 use crate::application::ports::{
-    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewRoom,
+    Caller, ClaimOutcome, Heartbeat, JoinInput, Mutation, NewBridgeRoom, NewCopilotRoom, NewRoom,
     ParticipantRecord, RoomRecord, RoomRepo, UpdateLanguagesInput, UpdateRoomInput,
     VoiceConsentDirectory,
 };
 use crate::domain::{
     self, AudioMode, BridgeConfig, BridgeProvider, BridgeState, CapturerLease, DomainError,
-    ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction,
-    RoomSettings, RoomStatus, RoomType, RouteSpeaker, STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID,
-    plan_routes, room_languages,
+    ExistingRoute, LISTEN_ONLY, ParticipantStatus, ROOM_TYPE_COPILOT_SESSION,
+    ROOM_TYPE_EXTERNAL_BRIDGE, RoomAction, RoomSettings, RoomStatus, RoomType, RouteSpeaker,
+    STAND_IN_DISPLAY_NAME, STAND_IN_USER_ID, plan_routes, room_languages,
 };
 
 /// Name of the partial unique index "one open bridge room per workspace + provider + meeting".
@@ -795,6 +795,51 @@ impl RoomRepo for PgRoomRepo {
         Ok(added)
     }
 
+    async fn create_copilot(&self, new: NewCopilotRoom) -> AppResult<(RoomRecord, ParticipantId)> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query(
+            "INSERT INTO translation_room.translation_rooms \
+             (id, workspace_id, host_id, title, translation_room_code, status, translation_room_type, \
+              max_participants, source_language, target_languages, settings, started_at, created_at, \
+              created_by) \
+             VALUES ($1, $2, $3, $4, $5, 'IN_PROGRESS', $6, 1, $7, $8, $9, $10, $10, $3)",
+        )
+        .bind(new.id.as_uuid())
+        .bind(new.workspace_id.as_uuid())
+        .bind(new.host.as_uuid())
+        .bind(&new.title)
+        .bind(&new.code)
+        .bind(ROOM_TYPE_COPILOT_SESSION)
+        .bind(&new.source_language)
+        .bind(serde_json::json!([new.target_language]))
+        .bind(serde_json::json!({ "requires_approval": false }))
+        .bind(new.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let participant = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO translation_room.translation_room_participants \
+             (id, translation_room_id, user_id, display_name, role, listen_language, \
+              speak_language, status, joined_at, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, 'host', $5, $5, 'CONNECTED', $6, $6, $6)",
+        )
+        .bind(participant)
+        .bind(new.id.as_uuid())
+        .bind(new.host.as_uuid())
+        .bind(&new.host_display_name)
+        .bind(&new.source_language)
+        .bind(new.now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let rec = fetch_room(&mut tx, new.id)
+            .await?
+            .ok_or_else(|| AppError::internal("room vanished after insert"))?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((rec, ParticipantId::from(participant)))
+    }
+
     async fn list(
         &self,
         workspace: WorkspaceId,
@@ -834,6 +879,48 @@ impl RoomRepo for PgRoomRepo {
     async fn get(&self, id: RoomId) -> AppResult<Option<RoomRecord>> {
         let mut conn = self.pool.acquire().await.map_err(map_sqlx_error)?;
         fetch_room(&mut conn, id).await
+    }
+
+    async fn series_of(&self, id: RoomId) -> AppResult<Option<Uuid>> {
+        let v: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT series_id FROM translation_room.translation_rooms \
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(v.flatten())
+    }
+
+    async fn user_scope(
+        &self,
+        workspace: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<(Vec<RoomId>, Vec<String>)> {
+        let rooms: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT r.id FROM translation_room.translation_rooms r \
+             WHERE r.workspace_id = $1 AND r.deleted_at IS NULL AND ( \
+                   r.host_id = $2 OR r.active_host_id = $2 OR EXISTS ( \
+                       SELECT 1 FROM translation_room.translation_room_participants p \
+                       WHERE p.translation_room_id = r.id AND p.user_id = $2))",
+        )
+        .bind(workspace.as_uuid())
+        .bind(user.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT p.display_name FROM translation_room.translation_room_participants p \
+             JOIN translation_room.translation_rooms r ON r.id = p.translation_room_id \
+             WHERE r.workspace_id = $1 AND p.user_id = $2",
+        )
+        .bind(workspace.as_uuid())
+        .bind(user.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok((rooms.into_iter().map(RoomId::from_uuid).collect(), names))
     }
 
     async fn find_by_code(&self, code: &str) -> AppResult<Option<RoomRecord>> {

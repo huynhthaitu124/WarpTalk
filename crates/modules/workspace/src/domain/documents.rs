@@ -107,6 +107,10 @@ pub enum DocType {
     Txt,
     Md,
     Csv,
+    /// Images are OCR'd by the knowledge indexer (when an OCR engine is configured).
+    Png,
+    Jpg,
+    Webp,
 }
 
 impl DocType {
@@ -117,6 +121,9 @@ impl DocType {
             "txt" => Some(Self::Txt),
             "md" | "markdown" => Some(Self::Md),
             "csv" => Some(Self::Csv),
+            "png" => Some(Self::Png),
+            "jpg" | "jpeg" => Some(Self::Jpg),
+            "webp" => Some(Self::Webp),
             _ => None,
         }
     }
@@ -132,6 +139,9 @@ impl DocType {
             Self::Txt => "txt",
             Self::Md => "md",
             Self::Csv => "csv",
+            Self::Png => "png",
+            Self::Jpg => "jpg",
+            Self::Webp => "webp",
         }
     }
 
@@ -144,6 +154,9 @@ impl DocType {
             Self::Txt => "text/plain",
             Self::Md => "text/markdown",
             Self::Csv => "text/csv",
+            Self::Png => "image/png",
+            Self::Jpg => "image/jpeg",
+            Self::Webp => "image/webp",
         }
     }
 
@@ -164,6 +177,9 @@ impl DocType {
                 bytes.starts_with(b"PK\x03\x04") && bytes.windows(5).any(|w| w == b"word/")
             }
             Self::Txt | Self::Md | Self::Csv => decode_text(bytes).is_some(),
+            Self::Png => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            Self::Jpg => bytes.starts_with(b"\xFF\xD8\xFF"),
+            Self::Webp => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
         }
     }
 }
@@ -212,6 +228,39 @@ pub mod ingestion {
     pub const COMPLETED: &str = "completed";
     pub const SKIPPED: &str = "skipped";
     pub const FAILED: &str = "failed";
+}
+
+/// Which documents a bulk reindex picks up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReindexScope {
+    Skipped,
+    Failed,
+    /// Skipped, failed and completed (a full refresh). Documents already `pending` are never
+    /// touched.
+    All,
+}
+
+impl ReindexScope {
+    pub fn parse(s: &str) -> AppResult<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "skipped" => Ok(Self::Skipped),
+            "failed" => Ok(Self::Failed),
+            "all" => Ok(Self::All),
+            _ => Err(AppError::validation(
+                "INVALID_REINDEX_STATUS",
+                "status must be skipped, failed or all",
+            )),
+        }
+    }
+
+    /// `ingestion_status` values the scope covers.
+    pub fn statuses(self) -> &'static [&'static str] {
+        match self {
+            Self::Skipped => &[ingestion::SKIPPED],
+            Self::Failed => &[ingestion::FAILED],
+            Self::All => &[ingestion::SKIPPED, ingestion::FAILED, ingestion::COMPLETED],
+        }
+    }
 }
 
 /// Human readable size, e.g. `20 MB` (MSG47 text).

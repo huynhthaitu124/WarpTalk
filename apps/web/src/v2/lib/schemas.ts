@@ -25,6 +25,9 @@ export const profile = z.object({
   timezone: z.string().nullable().optional(),
   emailVerified: z.boolean().optional(),
   systemAdmin: z.boolean().optional(),
+  /** False for accounts created through Google (no local password yet). */
+  hasPassword: z.boolean().optional(),
+  googleLinked: z.boolean().optional(),
 });
 export type Profile = z.infer<typeof profile>;
 
@@ -349,6 +352,8 @@ export const document = z.object({
   aiEligible: z.boolean(),
   ingestionStatus: z.string(),
   ingestionFailureReason: z.string().nullable().optional(),
+  /** Why a `skipped` document was not indexed (`ocr_unavailable`, `unsupported_type`, `invalid_encoding`, `external_llm_disallowed`, ...). */
+  skipReason: z.string().nullable().optional(),
   lastIndexedAt: ts.nullable().optional(),
   uploadedBy: uuid.nullable().optional(),
   createdAt: ts,

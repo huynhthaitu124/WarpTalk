@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::assistant_chat::{AiAssistantLlm, KnowledgeSearch, PolicyConsent};
-use crate::room_effects::{RoomAiPolicyRefresher, RoomEffectsHandles, RoomEffectsPublisher};
+use crate::features_http::{self, FeaturesState};
+use crate::room_effects::{
+    RoomAiPolicyRefresher, RoomEffectsHandles, RoomEffectsPublisher, init_copilot_room_keys,
+};
 use crate::settings_http::{self, SettingsHttpState};
 use crate::suggestions_http::{self, SuggestionsState};
 use async_trait::async_trait;
@@ -27,10 +30,23 @@ use warptalk_assistant::application::ports::{
     ConfigNotifier, KeyValidator, NoopNotifier, SecretVault, WorkspaceAccess,
 };
 use warptalk_assistant::infrastructure::{InMemoryChatEventBus, RedisChatEventBus};
-use warptalk_assistant::{AssistantDeps, AssistantModule, ChatDeps};
+use warptalk_assistant::summary::{
+    ComposedRoomAccess, FollowUpSource, NoBus, NoFollowUps, PgSummaryRepository,
+    PgTranscriptSource, RedisFollowUpSource, RedisSummaryBus, SummaryBus, SummaryDeps,
+    SummaryService,
+};
+use warptalk_assistant::{AssistantDeps, AssistantModule, ChatDeps, SummaryHttpDeps};
+use warptalk_billing::{BillingDeps, BillingModule};
 use warptalk_bus::publish_json;
 use warptalk_config::JwtConfig;
 use warptalk_contracts::events::{DomainEventEnvelope, MEETING_PRODUCER};
+use warptalk_copilot::application::ports::{
+    CreatedRoom, Metering, NewSessionRoom, NoSttTokenIssuer, RoomState, SessionRooms,
+    SttTokenIssuer, WorkspaceMembers,
+};
+use warptalk_copilot::infrastructure::openai_stt::{OpenAiSttConfig, OpenAiSttTokenIssuer};
+use warptalk_copilot::infrastructure::redis_adapters::{RedisRateLimiter, RedisSegmentSink};
+use warptalk_copilot::{CopilotDeps, CopilotModule};
 use warptalk_identity::{
     CartesiaVoice, IdentityDeps, IdentityModule, IdentityQueries, Policy, RedisVoiceStatePublisher,
     VerificationMailer, VoiceDeps,
@@ -50,6 +66,7 @@ use warptalk_meeting::application::ports::{
 };
 use warptalk_meeting::{DEFAULT_TOKEN_TTL, MeetingDeps, MeetingModule, RoomService};
 use warptalk_qdrant::VectorStore;
+use warptalk_room::CreateCopilotRoom;
 use warptalk_room::RoomDeps;
 use warptalk_room::RoomModule;
 use warptalk_room::RoomQueries;
@@ -256,6 +273,79 @@ impl WorkspaceAiPolicy for TranscriptWorkspaceAiPolicy {
     }
 }
 
+/// Adapter: copilot's `WorkspaceMembers` port backed by workspace roles.
+pub struct CopilotMembers(pub WorkspaceQueries);
+
+#[async_trait]
+impl WorkspaceMembers for CopilotMembers {
+    async fn member_role(&self, ws: WorkspaceId, user: UserId) -> AppResult<Option<WorkspaceRole>> {
+        self.0.member_role(ws, user).await
+    }
+}
+
+/// Adapter: copilot's `SessionRooms` port backed by room's facade. Creating a session room also
+/// writes the Redis keys the assistant needs (`ai_policy`, reader language); ending goes through
+/// the room lifecycle, whose `RoomEnded` command the effects decorator turns into the
+/// `__MEETING_END__` marker on `stt:results`.
+pub struct CopilotRooms {
+    pub rooms: RoomQueries,
+    pub redis: ConnectionManager,
+    pub effects: RoomEffectsHandles,
+}
+
+#[async_trait]
+impl SessionRooms for CopilotRooms {
+    async fn create(&self, user: UserId, new: NewSessionRoom) -> AppResult<CreatedRoom> {
+        let host_language = new.host_language.clone();
+        let room = self
+            .rooms
+            .create_copilot_room(
+                user,
+                CreateCopilotRoom {
+                    workspace_id: new.workspace_id,
+                    title: new.title,
+                    host_display_name: new.host_display_name,
+                    host_language: new.host_language,
+                    other_language: new.other_language,
+                },
+            )
+            .await?;
+        init_copilot_room_keys(
+            &self.redis,
+            &self.effects,
+            room.room_id,
+            room.host_participant_id.as_uuid(),
+            &host_language,
+        )
+        .await;
+        Ok(CreatedRoom {
+            room_id: room.room_id,
+            host_participant_id: room.host_participant_id.as_uuid(),
+            started_at: room.started_at,
+        })
+    }
+
+    async fn state(&self, room: RoomId) -> AppResult<Option<RoomState>> {
+        Ok(self
+            .rooms
+            .room_summary(room)
+            .await?
+            // Only copilot rooms are sessions, whatever the id the caller guessed.
+            .filter(|r| r.room_type == "COPILOT_SESSION")
+            .map(|r| RoomState {
+                workspace_id: r.workspace_id,
+                host_id: r.host_id,
+                status: r.status,
+                started_at: r.started_at,
+                ended_at: r.ended_at,
+            }))
+    }
+
+    async fn end(&self, room: RoomId, actor: UserId) -> AppResult<()> {
+        self.rooms.end_room(room, actor).await
+    }
+}
+
 /// Lifetime of `translationRoom:{id}:workspace` (refreshed on every routes update).
 const ROOM_WORKSPACE_TTL_SECS: u64 = 172_800;
 
@@ -429,6 +519,16 @@ pub struct ApiOptions {
     /// Dev suggestion test mode (`warptalk_config::TestModeConfig`): mounts the transcript
     /// injection route. Never set in production (the config refuses it there).
     pub test_mode: bool,
+    /// Overrides the ephemeral STT token issuer (tests); default is OpenAI when `OPENAI_API_KEY`
+    /// is set, else `POST /copilot/sessions/{id}/stt-token` answers 503 `STT_NOT_CONFIGURED`.
+    pub stt_token_issuer: Option<Arc<dyn SttTokenIssuer>>,
+    /// Overrides the server-side STT of the copilot audio fallback socket (tests); default from
+    /// `COPILOT_SERVER_STT` / `OPENAI_API_KEY` (see `copilot_stt`), else the socket answers 503.
+    pub copilot_server_stt: Option<Arc<dyn warptalk_copilot::application::ports::ServerStt>>,
+    /// Overrides the audio socket limits (tests); default reads `COPILOT_AUDIO_*` env.
+    pub copilot_audio_config: Option<warptalk_copilot::application::audio::AudioConfig>,
+    /// Overrides the billing config (tests); default reads `STRIPE_*` / `BILLING_*` env.
+    pub billing_config: Option<warptalk_billing::application::service::BillingConfig>,
 }
 
 /// Room's consent port backed by identity's voice-consent facade (BR-94).
@@ -523,14 +623,17 @@ pub async fn build(
         ..Policy::default()
     };
 
-    let identity = IdentityModule::new(IdentityDeps {
-        pool: pool.clone(),
-        jwt: jwt.clone(),
-        clock: clock.clone(),
-        mailer,
-        policy,
-        voice: voice_deps(&opts, redis.as_ref()),
-    });
+    let identity = IdentityModule::with_extras(
+        IdentityDeps {
+            pool: pool.clone(),
+            jwt: jwt.clone(),
+            clock: clock.clone(),
+            mailer,
+            policy,
+            voice: voice_deps(&opts, redis.as_ref()),
+        },
+        crate::auth_wiring::identity_extras(redis.as_ref()),
+    );
     let notification =
         warptalk_notification::NotificationModule::new(warptalk_notification::NotificationDeps {
             pool: pool.clone(),
@@ -599,6 +702,9 @@ pub async fn build(
     let transcript_redis = redis.clone();
     let suggestions_redis = redis.clone();
     let chat_redis = redis.clone();
+    let copilot_redis = redis.clone();
+    let summary_redis = redis.clone();
+    let billing_redis = redis.clone();
     let effects = RoomEffectsHandles::default();
     let policy_conn = redis.clone();
     let room_queries_cell: Arc<std::sync::OnceLock<RoomQueries>> = Arc::default();
@@ -654,6 +760,90 @@ pub async fn build(
         .with_workspace_roles(Arc::new(TranscriptWorkspaceRoles(workspace.queries())))
     });
 
+    // Copilot sessions (ADR 0001) write `stt:results`, so they need Redis like the transcript routes.
+    let stt_tokens: Arc<dyn SttTokenIssuer> = opts.stt_token_issuer.unwrap_or_else(|| {
+        match OpenAiSttConfig::from_env().map(OpenAiSttTokenIssuer::new) {
+            Some(Ok(issuer)) => Arc::new(issuer),
+            Some(Err(e)) => {
+                tracing::error!(error = %e, "openai stt token issuer unavailable");
+                Arc::new(NoSttTokenIssuer)
+            }
+            None => {
+                tracing::warn!("OPENAI_API_KEY not set: stt-token answers 503 STT_NOT_CONFIGURED");
+                Arc::new(NoSttTokenIssuer)
+            }
+        }
+    });
+    let billing = BillingModule::new(BillingDeps {
+        pool: pool.clone(),
+        jwt: jwt.clone(),
+        clock: Arc::new(SystemClock),
+        access: Arc::new(crate::billing_wiring::BillingWorkspaceAccess(
+            workspace.queries(),
+        )),
+        gateway: crate::billing_wiring::stripe_gateway_from_env(),
+        state_sink: billing_redis.map(|c| {
+            Arc::new(warptalk_billing::infrastructure::redis_state::RedisStateSink::new(c))
+                as Arc<dyn warptalk_billing::application::ports::ServiceStateSink>
+        }),
+        config: opts
+            .billing_config
+            .unwrap_or_else(crate::billing_wiring::billing_config_from_env),
+    });
+    let server_stt = opts
+        .copilot_server_stt
+        .or_else(crate::copilot_stt::server_stt_from_env);
+    let audio_config = opts
+        .copilot_audio_config
+        .unwrap_or_else(warptalk_copilot::application::audio::AudioConfig::from_env);
+    let glossary_service = transcript.as_ref().map(|t| t.glossaries());
+    let copilot = copilot_redis.map(|conn| {
+        let usage_conn = conn.clone();
+        let ticket_conn = conn.clone();
+        let limiter_conn = conn.clone();
+        let mut module = CopilotModule::new(CopilotDeps {
+            pool: pool.clone(),
+            jwt: jwt.clone(),
+            clock: Arc::new(SystemClock),
+            rooms: Arc::new(CopilotRooms {
+                rooms: room.queries(),
+                redis: conn.clone(),
+                effects: effects.clone(),
+            }),
+            members: Arc::new(CopilotMembers(workspace.queries())),
+            sink: Arc::new(RedisSegmentSink::new(conn.clone())),
+            stt_tokens,
+            rate_limiter: Arc::new(RedisRateLimiter::new(conn)),
+        })
+        .with_metering(Metering {
+            usage: Arc::new(
+                warptalk_copilot::infrastructure::redis_adapters::RedisUsageSink::new(usage_conn),
+            ),
+            gate: Arc::new(crate::billing_wiring::BillingCreditGate(billing.queries())),
+            stt_model: crate::billing_wiring::copilot_stt_model(),
+        });
+        if let Some(stt) = server_stt {
+            module = module.with_server_stt(warptalk_copilot::application::audio::ServerAudio {
+                stt,
+                tickets: Arc::new(
+                    warptalk_copilot::infrastructure::redis_adapters::RedisTicketStore::new(
+                        ticket_conn,
+                    ),
+                ),
+                config: audio_config,
+                limiter: Arc::new(
+                    warptalk_copilot::infrastructure::redis_adapters::RedisConnectionLimiter::new(
+                        limiter_conn,
+                    ),
+                ),
+            });
+        }
+        if let Some(g) = glossary_service {
+            module = module.with_glossary(Arc::new(crate::copilot_stt::CopilotGlossary(g)));
+        }
+        module
+    });
+
     let meeting = MeetingModule::new(MeetingDeps {
         pool: pool.clone(),
         jwt: jwt.clone(),
@@ -669,7 +859,7 @@ pub async fn build(
         meeting_router = meeting_router.layer(middleware::from_fn(livekit_required));
     }
     let vault = opts.vault.unwrap_or_else(vault_from_env);
-    let mut assistant = AssistantModule::new(AssistantDeps {
+    let assistant = AssistantModule::new(AssistantDeps {
         pool: pool.clone(),
         jwt: jwt.clone(),
         clock: Arc::new(SystemClock),
@@ -695,6 +885,61 @@ pub async fn build(
         // Config writes on any replica apply here at once.
         ai.spawn_invalidation_listener(url);
     }
+    warptalk_assistant::summary::register_config(&settings);
+    let summary_service = SummaryService::new(SummaryDeps {
+        repo: PgSummaryRepository::new(pool.clone()),
+        transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
+        rooms: Arc::new(crate::assistant_adapters::room_meta_source(
+            room.queries().reader(),
+            identity.queries(),
+            warptalk_copilot::CopilotQueries::new(pool.clone()),
+        )),
+        followups: match &summary_redis {
+            Some(c) => Arc::new(RedisFollowUpSource::new(c.clone())) as Arc<dyn FollowUpSource>,
+            None => Arc::new(NoFollowUps),
+        },
+        llm: ai.clone(),
+        policy: Arc::new(crate::assistant_adapters::WorkspaceExternalLlmGate(
+            workspace.queries(),
+        )),
+        settings: settings.clone(),
+        bus: match &summary_redis {
+            Some(c) => Arc::new(RedisSummaryBus::new(c.clone())) as Arc<dyn SummaryBus>,
+            None => Arc::new(NoBus),
+        },
+        clock: Arc::new(SystemClock),
+    });
+    let summary_service = Arc::new(match &summary_redis {
+        Some(c) => summary_service.with_usage(Arc::new(
+            warptalk_assistant::usage::RedisUsageSink::new(c.clone()),
+        )),
+        None => summary_service,
+    });
+    let assistant = assistant.with_summary(SummaryHttpDeps {
+        service: summary_service.clone(),
+        access: Arc::new(ComposedRoomAccess::new(
+            Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                room.queries().reader(),
+            )),
+            Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+        )),
+        clock: Arc::new(SystemClock),
+    });
+    let assistant = assistant.with_suggestion_feedback(
+        warptalk_assistant::suggestion::feedback_http::FeedbackApi {
+            store: Arc::new(warptalk_assistant::suggestion::PgSuggestionStore::new(
+                pool.clone(),
+            )),
+            access: Arc::new(ComposedRoomAccess::new(
+                Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                    room.queries().reader(),
+                )),
+                Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+            )),
+            members: Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+            clock: Arc::new(SystemClock),
+        },
+    );
     let vectors = opts.vectors.unwrap_or_else(|| {
         build_vector_store().unwrap_or_else(|e| {
             tracing::error!(error = %e, "vector store unavailable; using in-memory");
@@ -703,6 +948,7 @@ pub async fn build(
     });
     let knowledge_access: Arc<dyn DocumentAccess> =
         Arc::new(KnowledgeAccessAdapter(workspace.queries()));
+    let chat_llm = ai.clone();
     let knowledge = build_knowledge_module(KnowledgeParts {
         pool: pool.clone(),
         jwt: jwt.clone(),
@@ -711,8 +957,62 @@ pub async fn build(
         ai: ai.clone(),
         access: knowledge_access.clone(),
         results,
+        documents: None,
     })
     .await;
+    // WarpBot "ask the meeting": SSE/JSON Q&A, recap, history (settings namespace `assistant_chat`).
+    warptalk_assistant::chat::register_config(&settings);
+    let (chat_limiter, chat_cache): (
+        Arc<dyn warptalk_assistant::chat::RateLimiter>,
+        Arc<dyn warptalk_assistant::chat::RecapCache>,
+    ) = match &summary_redis {
+        Some(c) => (
+            Arc::new(warptalk_assistant::chat::RedisRateLimiter::new(c.clone())),
+            Arc::new(warptalk_assistant::chat::RedisRecapCache::new(c.clone())),
+        ),
+        None => (
+            Arc::new(warptalk_assistant::chat::MemoryRateLimiter::default()),
+            Arc::new(warptalk_assistant::chat::MemoryRecapCache::default()),
+        ),
+    };
+    let chat_usage: warptalk_assistant::usage::SharedUsageSink = match &summary_redis {
+        Some(c) => Arc::new(warptalk_assistant::usage::RedisUsageSink::new(c.clone())),
+        None => Arc::new(warptalk_assistant::usage::NoUsageSink),
+    };
+    let mut assistant = assistant.with_chat(warptalk_assistant::chat::ChatApi {
+        service: Arc::new(warptalk_assistant::chat::ChatService::new(
+            warptalk_assistant::chat::ChatDeps {
+                repo: warptalk_assistant::chat::PgChatRepository::new(pool.clone()),
+                transcripts: Arc::new(PgTranscriptSource::new(pool.clone())),
+                rooms: Arc::new(crate::assistant_adapters::room_meta_source(
+                    room.queries().reader(),
+                    identity.queries(),
+                    warptalk_copilot::CopilotQueries::new(pool.clone()),
+                )),
+                knowledge: Arc::new(warptalk_ai_plane::knowledge::ServiceRetriever::new(
+                    knowledge.service(),
+                )),
+                prior: Arc::new(warptalk_assistant::chat::SummaryMemoryPriorContext::new(
+                    summary_service,
+                )),
+                llm: chat_llm,
+                policy: Arc::new(crate::assistant_adapters::WorkspaceExternalLlmGate(
+                    workspace.queries(),
+                )),
+                settings: settings.clone(),
+                limiter: chat_limiter,
+                recap_cache: chat_cache,
+                usage: chat_usage,
+                clock: Arc::new(SystemClock),
+            },
+        )),
+        access: Arc::new(ComposedRoomAccess::new(
+            Arc::new(crate::assistant_adapters::RoomFactsAdapter(
+                room.queries().reader(),
+            )),
+            Arc::new(AssistantWorkspaceAccess(workspace.queries())),
+        )),
+    });
     // WarpBot chat. Redis carries the live stream across replicas; without it, events stay in
     // this process (single replica only).
     let chat_bus: Arc<dyn ChatEventBus> = match chat_redis {
@@ -740,6 +1040,11 @@ pub async fn build(
             test_mode: opts.test_mode,
         })
     });
+    let features_router = features_http::router(FeaturesState {
+        store: settings.clone(),
+        jwt: jwt.clone(),
+        workspaces: workspace.queries(),
+    });
     let settings_router = settings_http::router(SettingsHttpState {
         store: settings,
         pool,
@@ -751,14 +1056,20 @@ pub async fn build(
     let api = Router::new()
         .merge(identity.router())
         .merge(workspace.router())
+        .merge(billing.router())
         .merge(room.router())
         .merge(meeting_router)
         .merge(settings_router)
+        .merge(features_router)
         .merge(assistant.router())
         .merge(knowledge.router())
         .merge(notification.router());
     let api = match suggestions_router {
         Some(r) => api.merge(r),
+        None => api,
+    };
+    let api = match copilot {
+        Some(c) => api.merge(c.router()),
         None => api,
     };
     // Transcript routes (glossaries) need Redis for the pipeline snapshots; without Redis they are not mounted.

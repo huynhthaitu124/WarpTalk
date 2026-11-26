@@ -1,25 +1,27 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
-import { DownloadSimple, FileText, MagnifyingGlass, UploadSimple, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, DownloadSimple, FileText, MagnifyingGlass, UploadSimple, X } from '@phosphor-icons/react';
 import {
   Alert, Badge, Button, Dialog, DialogContent, Drawer, EmptyState, Field, Input, PageBody, PageHeader, Select, Skeleton, Switch, Table, TBody, TD, TH, THead, Tooltip, TR, useToast,
 } from '@v2/ui';
 import { cn } from '@v2/lib/cn';
 import { canAdmin, useWorkspace } from '@v2/lib/workspace';
 import {
-  DOCUMENT_PAGE_SIZE, downloadDocument, useArchiveDocument, useDocuments, usePatchDocument, useUploadDocument,
+  DOCUMENT_PAGE_SIZE, downloadDocument, useArchiveDocument, useDocuments, usePatchDocument, useReindexDocument, useReindexDocuments, useUploadDocument, type ReindexBatchResult,
 } from '@v2/lib/queries';
+import { DOCS } from '@v2/lib/strings';
+import { useSearchParams } from 'react-router-dom';
 import { DOC_ACCESS_LEVELS, DOC_CATEGORIES, type WorkspaceDocument, type Workspace } from '@v2/lib/schemas';
 import { formatWhen } from './common';
 import { errCode, errMsg } from './errors';
 
 // Client-side checks mirror crates/modules/workspace/src/domain/documents.rs (types, 20 MB).
-export const DOC_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'markdown', 'csv'] as const;
+export const DOC_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'markdown', 'csv', 'png', 'jpg', 'jpeg', 'webp'] as const;
 export const DOC_MAX_MB = 20;
 const DOC_MAX_BYTES = DOC_MAX_MB * 1024 * 1024;
 
 export function checkDocumentFile(file: File): string | null {
   const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
-  if (!(DOC_EXTENSIONS as readonly string[]).includes(ext)) return 'Unsupported file type: allowed types are pdf, docx, txt, md and csv.';
+  if (!(DOC_EXTENSIONS as readonly string[]).includes(ext)) return 'Unsupported file type: allowed types are pdf, docx, txt, md, csv, png, jpg and webp.';
   if (file.size === 0) return 'The file is empty.';
   if (file.size > DOC_MAX_BYTES) return `File exceeds the ${DOC_MAX_MB} MB limit.`;
   return null;
@@ -50,8 +52,10 @@ const ING: Record<string, { label: string; tone: Tone }> = {
 };
 
 /** Plain-language explanation of an ingestion status and its machine reason. */
-export function ingestionExplanation(doc: Pick<WorkspaceDocument, 'ingestionStatus' | 'ingestionFailureReason' | 'fileExtension'>): string {
+export function ingestionExplanation(doc: Pick<WorkspaceDocument, 'ingestionStatus' | 'ingestionFailureReason' | 'fileExtension'> & { skipReason?: string | null }): string {
   const r = doc.ingestionFailureReason ?? '';
+  const skip = doc.ingestionStatus === 'skipped' ? DOCS.skipReasons[doc.skipReason ?? r] : undefined;
+  if (skip) return skip.hint;
   if (doc.ingestionStatus === 'pending') return 'Waiting to be indexed for the AI assistant.';
   if (doc.ingestionStatus === 'completed') return 'Indexed: the AI assistant can search this document.';
   if (r === 'no_indexable_content') {
@@ -66,16 +70,57 @@ export function ingestionExplanation(doc: Pick<WorkspaceDocument, 'ingestionStat
 function IngestionPill({ doc }: { doc: WorkspaceDocument }) {
   const m = ING[doc.ingestionStatus] ?? { label: doc.ingestionStatus, tone: 'neutral' as Tone };
   const why = ingestionExplanation(doc);
+  const skip = doc.ingestionStatus === 'skipped' ? DOCS.skipReasons[doc.skipReason ?? ''] : undefined;
   return (
     <Tooltip content={why}>
-      <span tabIndex={0} className="inline-flex rounded-pill focus-ring" data-testid="ingestion-pill" data-status={doc.ingestionStatus}>
+      <span tabIndex={0} className="inline-flex flex-wrap items-center gap-1 rounded-pill focus-ring" data-testid="ingestion-pill" data-status={doc.ingestionStatus} data-skip-reason={skip ? doc.skipReason : undefined}>
         <Badge tone={m.tone}>
           <span aria-hidden className="size-1.5 rounded-pill bg-current" />
           {m.label}
         </Badge>
+        {skip && <Badge tone="warning" data-testid="skip-reason">{skip.label}</Badge>}
         <span className="sr-only">. {why}</span>
       </span>
     </Tooltip>
+  );
+}
+
+/** Queue one document for indexing again (owner/admin). */
+function ReindexButton({ ws, doc, compact }: { ws: Workspace; doc: WorkspaceDocument; compact?: boolean }) {
+  const reindex = useReindexDocument(ws.id);
+  const toast = useToast();
+  if (doc.ingestionStatus === 'pending') return null;
+  return (
+    <Button
+      size="sm"
+      variant={compact ? 'ghost' : 'secondary'}
+      loading={reindex.isPending}
+      data-testid="reindex-doc"
+      aria-label={`${DOCS.reindex}: ${doc.title}`}
+      onClick={() => reindex.mutate(doc.id, {
+        onSuccess: (r) => toast({ tone: 'success', title: r.queued ? DOCS.reindexQueued : DOCS.reindexAlready, description: doc.title }),
+        onError: (e) => toast({ tone: 'danger', title: DOCS.reindexFailed, description: errMsg(e) }),
+      })}
+    >
+      <ArrowsClockwise size={14} aria-hidden />{DOCS.reindex}
+    </Button>
+  );
+}
+
+function BulkSummary({ r, onClose }: { r: ReindexBatchResult; onClose(): void }) {
+  const parts = [
+    `${r.queued} queued`,
+    ...(r.notEligible ? [`${r.notEligible} already in progress or no longer skipped`] : []),
+    ...(r.failedIds.length ? [`${r.failedIds.length} could not be queued`] : []),
+    ...(r.remaining ? [`${r.remaining} more match: run it again to continue`] : []),
+  ];
+  return (
+    <Alert tone={r.failedIds.length ? 'warning' : 'success'} title={DOCS.bulkResultTitle}>
+      <span className="flex flex-wrap items-center gap-2" data-testid="reindex-summary">
+        <span>{r.queued === 0 && !r.failedIds.length ? DOCS.bulkNothing : `${parts.join('. ')}.`}</span>
+        <Button size="sm" variant="ghost" onClick={onClose}>Dismiss</Button>
+      </span>
+    </Alert>
   );
 }
 
@@ -121,7 +166,7 @@ function UploadDialog({ ws, open, onOpenChange }: { ws: Workspace; open: boolean
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent
         title="Upload document"
-        description={`PDF, DOCX, TXT, MD or CSV, up to ${DOC_MAX_MB} MB.`}
+        description={`PDF, DOCX, TXT, MD, CSV or an image (PNG, JPG, WEBP), up to ${DOC_MAX_MB} MB.`}
         footer={<><Button onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="primary" type="submit" form="doc-upload-form" loading={upload.isPending}>Upload</Button></>}
       >
         <form id="doc-upload-form" onSubmit={submit} className="flex flex-col gap-4" noValidate>
@@ -246,6 +291,7 @@ function DocDrawer({ ws, doc, onClose, onChanged }: { ws: Workspace; doc: Worksp
           <div className="flex flex-wrap items-center gap-2">
             <IngestionPill doc={doc} />
             <Button size="sm" loading={dl} onClick={() => void download()}><DownloadSimple size={14} aria-hidden />Download</Button>
+            {manage && <ReindexButton ws={ws} doc={doc} />}
           </div>
           <p className="text-body-sm text-ink-subtle" data-testid="doc-ingestion-note">{ingestionExplanation(doc)}</p>
           <dl className="grid gap-3 sm:grid-cols-2">
@@ -283,8 +329,12 @@ function DocDrawer({ ws, doc, onClose, onChanged }: { ws: Workspace; doc: Worksp
 // ---- list
 export function DocumentsPage() {
   const { current, loading } = useWorkspace();
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
+  const [params] = useSearchParams();
+  // `?search=` lets other pages (assistant citations) land on a document by name.
+  const initial = params.get('search') ?? '';
+  const [search, setSearch] = useState(initial);
+  const [query, setQuery] = useState(initial);
+  const [bulk, setBulk] = useState<ReindexBatchResult | null>(null);
   const [category, setCategory] = useState('all');
   const [pageNo, setPageNo] = useState(1);
   const [uploading, setUploading] = useState(false);
@@ -296,6 +346,8 @@ export function DocumentsPage() {
   }, [search]);
 
   const q = useDocuments(current?.id, { page: pageNo, search: query, category });
+  const reindexAll = useReindexDocuments(current?.id ?? '');
+  const toast = useToast();
   if (loading) return <PageBody><Skeleton className="h-40" /></PageBody>;
   if (!current) return (<><PageHeader title="Documents" /><PageBody><EmptyState icon={<FileText size={20} weight="duotone" />} title="No workspace" description="Create or join a workspace to see its documents." /></PageBody></>);
   const admin = canAdmin(current);
@@ -310,12 +362,26 @@ export function DocumentsPage() {
       <PageHeader
         title="Documents"
         description={`Files shared in ${current.name}. Documents with AI retrieval on can be searched in Knowledge.`}
-        actions={admin ? <Button variant="primary" onClick={() => setUploading(true)}><UploadSimple size={16} aria-hidden />Upload document</Button> : undefined}
+        actions={admin ? (
+          <>
+            <Button
+              loading={reindexAll.isPending}
+              title={DOCS.reindexSkippedHint}
+              data-testid="reindex-skipped"
+              onClick={() => reindexAll.mutate({ status: 'skipped' }, {
+                onSuccess: setBulk,
+                onError: (e) => toast({ tone: 'danger', title: DOCS.bulkFailed, description: errMsg(e) }),
+              })}
+            ><ArrowsClockwise size={16} aria-hidden />{DOCS.reindexSkipped}</Button>
+            <Button variant="primary" onClick={() => setUploading(true)}><UploadSimple size={16} aria-hidden />Upload document</Button>
+          </>
+        ) : undefined}
       />
       <PageBody className="flex flex-col gap-3 border-b border-row py-3 empty:hidden">
         <Alert tone="info" title="PDF and DOCX text extraction is not available yet">
-          Only TXT, MD and CSV files are indexed for the AI assistant today. PDF and DOCX files are stored and can be downloaded, but they finish as “Skipped” (no indexable content) until extraction ships.
+          Only TXT, MD and CSV files are indexed for the AI assistant today. PDF and DOCX files are stored and can be downloaded, but they finish as “Skipped” (no indexable content) until extraction ships. {DOCS.imageNote}
         </Alert>
+        {bulk && <BulkSummary r={bulk} onClose={() => setBulk(null)} />}
         {!admin && <Alert tone="info">You can read and download documents. Only workspace owners and admins can upload or change them, and admin-only documents are hidden from you.</Alert>}
       </PageBody>
       <div role="search" aria-label="Filter documents" className="flex flex-wrap items-center gap-2 border-b border-row px-4 py-2">
@@ -341,7 +407,7 @@ export function DocumentsPage() {
           <div>
             <div className="max-sm:hidden">
               <Table bare aria-label="Documents">
-                <THead><tr><TH>Title</TH><TH>Category</TH><TH>Access</TH><TH>Size</TH><TH>Status</TH><TH>Uploaded</TH></tr></THead>
+                <THead><tr><TH>Title</TH><TH>Category</TH><TH>Access</TH><TH>Size</TH><TH>Status</TH><TH>Uploaded</TH>{admin && <TH><span className="sr-only">Actions</span></TH>}</tr></THead>
                 <TBody>
                   {items.map((d) => (
                     <TR key={d.id} data-testid="document-row" data-title={d.title}>
@@ -354,6 +420,7 @@ export function DocumentsPage() {
                       <TD className="whitespace-nowrap text-ink-subtle">{formatSize(d.sizeBytes)}</TD>
                       <TD><IngestionPill doc={d} /></TD>
                       <TD className="whitespace-nowrap text-ink-subtle">{formatWhen(d.createdAt)}</TD>
+                      {admin && <TD className="whitespace-nowrap text-right"><ReindexButton ws={current} doc={d} compact /></TD>}
                     </TR>
                   ))}
                 </TBody>
@@ -364,7 +431,7 @@ export function DocumentsPage() {
                 <li key={d.id} className="flex flex-col gap-2 border-b border-row px-4 py-3" data-testid="document-row" data-title={d.title}>
                   <button type="button" onClick={() => setSelected(d)} title={d.title} aria-label={`Open ${d.title}`} className="block max-w-full truncate rounded-xs text-left text-body font-medium text-ink hover:text-link focus-ring">{d.title}</button>
                   <p className="truncate text-caption text-ink-subtle">{d.fileName} · {formatSize(d.sizeBytes)} · {CATEGORY_LABEL[d.category] ?? d.category}</p>
-                  <div className="flex flex-wrap items-center gap-2"><IngestionPill doc={d} /><Badge>{ACCESS_LABEL[d.accessLevel] ?? d.accessLevel}</Badge></div>
+                  <div className="flex flex-wrap items-center gap-2"><IngestionPill doc={d} /><Badge>{ACCESS_LABEL[d.accessLevel] ?? d.accessLevel}</Badge>{admin && <ReindexButton ws={current} doc={d} compact />}</div>
                 </li>
               ))}
             </ul>

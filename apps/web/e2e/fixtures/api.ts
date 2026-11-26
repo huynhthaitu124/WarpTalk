@@ -29,9 +29,9 @@ const REDIS = process.env.E2E_REDIS ?? 'redis://localhost:6379';
 
 /**
  * Raw token the API "emailed": the test backend (DEV_MAIL_CAPTURE=1) stores it in Redis under
- * `dev:mail:{verify|workspace-invite}:{email}` for an hour. TEST BACKEND ONLY.
+ * `dev:mail:{verify|workspace-invite|reset}:{email}` for an hour. TEST BACKEND ONLY.
  */
-export async function devMail(kind: 'verify' | 'workspace-invite', email: string): Promise<string> {
+export async function devMail(kind: 'verify' | 'workspace-invite' | 'reset', email: string): Promise<string> {
   const key = `dev:mail:${kind}:${email.toLowerCase()}`;
   for (let i = 0; i < 20; i++) {
     const v = execFileSync('redis-cli', ['-u', REDIS, '--no-raw', 'GET', key], { encoding: 'utf8' }).trim();
@@ -87,3 +87,12 @@ export async function inviteAndAccept(ownerToken: string, workspaceId: string, u
   const { accessToken } = await login(user);
   await ok(call('/invitations/accept', { token: accessToken, body: { token } }));
 }
+
+export interface CopilotSessionDto { id: string; roomId: string; workspaceId: string; hostId: string; title: string; status: string }
+/** A real copilot session (a room of type COPILOT_SESSION) hosted by the owner of `token`. */
+export const createCopilotSession = (token: string, workspaceId: string, title = `Session ${rnd()}`) =>
+  ok(call<CopilotSessionDto>('/copilot/sessions', { token, body: { workspaceId, title, platform: 'zoom', languages: { me: 'en', others: 'en' } } }));
+
+/** Quality report as the backend serves it (owner/admin). */
+export const getQuality = (token: string, workspaceId: string) =>
+  call<{ total: Record<string, number | string>; categories: Record<string, number | string>[] }>(`/workspaces/${workspaceId}/suggestions/quality`, { token });

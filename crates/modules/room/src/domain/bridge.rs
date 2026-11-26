@@ -7,6 +7,9 @@ use uuid::Uuid;
 
 /// Stored `translation_room_type` of a bridge room.
 pub const ROOM_TYPE_EXTERNAL_BRIDGE: &str = "EXTERNAL_BRIDGE";
+/// Stored `translation_room_type` of a copilot session (ADR 0001): an `IN_PROGRESS` room with
+/// only its host as participant, no LiveKit seat and no translation pipeline.
+pub const ROOM_TYPE_COPILOT_SESSION: &str = "COPILOT_SESSION";
 
 /// Fixed user id (and LiveKit identity) of the far-side stand-in seat.
 pub const STAND_IN_USER_ID: Uuid = Uuid::from_u128(0xb21d);
@@ -17,15 +20,16 @@ pub const STAND_IN_DISPLAY_NAME: &str = "External Meeting";
 pub enum RoomType {
     Native,
     ExternalBridge,
+    CopilotSession,
 }
 
 impl RoomType {
     /// Exact match only; anything else (GROUP, EVENT, ...) is a native room.
     pub fn parse(s: &str) -> Self {
-        if s == ROOM_TYPE_EXTERNAL_BRIDGE {
-            Self::ExternalBridge
-        } else {
-            Self::Native
+        match s {
+            ROOM_TYPE_EXTERNAL_BRIDGE => Self::ExternalBridge,
+            ROOM_TYPE_COPILOT_SESSION => Self::CopilotSession,
+            _ => Self::Native,
         }
     }
 
@@ -33,6 +37,7 @@ impl RoomType {
         match self {
             Self::Native => "NATIVE",
             Self::ExternalBridge => ROOM_TYPE_EXTERNAL_BRIDGE,
+            Self::CopilotSession => ROOM_TYPE_COPILOT_SESSION,
         }
     }
 }
@@ -265,6 +270,15 @@ mod tests {
             audio_flowing: flowing,
             last_audio_at: last_audio.map(t),
         }
+    }
+
+    #[test]
+    fn room_type_roundtrip() {
+        for t in [RoomType::ExternalBridge, RoomType::CopilotSession] {
+            assert_eq!(RoomType::parse(t.as_str()), t);
+        }
+        assert_eq!(RoomType::parse("COPILOT_SESSION"), RoomType::CopilotSession);
+        assert_eq!(RoomType::parse("GROUP"), RoomType::Native);
     }
 
     #[test]

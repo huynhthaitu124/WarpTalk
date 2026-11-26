@@ -1,0 +1,137 @@
+# macOS app (apps/macos): Rust copilot-core xcframework + XcodeGen + xcodebuild + XCTests, then upload the .app.
+# Manual dispatch and version tags only (macOS minutes are expensive).
+# The artifact is UNSIGNED unless the APPLE_* secrets below exist; signing/notarization steps are gated on them.
+# Actions are pinned to full version tags; SHA pinning is a follow-up.
+#
+# Optional secrets (repository or environment):
+#   APPLE_CERTIFICATE_P12_BASE64  Developer ID Application certificate (.p12, base64)
+#   APPLE_CERTIFICATE_PASSWORD    password of the .p12
+#   APPLE_SIGNING_IDENTITY        e.g. "Developer ID Application: Acme Inc (TEAMID)"
+#   APPLE_TEAM_ID                 10-char team id
+#   APPLE_ID                      Apple ID e-mail used for notarytool
+#   APPLE_APP_PASSWORD            app-specific password for notarytool
+name: macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test, package
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/macos
+    env:
+      CARGO_TERM_COLOR: always
+      NEXT_TELEMETRY_DISABLED: "1"
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # LiveKit Swift SDK 2.19.0 needs swift-tools 6.1 = Xcode 16.3+.
+      - uses: maxim-lobanov/setup-xcode@v1.6.0
+        with:
+          xcode-version: "16.4"
+
+      - name: Install Rust targets (universal copilot-core)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2.8.0
+        with:
+          shared-key: rust-macos
+          workspaces: ". -> target"
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Build the web export that gets bundled (apps/web/out)
+        working-directory: apps/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: make core (Rust -> CopilotCore.xcframework + UniFFI Swift)
+        run: make core
+      - name: make gen (xcodegen)
+        run: make gen
+
+      - name: make test (XCTests)
+        run: make test
+
+      - name: Build app with embedded web (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project WarpTalk.xcodeproj -scheme WarpTalk -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO REQUIRE_WEB_BUNDLE=YES build
+
+      - name: Import signing certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Codesign (Developer ID, hardened runtime)
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          APP="build/Build/Products/Release/WarpTalk.app"
+          codesign --force --deep --options runtime --timestamp \
+            --entitlements Resources/WarpTalk.entitlements \
+            --sign "$APPLE_SIGNING_IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Notarize and staple
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          APP="build/Build/Products/Release/WarpTalk.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$APP"
+
+      - name: Package .app
+        run: |
+          ditto -c -k --keepParent build/Build/Products/Release/WarpTalk.app "$RUNNER_TEMP/WarpTalk-macos.zip"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: WarpTalk-macos-run${{ github.run_number }}
+          path: ${{ runner.temp }}/WarpTalk-macos.zip
+          retention-days: 30
+          if-no-files-found: error

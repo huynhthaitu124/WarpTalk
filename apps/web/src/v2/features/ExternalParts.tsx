@@ -59,7 +59,7 @@ export function BrowserFallback() {
 }
 
 const DB_FLOOR = -60;
-export function LevelMeter({ dbfs }: { dbfs: number }) {
+export function LevelMeter({ dbfs, label = 'Audio level', testId = 'level-meter' }: { dbfs: number; label?: string; testId?: string }) {
   const db = Math.max(DB_FLOOR, Math.min(0, Math.round(dbfs)));
   const pct = ((db - DB_FLOOR) / -DB_FLOOR) * 100;
   const silent = dbfs <= DB_FLOOR;
@@ -67,12 +67,12 @@ export function LevelMeter({ dbfs }: { dbfs: number }) {
     <div className="flex items-center gap-3">
       <div
         role="meter"
-        aria-label="Audio level"
+        aria-label={label}
         aria-valuemin={DB_FLOOR}
         aria-valuemax={0}
         aria-valuenow={db}
         aria-valuetext={silent ? 'Silent' : `${db} dBFS`}
-        data-testid="level-meter"
+        data-testid={testId}
         data-db={db}
         className="h-2 flex-1 overflow-hidden rounded-pill bg-surface-3"
       >

@@ -67,7 +67,7 @@ export function WorkspacesPage() {
       {loading ? (
         <Skeleton className="h-32" />
       ) : workspaces.length === 0 ? (
-        <EmptyState icon={<Buildings size={20} weight="duotone" />} title="No workspaces yet" description="Create your first workspace to start hosting translated rooms." action={<Button variant="primary" onClick={() => setOpen(true)}>Create workspace</Button>} />
+        <EmptyState icon={<Buildings size={20} weight="duotone" />} title="No workspaces yet" description="Create your first workspace to start copilot sessions for your meetings." action={<Button variant="primary" onClick={() => setOpen(true)}>Create workspace</Button>} />
       ) : (
         <div className="-mx-4 border-t border-row" role="list" aria-label="Workspaces">
           {workspaces.map((w) => (

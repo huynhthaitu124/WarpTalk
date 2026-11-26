@@ -1,6 +1,8 @@
 # WarpTalk: Runbook demo (dev, macOS)
 
-Tài liệu này là hướng dẫn duy nhất để dựng và chạy demo đầy đủ trên một máy Mac. Mọi tên biến môi trường bên dưới đã được đối chiếu với code (mục 3 ghi file nguồn). Mọi đường dẫn tính từ thư mục gốc repo.
+**Định vị hiện tại (ADR 0001):** WarpTalk là *meeting assistant copilot* (transcript, gợi ý, follow-up, biên bản). Dịch họp, dub, voice clone và cầu nối họp ngoài (LiveKit) được **tạm ẩn sau feature flag, mặc định tắt**; code vẫn còn. Stack mặc định chỉ gồm Postgres, Redis, Qdrant, api, worker và web: **không LiveKit, không pipeline**. Muốn chạy lại phần dịch: `scripts/dev-up.sh --start --translation` (mục 2) và bật flag (mục 2.1).
+
+Tài liệu này là hướng dẫn để dựng và chạy demo trên một máy Mac. Mọi tên biến môi trường bên dưới đã được đối chiếu với code (mục 3 ghi file nguồn). Mọi đường dẫn tính từ thư mục gốc repo.
 
 Mục lục: 1. Yêu cầu máy · 2. Khởi động nhanh · 3. Biến môi trường · 4. Chạy từng thành phần · 5. Cấu hình key thật · 6. Pipeline với LiveKit thật · 7. App macOS · 8. Kịch bản demo · 9. Đo latency · 10. Chạy test · 11. Troubleshooting · 12. Giới hạn đã biết
 
@@ -22,32 +24,37 @@ Mục lục: 1. Yêu cầu máy · 2. Khởi động nhanh · 3. Biến môi tr�
 
 Kiểm tra nhanh: `cargo --version && node --version && docker compose version && jq --version && redis-cli --version`.
 
-Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit), 8080 (API), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
+Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit, chỉ khi `--translation`), 8080 (API), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
 
 ---
 
 ## 2. Khởi động nhanh (5 lệnh)
 
 ```bash
-# 1. Hạ tầng + build + migrate + chạy api/worker/pipeline nền + web (log ở ./.logs/)
+# 1. Hạ tầng (Postgres, Redis, Qdrant) + build + migrate + chạy api/worker nền + web (log ở ./.logs/)
+#    Mặc định KHÔNG có LiveKit và KHÔNG có pipeline dịch/dub. Thêm --translation nếu cần (xem bên dưới).
 scripts/dev-up.sh --start --web
-# 2. Dữ liệu demo: 2 user, workspace, phòng vi -> en, ja
+# 2. Dữ liệu demo: 2 user, workspace, phòng vi -> en, ja (chỉ dùng được khi bật dịch họp, mục 2.1)
 scripts/demo-seed.sh
 # 3. Mở web
 open http://localhost:3000
-# 4. Đăng nhập bằng email/mật khẩu do bước 2 in ra; mở phòng "Demo vi-en-ja ..."
+# 4. Đăng nhập; Home -> "Start copilot session" (hoặc /<workspace>/sessions)
 # 5. Dừng: scripts/dev-up.sh --stop      (dừng cả docker: scripts/dev-up.sh --down)
 ```
 
 Lần đầu `dev-up.sh` tự:
 - tạo `deploy/docker/.env` từ `deploy/docker/.env.example` (file `.env` bị `.gitignore`, chứa key thật của bạn);
 - sinh `JWT_SECRET` và `AI_KEYS_KEK` ngẫu nhiên và ghi vào `.env` (để restart không mất phiên đăng nhập);
-- `docker compose up -d --wait` (Postgres, Redis, Qdrant, LiveKit), chờ Qdrant `/readyz` và LiveKit `http://localhost:7880` trả `OK`;
-- `cargo build` 4 binary (lần đầu mất vài phút), chạy `warptalk-migrator`.
+- `docker compose up -d --wait` (**chỉ** Postgres, Redis, Qdrant), chờ Qdrant `/readyz`. LiveKit thuộc profile `translation` của compose nên không chạy trừ khi có `--translation`;
+- `cargo build` 3 binary (migrator, api, worker; thêm pipeline khi có `--translation`; lần đầu mất vài phút), chạy `warptalk-migrator`.
 
-Chế độ pipeline mặc định của script là `--fake` (MT/TTS giả, transport mô phỏng, **không cần key**). Muốn dùng key thật: điền key vào `deploy/docker/.env` rồi `scripts/dev-up.sh --stop && scripts/dev-up.sh --start --real` (mục 5). Chạy `scripts/dev-up.sh` không tham số = chỉ chuẩn bị hạ tầng + migrate rồi **in** lệnh để tự chạy từng thành phần (mục 4).
+**Dịch họp (`--translation`)**: thêm docker profile `translation` (LiveKit, chờ `http://localhost:7880` trả `OK`), build và chạy `warptalk-pipeline`. Chế độ pipeline mặc định khi đó là `--fake` (MT/TTS giả, transport mô phỏng, **không cần key**). Muốn dùng key thật: điền key vào `deploy/docker/.env` rồi `scripts/dev-up.sh --stop && scripts/dev-up.sh --start --real` (mục 5). Chạy `scripts/dev-up.sh` không tham số = chỉ chuẩn bị hạ tầng + migrate rồi **in** lệnh để tự chạy từng thành phần (mục 4).
 
-Các cờ: `--start` chạy nền; `--web` thêm Next.js dev server; `--fake|--real`; `--no-docker` (đã có Postgres/Redis riêng); `--no-build`; `--stop`; `--down`; `PROFILE=release` dùng `target/release`.
+### 2.1 Feature flags (web)
+
+Web hỏi `GET /api/v1/features?workspaceId=` → `{translationMeetings, dubbing, voiceClone, externalBridge, copilot}` (camelCase; mặc định `false,false,false,false,true`; nếu endpoint chưa có/404 web dùng đúng các giá trị mặc định này). Cờ tắt thì web ẩn: tạo/bắt đầu họp dịch (`/meetings`, `/rooms`, `/join`), route/dub/chọn ngôn ngữ nghe, mục Voice clone trong Settings và trang `/external` (mục nav "External meeting" được thay bằng "Copilot"). Truy cập trực tiếp URL của tính năng đang ẩn sẽ chuyển về Home, không báo lỗi. Cách bật cờ ở backend: namespace settings `features` (xem tài liệu của module settings); chỉ bật `translationMeetings` khi đã chạy `--translation`.
+
+Các cờ: `--start` chạy nền; `--web` thêm Next.js dev server; `--translation` thêm LiveKit + pipeline (ẩn mặc định); `--fake|--real` (chỉ có nghĩa với `--translation`); `--no-docker` (đã có Postgres/Redis riêng); `--no-build`; `--stop`; `--down`; `PROFILE=release` dùng `target/release`.
 
 ---
 
@@ -81,13 +88,39 @@ Cột "ai dùng": **A** = `warptalk-api`, **W** = `warptalk-worker`, **P** = `wa
 | `JWT_REFRESH_TTL_SECONDS` | không | `2592000` (30 ngày) | | |
 | `HTTP_BIND` | không | `0.0.0.0:8080` | `127.0.0.1:8080` | `dev-up.sh` dùng `127.0.0.1:8080` (khớp mặc định app macOS) |
 | `CORS_ORIGINS` | không | rỗng | `http://localhost:3000,http://127.0.0.1:3000` | Phân tách dấu phẩy. Khi web đi qua rewrite `/api` của Next dev (hoặc bản export chạy qua proxy cùng origin) thì không cần |
-| `DEV_MAIL_CAPTURE` | không | tắt | `1` | Phải đúng `1`. **Chỉ dev**: token xác minh email/lời mời lưu thô vào Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`, TTL 1 giờ). Thiếu biến này API chỉ log độ dài token (chưa có mailer thật), nên không thể xác minh email |
+| `DEV_MAIL_CAPTURE` | không | tắt | `1` | Phải đúng `1`. **Chỉ dev**: token xác minh email/lời mời lưu thô vào Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`, TTL 1 giờ). Thiếu biến này và thiếu `RESEND_API_KEY` thì API chỉ log độ dài token, nên không thể xác minh email |
 | `LIVEKIT_URL` | không (cả 3 hoặc không) | không | `ws://localhost:7880` | Thiếu một trong ba: `POST /meetings/{id}/join` và `/bridge-token` trả `503 LIVEKIT_NOT_CONFIGURED`. URL này **được trả cho trình duyệt**, phải truy cập được từ máy người dùng |
 | `LIVEKIT_API_KEY` | như trên | không | `devkey` | **BÍ MẬT** ở production |
 | `LIVEKIT_API_SECRET` | như trên | không | `secret` | **BÍ MẬT** ở production |
 | `AI_ALLOW_INSECURE_BASE_URL` | không | strict | `true` | Nhận `1`, `true`, `TRUE`, `yes`. Cho phép `baseUrl` BYO dạng http/loopback (ví dụ Ollama). Chỉ dev |
+| `RESEND_API_KEY` | không (cần để gửi email thật) | không | `re_...` | **BÍ MẬT**. Có biến này (và không bật `DEV_MAIL_CAPTURE`) thì email xác minh, đặt lại mật khẩu và lời mời workspace được gửi qua Resend (`POST https://api.resend.com/emails`). Thiếu cả hai: API chỉ log và in WARN lúc khởi động, người dùng không xác minh/đặt lại được |
+| `EMAIL_FROM` | bắt buộc khi có `RESEND_API_KEY` | không | `WarpTalk <no-reply@your-domain>` | Người gửi đã xác minh domain trên Resend. Thiếu thì API không khởi động |
+| `APP_BASE_URL` | bắt buộc khi có `RESEND_API_KEY` | không | `https://app.your-domain` | Gốc URL web, dùng cho link trong email: `/verify-email?token=`, `/reset-password?token=`, `/invitations/accept?token=`. Thiếu thì API không khởi động |
+| `EMAIL_BRAND_NAME` | không | `WarpTalk` | | Tên sản phẩm trong tiêu đề/nội dung email |
+| `EMAIL_DEFAULT_LANG` | không | `vi` | `en` | Ngôn ngữ mẫu email (`vi` hoặc `en`) |
+| `GOOGLE_CLIENT_IDS` | không | không | `123-web.apps.googleusercontent.com,123-mac.apps.googleusercontent.com` | Danh sách OAuth client id (phân tách dấu phẩy) được chấp nhận làm `aud` của Google ID token (web + macOS). Thiếu thì `POST /api/v1/auth/google` trả `503 GOOGLE_NOT_CONFIGURED` |
+| `DEV_MAIL_CAPTURE` (bổ sung) | | | `1` | Ngoài `dev:mail:verify:{email}`, token đặt lại mật khẩu lưu ở `dev:mail:reset:{email}` (TTL 1 giờ). Ưu tiên cao hơn `RESEND_API_KEY` |
+| `STRIPE_SECRET_KEY` | không (cần cho thanh toán) | không | `sk_test_...` | **BÍ MẬT**. Thiếu thì `POST /workspaces/{id}/billing/checkout` và `/portal` trả `503 STRIPE_NOT_CONFIGURED`; các route đọc vẫn chạy |
+| `STRIPE_WEBHOOK_SECRET` | không (cần cho webhook) | không | `whsec_...` | **BÍ MẬT**. Thiếu thì `POST /billing/webhooks/stripe` trả 503; chữ ký sai trả 400 |
+| `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS` | không | `plans.stripe_price_id` | `price_...` | Price id của gói; gói không có price id thì `purchasable=false` |
+| `BILLING_SUCCESS_URL`, `BILLING_CANCEL_URL` | không | `{APP_BASE_URL}/billing?checkout=success` / `=cancelled` | | URL quay lại sau Stripe Checkout (mặc định localhost:3000 nếu không có `APP_BASE_URL`) |
+| `BILLING_PORTAL_RETURN_URL` | không | `{APP_BASE_URL}/billing` | | URL quay lại từ Stripe Customer Portal |
+| `BILLING_TOPUP_USD_PER_CREDIT` | không | `0.0002` | `0.0002` | Giá USD mỗi credit khi nạp thêm |
+| `COPILOT_STT_MODEL` | không | `gpt-4o-transcribe` | | Tên model STT ghi vào usage của copilot (worker metering tính giá theo rate card) |
+| `COPILOT_SERVER_STT` | không | `openai` nếu có `OPENAI_API_KEY`, ngược lại tắt | `off`/`fake`/`openai` | STT phía server cho WebSocket dự phòng `GET /copilot/sessions/{id}/audio` (app đẩy audio lên khi STT trực tiếp lỗi). `fake` = không cần key (demo/test). Tắt thì socket và `audio-ticket` trả 503 `SERVER_STT_NOT_CONFIGURED` |
+| `COPILOT_AUDIO_MAX_SESSION_SECS` | không | `3300` | | Một socket audio bị đóng (`max_session_duration`) sau từng ấy giây (dưới giới hạn phiên 60 phút của provider); client tự nối lại ở utterance kế tiếp |
+| `COPILOT_AUDIO_MAX_CONCURRENT_PER_USER` | không | `2` | | Số socket audio mở cùng lúc mỗi user (mỗi instance API) |
+| `COPILOT_AUDIO_IDLE_TIMEOUT_SECS` / `_MAX_FRAME_BYTES` / `_MAX_UTTERANCE_MS` / `_TICKET_TTL_SECS` / `_FEED_TIMEOUT_MS` | không | `120` / `64000` / `300000` / `60` / `5000` | | Giới hạn của socket audio (idle, kích thước frame, audio tối đa giữa hai commit, tuổi thọ ticket một lần, ngưỡng provider chậm) |
 
 Ngoài ra A và W còn đọc nhóm AI/Qdrant ở 3.3 và 3.4.
+
+### 3.2.1 Billing enforcement
+
+- Worker (`apps/worker`) đọc stream usage, trừ credit theo rate card và ghi trạng thái dịch vụ AI vào Redis: `workspace:{id}:ai_service_state` (`healthy|low_balance|in_overage|suspended`) và `workspace:{id}:ai_service_suspended` (lý do, ví dụ `insufficient_credits`, `trial_ended`; khoá bị xoá khi hết suspended).
+- Khi workspace `suspended`: `POST /copilot/sessions/{id}/stt-token` trả `402 INSUFFICIENT_CREDITS`. Ingest transcript vẫn được nhận (không mất dữ liệu cuộc họp), kèm cờ `insufficientCredits` trên kết quả. Đọc trạng thái lỗi thì fail-open (không chặn họp).
+- Webhook Stripe: cấu hình endpoint `POST /api/v1/billing/webhooks/stripe` trên Stripe Dashboard (ký bằng `STRIPE_WEBHOOK_SECRET`; xử lý idempotent theo event id).
+- Hiện chỉ copilot bị chặn theo credit; assistant (gợi ý, tóm tắt) chỉ ghi usage chứ chưa bị chặn.
+- API yêu cầu migration `subscription` (chạy `warptalk-migrator` trước).
 
 ### 3.3 AI nền tảng và BYO (A, W; riêng `OPENAI_API_KEY` còn P)
 
@@ -157,20 +190,20 @@ Biến chỉ dành cho Docker Compose (code Rust/JS **không đọc**): `POSTGRE
 Mọi lệnh ở thư mục gốc repo. Nạp env trước mỗi lệnh: `set -a; . deploy/docker/.env; set +a`.
 
 ```bash
-# Hạ tầng
+# Hạ tầng mặc định: Postgres, Redis, Qdrant
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d --wait
-curl http://localhost:7880                      # LiveKit: trả "OK"
+# Thêm LiveKit (dịch họp, tuỳ chọn): ... --profile translation up -d --wait ; curl http://localhost:7880 -> "OK"
 curl http://localhost:6333/readyz               # Qdrant
 # docker compose ... --profile minio up -d      # MinIO tuỳ chọn (chưa nối vào code)
 
 # Build + migrate (phải xong trước api/worker)
-cargo build -p warptalk-migrator -p warptalk-api -p warptalk-worker -p warptalk-pipeline
+cargo build -p warptalk-migrator -p warptalk-api -p warptalk-worker      # thêm -p warptalk-pipeline khi chạy dịch họp
 target/debug/warptalk-migrator
 
 # Mỗi lệnh một terminal
 target/debug/warptalk-api                        # http://127.0.0.1:8080/health
 target/debug/warptalk-worker
-# Pipeline giả (không cần key):
+# Chỉ khi dịch họp (--translation). Pipeline giả (không cần key):
 env -u OPENAI_API_KEY -u CARTESIA_API_KEY MEDIA_TRANSPORT=simulated PIPELINE_FAKE_PROVIDERS=1 \
     SIM_PARTICIPANTS="<id1>,<id2>" target/debug/warptalk-pipeline
 # Pipeline key thật (transport mô phỏng, STT/MT/TTS thật; mục 5):
@@ -214,6 +247,8 @@ Kiểm tra: log worker không còn dòng `no AI key configured: chat messages ar
 ---
 
 ## 6. Build pipeline với LiveKit thật
+
+> Chỉ cần cho dịch họp / họp ngoài qua LiveKit, đang tạm ẩn (ADR 0001). Copilot không cần mục này.
 
 Cần để pipeline **nghe audio thật** trong phòng LiveKit (họp native có dub, họp ngoài). Chi tiết: [`apps/pipeline/LIVEKIT.md`](../apps/pipeline/LIVEKIT.md). Tóm tắt, **chưa từng build được trong môi trường phát triển** (cần clang >= 21, container dev chỉ có clang 18):
 
@@ -274,7 +309,9 @@ Quyền (System Settings > Privacy & Security): Micro; "Ghi âm thanh hệ thố
 
 ## 8. Kịch bản demo từng bước
 
-Chuẩn bị chung: `scripts/dev-up.sh --start --web`, `scripts/demo-seed.sh`, ghi lại 2 email, mật khẩu, mã phòng. Dùng 2 cửa sổ trình duyệt: một thường, một ẩn danh (hai người khác nhau).
+> Các kịch bản dưới đây là **dịch họp / dub / họp ngoài** (đang ẩn). Chạy `scripts/dev-up.sh --start --web --translation` và bật các flag tương ứng (mục 2.1) trước khi thử. Kịch bản copilot: Home -> "Start copilot session"; trên trình duyệt chỉ tạo phiên và xem transcript/biên bản, việc bắt audio cần app macOS (bridge `startCopilotSession`, P1, xem `apps/macos/BRIDGE.md`).
+
+Chuẩn bị chung: `scripts/dev-up.sh --start --web --translation`, `scripts/demo-seed.sh`, ghi lại 2 email, mật khẩu, mã phòng. Dùng 2 cửa sổ trình duyệt: một thường, một ẩn danh (hai người khác nhau).
 
 Phạm vi thật của từng kịch bản (đọc trước khi demo):
 
@@ -468,5 +505,51 @@ Nguồn: `docs/architecture/PROGRESS.md`, `apps/pipeline/LIVEKIT.md`, `apps/maco
 - `workspace` dùng role uuid cố định; BR-31/32 (một membership Internal) chưa enforce.
 - Outbox chưa có lease khi claim (consumer phải idempotent). `IdentityUserDirectory` gọi từng user một.
 - Họp ngoài trên macOS: không có far-speaker hint (mọi lời bên kia là "Google Meet participants"); lease capturer chưa phản ánh trạng thái audio (B8).
-- Email thật: chưa có mailer SMTP/provider; dev dùng `DEV_MAIL_CAPTURE=1` (không bao giờ bật ở môi trường dùng chung).
+- Email thật: gửi qua Resend (`RESEND_API_KEY`, `EMAIL_FROM`, `APP_BASE_URL`); chưa có SMTP; dev dùng `DEV_MAIL_CAPTURE=1` (không bao giờ bật ở môi trường dùng chung). Mẫu email dùng một ngôn ngữ mặc định (`EMAIL_DEFAULT_LANG`), chưa theo ngôn ngữ từng người dùng.
 - Bộ docker-compose này chỉ dành cho dev (LiveKit `--dev`, Postgres trust auth, khoá `devkey/secret`). Chưa có Dockerfile cho app.
+
+## Knowledge: OCR và reindex (worker)
+
+Biến môi trường của worker (`W`); mặc định tắt OCR nên PDF scan / ảnh kết thúc `skipped` với `skipReason=ocr_unavailable`.
+
+| Biến | Bắt buộc | Mặc định | Ví dụ | Ghi chú |
+|---|---|---|---|---|
+| `KNOWLEDGE_OCR` | không | `none` | `tesseract` | `none` \| `tesseract` \| `openai`. Thiếu binary / khoá thì log WARN và quay về `none` |
+| `KNOWLEDGE_TESSERACT_BIN` | không | `tesseract` | `/usr/bin/tesseract` | Tên hoặc đường dẫn; chạy bằng vector tham số, không qua shell |
+| `KNOWLEDGE_PDFTOPPM_BIN` | không | `pdftoppm` | `/usr/bin/pdftoppm` | poppler-utils; thiếu thì ảnh vẫn OCR được nhưng PDF scan bị `skipped` |
+| `KNOWLEDGE_OCR_LANGS` | không | `vie+eng` | `eng` | Chỉ chấp nhận `[A-Za-z0-9_+]` |
+| `KNOWLEDGE_OCR_TIMEOUT_SECS` | không | `60` | `120` | Giới hạn cho từng tiến trình / request HTTP |
+| `KNOWLEDGE_OCR_MAX_PAGES` | không | `30` | `50` | Chỉ nhận dạng N trang đầu của PDF scan |
+| `KNOWLEDGE_OCR_DPI` | không | `200` | `300` | 72-600 |
+| `KNOWLEDGE_OCR_OPENAI_MODEL` | không | `gpt-4o-mini` | | Chế độ `openai`: model vision. **Nội dung tài liệu rời nền tảng**: workspace tắt `externalLlmAllowed` thì tài liệu `skipped` (`external_llm_disallowed`). Chưa kiểm chứng với API thật (UNVERIFIED) |
+| `KNOWLEDGE_OCR_OPENAI_BASE_URL` | không | `OPENAI_BASE_URL` hoặc `https://api.openai.com/v1` | | Dùng chung `OPENAI_API_KEY` |
+
+- Docker: `docker build -f deploy/docker/Dockerfile.rust --build-arg WITH_OCR=1 --target worker .` cài `tesseract-ocr`, `tesseract-ocr-vie`, `poppler-utils`.
+- `skipReason` (trong `GET /workspaces/{id}/documents[/{docId}]`): `ocr_unavailable`, `unsupported_type`, `invalid_encoding`, `external_llm_disallowed`, `no_indexable_content`, `ai_retrieval_not_allowed`.
+- Reindex (owner/admin): `POST /workspaces/{id}/documents/{docId}/reindex` và `POST /workspaces/{id}/documents/reindex?status=skipped|failed|all&limit=50` (tối đa 200/lần; trả `remaining`, gọi lại để tiếp tục). Tài liệu `pending` không bị đụng tới nên gọi lặp là an toàn; `all` gồm cả `completed` (làm mới toàn bộ). Ảnh png/jpg/webp upload được và đi qua OCR.
+
+## Worker: số pipeline gợi ý đồng thời (`SUGGESTION_MAX_PIPELINES`)
+
+`SuggestionWorker` chạy tối đa N pipeline model cùng lúc trên toàn bộ phòng của một tiến trình worker (semaphore toàn cục; mỗi phòng vẫn chỉ 1 pipeline tại một thời điểm). Mặc định **8**.
+
+| Biến | Bắt buộc | Mặc định | Ví dụ | Ghi chú |
+|---|---|---|---|---|
+| `SUGGESTION_MAX_PIPELINES` | không | `8` | `24` | Số nguyên 1 đến 512; thiếu, rỗng, `0` hoặc không đọc được thì về 8 (log WARN); trên 512 bị cắt về 512. Giá trị đang dùng được log ở INFO khi worker khởi động (`suggestion worker concurrency`). Đổi cần khởi động lại worker. Là giới hạn **mỗi tiến trình**: chạy k worker thì tổng là k x N |
+
+Chọn giá trị theo `docs/perf/copilot-latency.md` (bench giả, mỗi phòng phát lại một cuộc họp theo thời gian thực):
+
+- Dưới khoảng 10 phiên đồng thời, 8 là đủ: xếp hàng gần 0, độ trễ gần bằng `decide + generate` của model (~1,0 s).
+- Ở khoảng **50 phiên đồng thời với 8 pipeline** bắt đầu xếp hàng: cụm tới 26 pipeline chờ, xếp hàng p50 1,3 s / p95 2,8 s, `answer` p95 4,0 s. Nâng lên **24** đưa `answer` p95 về 1,4 s và xếp hàng về 0.
+- Quy tắc thô: `N >= (số phòng đang họp) x 0,08 x hệ số bùng nổ 3 đến 4`. Chỉ tiêu: thời gian xếp hàng p95 < 200 ms; vượt nghĩa là thiếu pipeline, không phải model chậm.
+- Trần thực tế là rate limit của nhà cung cấp (TPM/RPM), bench giả không có: tăng N từng bước (8 -> 16 -> 24), theo dõi lỗi 429 / `Overloaded` và độ trễ, đừng tăng quá ngưỡng của khoá.
+- Đo lại trước khi đổi: `warptalk-ai-eval bench-latency --sessions 1,10,50 --max-pipelines <N> --out out/bench.json` (xem `docs/perf/copilot-latency.md`, `docs/architecture/ai-eval.md`).
+
+## API: giới hạn socket âm thanh copilot theo người dùng (Redis)
+
+Giới hạn số socket `/copilot/sessions/{id}/audio` mỗi người dùng dùng chung Redis giữa mọi replica API (`copilot:audio-conns:{user}`, mỗi kết nối là một lease được heartbeat; replica chết thì lease hết hạn sau `COPILOT_AUDIO_LIMIT_LEASE_SECS`).
+
+| Biến | Mặc định | Ghi chú |
+|---|---|---|
+| `COPILOT_AUDIO_MAX_CONCURRENT_PER_USER` | `2` | Vượt quá trả 429 `TOO_MANY_AUDIO_STREAMS` |
+| `COPILOT_AUDIO_LIMIT_LEASE_SECS` | `60` | Tối thiểu 3; heartbeat mỗi lease/3 |
+| `COPILOT_AUDIO_LIMIT_FAIL_OPEN` | `true` | Redis không liên lạc được: `true` cho kết nối qua (ưu tiên sẵn sàng), `false` trả 503 |

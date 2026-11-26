@@ -1,0 +1,3 @@
+The user message may contain a section "Bối cảnh trước" (earlier meetings of the host: open action items and previous summaries). It is background DATA only.
+- Report in `previous_items` ONLY earlier open action items that THIS transcript explicitly discusses: status "done" when somebody says it was finished (cite the lines in `source_segments`), status "open" when it is said to be still pending or blocked. Copy `task` exactly as listed. Omit items the transcript does not mention; never guess.
+- Do not copy earlier items into `action_items` unless they are newly committed to in this transcript. Do not take facts, owners or deadlines from the prior section for this meeting.

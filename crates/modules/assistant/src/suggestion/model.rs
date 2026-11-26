@@ -12,6 +12,47 @@ pub const ASSISTANT_FOLLOWUPS: &str = "assistant:followups";
 /// Consumer group of the suggestion worker on `stt:results` (spec 09 section 14).
 pub const SUGGESTION_GROUP: &str = "suggestion-workers";
 
+/// Whose speech a turn is, from the point of view of the user the hints are for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Role {
+    /// The user's own speech (copilot channel `me`).
+    SelfSpeaker,
+    /// Somebody else (copilot channel `others`).
+    Other,
+    /// Regular meetings: no notion of "the user".
+    #[default]
+    Unknown,
+}
+
+impl Role {
+    /// Stable id used in category `roles` configuration.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SelfSpeaker => "self",
+            Self::Other => "other",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Role from the `channel` of an `stt:results` entry; anything but `me` / `others` is unknown.
+    pub fn from_channel(channel: Option<&str>) -> Self {
+        match channel.map(str::trim) {
+            Some(c) if c.eq_ignore_ascii_case("me") => Self::SelfSpeaker,
+            Some(c) if c.eq_ignore_ascii_case("others") => Self::Other,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Label of the speaker in the rendered transcript, `None` to keep the speaker id.
+    pub fn label(&self) -> Option<&'static str> {
+        match self {
+            Self::SelfSpeaker => Some("Tôi"),
+            Self::Other => Some("Người khác"),
+            Self::Unknown => None,
+        }
+    }
+}
+
 /// One transcript turn held in a room's rolling window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
@@ -22,6 +63,7 @@ pub struct Turn {
     /// Epoch milliseconds at which the turn entered the window (from the clock).
     pub at_ms: i64,
     pub tokens: u32,
+    pub role: Role,
 }
 
 /// Structured action item (spec 09 sections 7 and 15).
@@ -160,12 +202,16 @@ pub enum Outcome {
     BelowConfidence,
     UnknownCategory,
     CategoryDisabled,
+    /// The category is not allowed on this speaker's role (for example `answer` on own speech).
+    RoleNotAllowed,
     /// "Fact needs docs": nothing grounded was retrieved.
     NeedsDocuments,
     SlotDenied,
     GenerateEmpty,
     GenerateFailed,
     HygieneDropped,
+    /// Output carried an ungrounded URL or asked the reader for credentials / a click.
+    UnsafeOutput,
     Duplicate,
     PublishFailed,
     Published,
@@ -191,11 +237,13 @@ impl Outcome {
             Self::BelowConfidence => "below_confidence",
             Self::UnknownCategory => "unknown_category",
             Self::CategoryDisabled => "category_disabled",
+            Self::RoleNotAllowed => "role_not_allowed",
             Self::NeedsDocuments => "needs_documents",
             Self::SlotDenied => "slot_denied",
             Self::GenerateEmpty => "generate_empty",
             Self::GenerateFailed => "generate_failed",
             Self::HygieneDropped => "hygiene_dropped",
+            Self::UnsafeOutput => "unsafe_output",
             Self::Duplicate => "duplicate",
             Self::PublishFailed => "publish_failed",
             Self::Published => "published",
@@ -204,5 +252,18 @@ impl Outcome {
 
     pub fn is_published(&self) -> bool {
         matches!(self, Self::Published)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_from_copilot_channel() {
+        assert_eq!(Role::from_channel(Some("me")), Role::SelfSpeaker);
+        assert_eq!(Role::from_channel(Some("others")), Role::Other);
+        assert_eq!(Role::from_channel(None), Role::Unknown);
+        assert_eq!(Role::from_channel(Some("???")), Role::Unknown);
     }
 }

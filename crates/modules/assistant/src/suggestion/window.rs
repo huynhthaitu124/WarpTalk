@@ -77,6 +77,7 @@ mod tests {
             language: "en".into(),
             at_ms: i * 1000,
             tokens: estimate_tokens(text, cpt),
+            role: super::super::model::Role::Unknown,
         }
     }
 

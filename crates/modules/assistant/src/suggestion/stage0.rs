@@ -39,6 +39,24 @@ pub fn looks_like_question(text: &str, h: &HeuristicLang) -> bool {
     }
 }
 
+/// True when the segment looks like it asks somebody for a reply, information or a decision: a
+/// question mark anywhere, or a configured ask phrase on whole words anywhere. Deliberately
+/// generous; it only prioritises a segment for the `answer` fast path, the model decides.
+pub fn asks_for_response(text: &str, h: &HeuristicLang) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if h.question_marks.iter().any(|m| t.contains(m.as_str())) {
+        return true;
+    }
+    let ws = words(t);
+    h.ask_phrases.iter().any(|p| {
+        let pw = words(p);
+        !pw.is_empty() && ws.windows(pw.len()).any(|w| w == pw.as_slice())
+    })
+}
+
 /// `stt_confidence` is an average token logprob (<= 0); `None` or the configured sentinel means
 /// "unknown" and always passes (WT-543).
 pub fn check(
@@ -52,7 +70,7 @@ pub fn check(
         return Stage0::Reject("empty");
     }
     let h = cfg.heuristics_for(language);
-    let floor = if looks_like_question(text, &h) {
+    let floor = if looks_like_question(text, &h) || asks_for_response(text, &h) {
         cfg.min_question_words
     } else {
         cfg.min_words
@@ -116,6 +134,39 @@ mod tests {
             check(&c, "Next.js now", "en", None),
             Stage0::Reject("too_short")
         );
+    }
+
+    #[test]
+    fn vietnamese_and_english_asks_are_detected() {
+        let c = cfg();
+        let h = c.heuristics_for("vi");
+        for t in [
+            "Bao giờ bên anh gửi báo giá được?",
+            "khi nào team deploy xong",
+            "Anh có thể gửi file hôm nay được không",
+            "Báo cáo xong chưa",
+            "Ai sẽ phụ trách phần này",
+            "Sao lại chậm vậy",
+            "Có thể confirm giúp em deadline không?",
+        ] {
+            assert!(
+                asks_for_response(t, &h) || looks_like_question(t, &h),
+                "{t}"
+            );
+        }
+        assert!(!asks_for_response("Hôm nay trời đẹp quá", &h));
+        // Whole words only: "ai" inside "mai" must not match.
+        let phrases = HeuristicLang {
+            ask_phrases: vec!["ai".into()],
+            ..Default::default()
+        };
+        assert!(!asks_for_response("ngày mai đi", &phrases));
+        let en = c.heuristics_for("en");
+        assert!(asks_for_response("Could you send the numbers", &en));
+        assert!(asks_for_response("so the launch date is?", &en));
+        assert!(!asks_for_response("we ship on Friday", &en));
+        // A short ask gets the low question floor.
+        assert_eq!(check(&c, "khi nào xong", "vi", None), Stage0::Pass);
     }
 
     #[test]

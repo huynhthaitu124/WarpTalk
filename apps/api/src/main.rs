@@ -1,23 +1,14 @@
 //! Business plane: REST API, WebSocket hub, webhooks, scheduled jobs. Composition root that wires all modules.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use warptalk_config::{
     DatabaseConfig, HttpConfig, JwtConfig, LogFormat as ConfigLogFormat, RedisConfig,
     TelemetryConfig,
 };
-use warptalk_identity::{DevMailCapture, LogMailer, VerificationMailer};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_web::JwtKeys;
-use warptalk_workspace::{DevInvitationMailCapture, InvitationMailer, LogInvitationMailer};
-
-/// True when `DEV_MAIL_CAPTURE=1` and `REDIS_URL` is set (non-empty).
-fn dev_mail_capture_requested() -> bool {
-    std::env::var("DEV_MAIL_CAPTURE").ok().as_deref() == Some("1")
-        && std::env::var("REDIS_URL").is_ok_and(|v| !v.trim().is_empty())
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -45,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to PostgreSQL")?;
 
-    for module in ["identity", "assistant"] {
+    for module in ["identity", "assistant", "copilot", "subscription"] {
         let migrated: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE module = $1)",
         )
@@ -83,22 +74,13 @@ async fn main() -> anyhow::Result<()> {
         voice_cloner: None,
         voice_admin: None,
         test_mode: warptalk_config::TestModeConfig::from_env()?.enabled(),
+        stt_token_issuer: None,
+        copilot_server_stt: None,
+        copilot_audio_config: None,
+        billing_config: None,
     };
-    let (verification_mailer, invitation_mailer): (
-        Arc<dyn VerificationMailer>,
-        Arc<dyn InvitationMailer>,
-    ) = if dev_mail_capture_requested() {
-        tracing::warn!("DEV_MAIL_CAPTURE enabled: raw tokens stored in Redis (dev/test only)");
-        let verify = DevMailCapture::from_flag(Some("1"), &redis_cfg.url)
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-            .context("dev verification mail capture not enabled")?;
-        let invite = DevInvitationMailCapture::from_flag(Some("1"), &redis_cfg.url)
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-            .context("dev invitation mail capture not enabled")?;
-        (Arc::new(verify), Arc::new(invite))
-    } else {
-        (Arc::new(LogMailer), Arc::new(LogInvitationMailer))
-    };
+    let (verification_mailer, invitation_mailer) =
+        warptalk_api::auth_wiring::mailers(&redis_cfg.url).context("configuring email delivery")?;
     let opts = warptalk_api::ApiOptions {
         invitation_mailer: Some(invitation_mailer),
         ..opts

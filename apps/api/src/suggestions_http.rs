@@ -163,6 +163,7 @@ async fn inject_transcript(
         far_speaker_name: speaker_name.clone(),
         far_speaker_source: speaker_name.as_ref().map(|_| "participant".to_owned()),
         far_speaker_confidence: speaker_name.as_ref().map(|_| 1.0),
+        channel: None,
     };
     let mut conn = s.redis.clone();
     let copy = streams::per_meeting(STT_RESULTS, room_id);

@@ -29,6 +29,8 @@ pub struct SlotParams {
     /// 0 = unlimited.
     pub max_per_workspace: u32,
     pub workspace_window_seconds: u32,
+    /// Skip the cooldown CHECK (latency-critical hints) while still arming it, budgets apply.
+    pub bypass_cooldown: bool,
 }
 
 // One script: check cooldown, room budget, workspace budget; claim only when all pass.
@@ -40,7 +42,8 @@ local rmax = tonumber(ARGV[3])
 local rttl = tonumber(ARGV[4])
 local wmax = tonumber(ARGV[5])
 local wttl = tonumber(ARGV[6])
-if cd > 0 and redis.call('EXISTS', KEYS[1]) == 1 then return 'cooldown' end
+local bypass = ARGV[7] == '1'
+if cd > 0 and not bypass and redis.call('EXISTS', KEYS[1]) == 1 then return 'cooldown' end
 local n = tonumber(redis.call('GET', KEYS[2]) or '0')
 if n >= rmax then return 'room_budget' end
 if wmax > 0 then
@@ -96,6 +99,7 @@ impl SuggestionState {
             .arg(p.room_ttl_seconds.max(1))
             .arg(p.max_per_workspace)
             .arg(p.workspace_window_seconds.max(1))
+            .arg(if p.bypass_cooldown { "1" } else { "0" })
             .invoke_async(&mut conn)
             .await?;
         Ok(match code.as_str() {

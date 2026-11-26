@@ -1,0 +1,38 @@
+[package]
+name = "warptalk-ai-eval"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "warptalk_ai_eval"
+path = "src/lib.rs"
+
+[[bin]]
+name = "warptalk-ai-eval"
+path = "src/main.rs"
+
+[dependencies]
+warptalk-assistant = { workspace = true }
+warptalk-llm = { workspace = true }
+warptalk-kernel = { workspace = true }
+warptalk-contracts = { workspace = true }
+warptalk-bus = { workspace = true }
+warptalk-db = { workspace = true }
+warptalk-settings = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+redis = { workspace = true }
+sqlx = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

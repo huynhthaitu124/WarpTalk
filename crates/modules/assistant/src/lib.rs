@@ -7,10 +7,15 @@
 //! - `http`: axum handlers and request/response DTOs.
 
 pub mod application;
+pub mod chat;
 pub mod domain;
 pub mod http;
 pub mod infrastructure;
+pub mod memory;
+pub mod safety;
 pub mod suggestion;
+pub mod summary;
+pub mod usage;
 
 use std::sync::Arc;
 
@@ -38,8 +43,28 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
         },
         Migration {
             version: 2,
+            name: "meeting_summaries",
+            sql: include_str!("../migrations/0002_meeting_summaries.sql"),
+        },
+        Migration {
+            version: 3,
+            name: "summary_speakers_memory",
+            sql: include_str!("../migrations/0003_summary_speakers_memory.sql"),
+        },
+        Migration {
+            version: 20,
+            name: "chat_messages",
+            sql: include_str!("../migrations/0020_chat_messages.sql"),
+        },
+        Migration {
+            version: 30,
+            name: "suggestion_feedback",
+            sql: include_str!("../migrations/0030_suggestion_feedback.sql"),
+        },
+        Migration {
+            version: 40,
             name: "conversations",
-            sql: include_str!("../migrations/0002_conversations.sql"),
+            sql: include_str!("../migrations/0040_conversations.sql"),
         },
     ],
 };
@@ -66,6 +91,13 @@ pub struct ChatDeps {
     pub default_model: Option<String>,
 }
 
+/// Dependencies of the summary REST routes.
+pub struct SummaryHttpDeps {
+    pub service: Arc<summary::SummaryService>,
+    pub access: Arc<dyn summary::RoomAccess>,
+    pub clock: Arc<dyn Clock>,
+}
+
 pub struct AssistantModule {
     llm_config: Arc<LlmConfigService>,
     repo: Arc<dyn LlmConfigRepository>,
@@ -73,7 +105,12 @@ pub struct AssistantModule {
     pool: PgPool,
     access: Arc<dyn WorkspaceAccess>,
     clock: Arc<dyn Clock>,
-    chat: Option<ChatService>,
+    /// WarpBot conversations (`/assistant/conversations...`).
+    conversations: Option<ChatService>,
+    summary: Option<http::summary::SummaryApi>,
+    feedback: Option<suggestion::feedback_http::FeedbackApi>,
+    /// In-meeting ask/recap (`meetings/{room_id}/ask...`).
+    chat: Option<chat::ChatApi>,
 }
 
 impl AssistantModule {
@@ -95,13 +132,16 @@ impl AssistantModule {
             pool: deps.pool,
             access: deps.access,
             clock: deps.clock,
+            conversations: None,
+            summary: None,
+            feedback: None,
             chat: None,
         }
     }
 
     /// Turns on WarpBot chat (`/assistant/conversations...`). Without it those routes are absent.
     pub fn enable_chat(&mut self, deps: ChatDeps) {
-        self.chat = Some(ChatService::new(ChatServiceDeps {
+        self.conversations = Some(ChatService::new(ChatServiceDeps {
             repo: Arc::new(PgConversationRepository::new(self.pool.clone())),
             bus: deps.bus,
             llm: deps.llm,
@@ -113,17 +153,51 @@ impl AssistantModule {
         }));
     }
 
+    /// Mount the post-session summary routes (`meetings/{room_id}/summary`, action items).
+    pub fn with_summary(mut self, deps: SummaryHttpDeps) -> Self {
+        self.summary = Some(http::summary::SummaryApi {
+            service: deps.service,
+            access: deps.access,
+            clock: deps.clock,
+        });
+        self
+    }
+
+    /// Mount the suggestion feedback routes (`suggestions/{id}/feedback`, quality, export).
+    pub fn with_suggestion_feedback(mut self, api: suggestion::feedback_http::FeedbackApi) -> Self {
+        self.feedback = Some(api);
+        self
+    }
+
+    /// Mount the meeting assistant routes (`meetings/{room_id}/ask`, `ask/history`, `recap`).
+    pub fn with_chat(mut self, api: chat::ChatApi) -> Self {
+        self.chat = Some(api);
+        self
+    }
+
     /// Routes relative to the API prefix (`/api/v1`), state applied.
     pub fn router(&self) -> axum::Router {
         let router = http::router(http::AppState {
             llm_config: self.llm_config.clone(),
             jwt: self.jwt.clone(),
+            summary: self.summary.clone(),
         });
-        match &self.chat {
+        let router = match &self.conversations {
             Some(chat) => router.merge(http::chat::router(http::chat::ChatState {
                 chat: chat.clone(),
                 jwt: self.jwt.clone(),
             })),
+            None => router,
+        };
+        let router = match &self.feedback {
+            Some(api) => router.merge(suggestion::feedback_http::router(
+                api.clone(),
+                self.jwt.clone(),
+            )),
+            None => router,
+        };
+        match &self.chat {
+            Some(api) => router.merge(chat::http::router(api.clone(), self.jwt.clone())),
             None => router,
         }
     }

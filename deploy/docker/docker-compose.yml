@@ -3,7 +3,10 @@
 #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
 #   (hoac chay scripts/dev-up.sh, no lam tat ca)
 #
-# Dich vu: postgres:16, redis:7, qdrant, livekit-server (--dev), minio (profile "minio", tuy chon).
+# Mac dinh (copilot, ADR 0001): chi postgres:16, redis:7, qdrant.
+# Profile "translation": livekit-server (--dev) + pipeline dich/dub (khi co container). Bat bang:
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env --profile translation up -d
+# Profile "minio": S3 tuong thich (tuy chon).
 name: warptalk
 
 services:
@@ -49,8 +52,10 @@ services:
       - qdrantdata:/qdrant/storage
     # Khong healthcheck (anh qdrant khong co curl/wget): scripts/dev-up.sh doi http://localhost:6333/readyz.
 
+  # Dich hop/dub/voice clone da tam an (ADR 0001): LiveKit chi chay voi --profile translation.
   livekit:
     image: livekit/livekit-server:latest
+    profiles: ["translation"]
     restart: unless-stopped
     command: ["--dev", "--config", "/etc/livekit.yaml", "--bind", "0.0.0.0"]
     volumes:
@@ -110,8 +115,8 @@ services:
   #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
   #     REDIS_URL: redis://redis:6379
   #     QDRANT_URL: http://qdrant:6333
-  # pipeline:
-  #   profiles: ["apps"]
+  # pipeline:   # dich/dub realtime: chi voi --profile translation (khong nam trong stack mac dinh)
+  #   profiles: ["translation"]
   #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-pipeline } }
   #   env_file: .env
   #   environment:

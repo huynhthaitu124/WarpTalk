@@ -204,3 +204,8 @@ List pages have no visible h1: the breadcrumb is the title and `PageHeader` keep
 - Landmarks: `Skip to content` link, `<aside aria-label="Sidebar">`, `<header>` with a `nav aria-label="Breadcrumb"`, `<main id="main">`, `<nav aria-label>`. The mobile drawer is a Radix dialog named "Navigation" (focus trap, Escape, focus return).
 - Forms: errors are per field (`Field error` -> `aria-invalid`, `role=alert`), the first invalid field is focused; a focused invalid control draws a danger ring.
 - Keyboard: Cmd/Ctrl+K, `G` then `H`/`M`/`P`/`K`/`S`/`E` (go to Home, Meetings, Members, Knowledge, Settings, External), `C` create meeting, `J` join by code (ignored while typing or when a dialog/menu is open; the hints in the command menu are the only source of truth), dialogs trap focus and restore it, menus use arrow keys, focus ring is visible on every interactive element.
+
+## 8. Feature flags and copilot pages
+
+- Entry points of hidden features (translation meetings, dubbing, voice cloning, external bridge) are gated with `useFeatures()` / `<Feature name>` / `<FeatureRoute name>` (`src/lib/features.tsx`); routes redirect Home silently, code is kept.
+- Session pages (`src/features/Sessions.tsx`) use only existing primitives: bands (`GroupHeader`), `ListRow`-style rows, `Alert tone="info"` for the "needs the desktop app" notice, `StatusPill`, `Capsule`. Lists stack below 640px; the transcript scroll region is focusable and labelled.

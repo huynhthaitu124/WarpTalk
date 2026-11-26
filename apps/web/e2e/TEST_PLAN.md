@@ -5,6 +5,7 @@ Run: `cd apps/web && npx playwright test` (starts `scripts/e2e-backend.sh`, `nex
 Update screenshots: `npx playwright test --update-snapshots`.
 
 Conventions
+- Feature flags (ADR 0001): the fixtures mock `GET /api/v1/features` with **everything on** by default (`flags` option, `fixtures/features.ts`), so the translation / dubbing / voice / bridge specs below keep testing that UI; `test.use({ flags: FLAGS_DEFAULT })` gives the platform defaults (translation hidden), `flags: 'real'` hits the backend. Copilot endpoints are mocked with `mockCopilot` (`fixtures/copilot.ts`) except in the "real backend" SESS specs.
 - Every test creates fresh random users/workspaces (`e2e-<label>-<hex>@example.com`), so the suite is re-runnable against a dirty DB.
 - Email verification and invitations: the test backend runs with `DEV_MAIL_CAPTURE=1`, which stores the raw token in Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`). Fixtures read it with `redis-cli GET` and call `POST /auth/verify-email` / `POST /invitations/accept` (`fixtures/api.ts`: `verifyEmail`, `inviteAndAccept`). No psql for verification or membership (`addWorkspaceMember` is deleted). psql remains only for state with no public API: `expireBridgeLease`, `seedMeetingRow` (the meeting row a LiveKit join creates), `seedChatTranslation` (what the AI translation worker stores) and `makeSystemAdmin`.
 - Signed-in state is arranged by seeding the refresh token into localStorage; the app boots through its real silent-refresh path. Auth specs use the real login form.
@@ -382,3 +383,97 @@ All P0 and P1 cases are automated; the nine `todo` cases are P2. Spec files: `e2
 6. A bridge-room viewer is not a room participant, so `POST /meetings/{id}/join` (captions) is refused for them (`not a participant of this meeting`); a viewer cannot read captions until the join gate admits workspace members of a bridge room.
 7. Bridge claim/takeover/heartbeat responses omit the lease expiry; the UI derives staleness from `capturerLeaseAt + leaseSeconds` and the server clock may differ from the browser's.
 8. No endpoint to end/release a bridge room's capturer lease on stop (`stopExternalCapture` only stops native; the lease ages out after 45 s).
+
+## 13. Feature flags (FEAT) and copilot sessions (SESS)
+
+Defaults for FEAT/SESS: platform flags `translationMeetings,dubbing,voiceClone,externalBridge = false`, `copilot = true`.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| FEAT-01 | P0 | Flags off: Home | Sidebar has Home + Copilot, no Meetings / External meeting; quick actions are copilot ones only; Home copy mentions transcripts, suggestions, follow-ups, minutes; page title "Home · WarpTalk" | auto |
+| FEAT-02 | P1 | Flags off: command menu, key `C` | "Start copilot session" and "Go to Copilot sessions" present, no meeting/external entries; `C` opens the start dialog | auto |
+| FEAT-03 | P0 | Flags off: open `/rooms`, `/meetings`, `/join`, `/external`, `/:ws/meetings`, `/rooms/:id`, `/meetings/:id` | Each lands on `/:ws/home`, no alert | auto |
+| FEAT-04 | P1 | Flags off: Settings -> Account | No voice cloning section | auto |
+| FEAT-05 | P0 | `GET /features` answers 404 | Behaves as the defaults; `/external` redirects | auto |
+| FEAT-06 | P1 | Request carries `workspaceId`; navigating does not refetch | Cached per workspace | auto |
+| FEAT-07 | P1 | `copilot=false` | Copilot nav/quick action hidden, `/:ws/sessions` redirects Home | auto |
+| FEAT-10 | P0 | Flags on | Meetings + External meeting nav, New meeting / Join by code quick actions, create dialog, `/rooms` forwards to Meetings | auto |
+| FEAT-11 | P1 | `voiceClone` on | Voice cloning section in Settings -> Account | auto |
+| FEAT-12 | P1 | `externalBridge` on | `/external` opens from the nav | auto |
+| FEAT-13 | P1 | Only `externalBridge` on | Only that entry; `/meetings` redirects | auto |
+| FEAT-14 | P1 | `translationMeetings` on, `dubbing` off, then on | Audio routes card and "I listen in" only with dubbing | auto |
+| SESS-01..06 | P0 | Sessions list (mocked): rows, count, `GET /copilot/sessions?workspaceId=`, open detail; empty state + dialog deep link; browser start dialog explains the desktop app, validates, POSTs `{workspaceId,title,platform,meetingUrl,languages{me,others}}`; native host calls `startCopilotSession({sessionId,accessToken,apiBaseUrl})` and Stop capture calls `stopCopilotSession`; 404 = empty, 500 = API message | | auto |
+| SESS-10..15 | P0 | Detail: live transcript polls while IN_PROGRESS (new segment appears), follow-ups; ended: summary + decisions + action items, no polling; mark done / reopen (PATCH); regenerate summary; unknown session; fallback to the room | | auto |
+| SESS-20..22 | P1 | Home quick actions + recent sessions, empty state copy, "Open action items" tab (mine) | | auto |
+| SESS-30..32 | P0 | Real backend: platform features, create in the dialog -> list -> detail -> End session, session created by API shows on Home/list | | auto |
+| A11Y-12 | P0 | axe: sessions list, action items tab, start dialog, detail live and ended, dark + light | | auto |
+| VR-20/21 | P1 | Screenshots: list, detail ended, detail live at 1280 and 390, dark + light; start dialog 1280/390 | | auto |
+
+## 14. Live copilot in the native host (COP) - `e2e/tests/sessions-live.spec.ts` (chromium project)
+
+The host is the scriptable mock `fixtures/native-mock.ts`, extended with `copilotStatus`, `pushOverlaySuggestion`, `clearOverlaySuggestion`, optional `listInputDevices`, `copilotStartError` (+ `mockSet.copilotStartError`) and a capture state that survives reloads (sessionStorage, like the real host that keeps capturing while the WebView reloads). Events are dispatched with `emitNative` (`copilot.partial|segment|status|error|levels`). `mockCopilot` records `stoppedBeforeEnd` (was `stopCopilotSession` already received when `POST .../end` arrived). COP-30 runs against the real backend and starts `target/debug/warptalk-worker` itself (the transcript consumer is not part of `scripts/e2e-backend.sh`; the test skips when the binary is not built).
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| COP-01 | P0 | Native dialog: preselected app (the one playing audio), pick another app, mic, languages, Start session | `POST /copilot/sessions`, navigates to `/sessions/:id`, `startCopilotSession` gets `{sessionId, accessToken, apiBaseUrl, appBundleId, micDeviceUid, languages}`; detail shows capture status and Stop capture | auto |
+| COP-02 | P1 | No apps / default mic | "None: microphone only"; `appBundleId` and `micDeviceUid` omitted | auto |
+| COP-03 | P0 | `startCopilotSession` rejects PERMISSION_DENIED | Error stays in the dialog with Open System Settings / Request permission / Try again; retry reuses the created session (one POST) and navigates | auto |
+| COP-04 | P1 | Start fails (NO_AUDIO_PROCESS) -> "Open the session without capture" | Session page with Start capture, no live panel | auto |
+| COP-10 | P0 | Start capture on the detail; `copilot.levels` (linear and dBFS), `copilot.status` per channel | Per-channel meter values and Connected / Reconnecting badges with detail | auto |
+| COP-11 | P0 | `copilot.partial` for both sides, then `copilot.segment` (twice) and a poll that returns it | Partial lines above the transcript; final replaces that side's partial and appears at once (pending); duplicate event ignored; the polled line replaces the pending one (no duplicate); non-final segment is only a partial | auto |
+| COP-12 | P0 | Stop capture | `stopCopilotSession` called, panel gone, session still Live with End session | auto |
+| COP-13 | P0 | End session while capturing | `stopCopilotSession` precedes `POST /copilot/sessions/{id}/end`; panel and partials cleared | auto |
+| COP-14 | P0 | `copilot.error` PERMISSION_DENIED | Error row with Request permission, Open System Settings, Dismiss; channel shows Problem | auto |
+| COP-15 | P1 | Start capture on the detail rejects | Error row with Try again; retry attaches | auto |
+| COP-16 | P0 | Reload while the host is capturing | `copilotStatus()` running -> attached (live panel, Stop capture, partials keep flowing) | auto |
+| COP-17 | P1 | Host captures session A, open session B | Notice with link to A; Start capture disabled | auto |
+| COP-20 | P0 | SSE suggestions while capturing; dismiss one; stop | `pushOverlaySuggestion {id, category, content, followUp?}` per suggestion (none when not capturing); `clearOverlaySuggestion(id)` on dismiss (no re-push on stream replay) and for the rest on stop; follow-ups stay listed | auto |
+| COP-21/22 | P0 | Browser, and a host without the copilot methods | Desktop-app explanation, no live panel or capture buttons, End session still works | auto |
+| COP-30 | P0 | Real backend: host emits segment events and posts the same segments via `POST /copilot/sessions/{id}/segments` | Lines never double: pending lines are replaced by the polled ones (server id = uuid v5 of session + clientSegmentId; text fallback), `Tôi` reads as Me; resend stays one line; End stops the host | auto |
+| A11Y-13 | P0 | axe: live detail (also with an error row) and native start dialog, dark + light | no serious/critical | auto |
+| VR-22/23 | P1 | Screenshots: live detail 1280 and 390 dark + light; native start dialog 1280 + 390 | match | auto |
+
+Notes: dedupe never relies on a text match alone when ids are available; the polled transcript stays the source of truth. `copilot.levels.rms` negative = dBFS, otherwise linear 0..1 (the host contract does not fix the unit; both are accepted).
+
+## 15. Password recovery, change password, Google sign-in (PWR) - `e2e/tests/auth-recovery.spec.ts` (chromium) + EXP-03
+
+Reset tokens are read from Redis `dev:mail:reset:{email}` (`devMail('reset', email)`, DEV_MAIL_CAPTURE=1; a new forgot request replaces the key). Google Identity Services is replaced by a route-mocked `https://accounts.google.com/gsi/client` that renders a plain button; the client id is injected per test through `window.__E2E_GOOGLE_CLIENT_ID__` (only honoured in the e2e harness build, so every other spec keeps a Google-free login page). UI copy is English like the rest of the app.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| PWR-01 | P0 | Login -> Forgot password? -> submit -> read token -> `/reset-password?token=` -> new password + confirm | Neutral "If an account exists" message; success lands on `/login?reset=1` with "Password updated"; new password signs in, old one is 401; re-using the link shows "Reset link not valid" with "Request a new link" -> `/forgot-password` | auto |
+| PWR-02 | P0 | Forgot password with an unknown email | Same neutral message (no account enumeration) | auto |
+| PWR-03 | P1 | Empty/malformed email; short password; mismatch; bogus token; no token | Field errors; INVALID_TOKEN and missing token show the invalid state | auto |
+| PWR-04 | P0 | axe on forgot, reset form, reset invalid state, dark + light | no serious/critical | auto |
+| PWR-05 | P1 | Screenshots forgot + reset at 1280 and 390, dark + light | match | auto |
+| PWR-10 | P0 | Unverified login -> "Resend verification email" | `POST /auth/resend-verification` 202, neutral confirmation; mailed token verifies | auto |
+| PWR-11 | P1 | `/verify-email?token=bad` | Error + resend (asks for the email when the URL has none, validates it) | auto |
+| PWR-20 | P0 | Settings -> Account: wrong current password, mismatch, success | Inline "current password is incorrect" (invalid + focus); success toast, form cleared; old password 401, new 200 | auto |
+| PWR-21 | P1 | `/me` says `hasPassword:false, googleLinked:true` | "Set a password" hint pointing to Forgot password (no form); Unlink Google disabled with the reason | auto |
+| PWR-22 | P1 | Link then unlink Google in settings (GIS + `/me/google/link` mocked) | Body `{idToken}`; section toggles Linked/Link | auto |
+| PWR-30 | P0 | `/design` (GIS not requested) -> `/register` + `/login` show the button; click it | `POST /auth/google {idToken}`, session set, lands on `/workspaces` | auto |
+| PWR-31 | P1 | `/auth/google` fails with INVALID_GOOGLE_TOKEN / GOOGLE_UNAVAILABLE / GOOGLE_LINK_REQUIRES_VERIFIED_EMAIL / GOOGLE_ACCOUNT_MISMATCH / ACCOUNT_LOCKED | Mapped explanatory message, stays on `/login` | auto |
+| PWR-32 | P1 | macOS host bridge without a google sign-in method | Button hidden (TODO: native method when the host adds one) | auto |
+| PWR-33 | P1 | axe on login with the Google button | no serious/critical | auto |
+| PWR-35 | P0 | No client id | No button, GIS script never requested (login + register) | auto |
+| EXP-03 | P1 | Static export built without `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No button, no request to accounts.google.com | auto |
+
+## 16. Billing (BILL) - `e2e/tests/billing.spec.ts` (chromium project)
+
+Workspace billing at `/:workspaceSlug/billing` (sidebar "Billing"). BILL-01/02 use the real backend (Stripe is not configured in e2e, so checkout answers 503 STRIPE_NOT_CONFIGURED); the other cases route-mock the billing endpoints for deterministic data (`mockBilling`), the checkout/portal URL (a same-origin dummy page) and the service state. UI copy is English like the rest of the app.
+
+| ID | Pri | Steps | Expected | Status |
+|---|---|---|---|---|
+| BILL-01 | P0 | Owner opens Billing (real backend) | Plan card, balance region, plans grid; Buy credits without Stripe -> "payments are not set up" | auto |
+| BILL-02 | P0 | Member (invited, real backend) opens Billing | Plans visible, "Only the workspace owner can change the plan" explanation; no Upgrade / Buy credits / portal buttons | auto |
+| BILL-03 | P0 | Owner clicks Upgrade (checkout mocked) and Buy credits | `POST /billing/checkout` `{planId}` / `{topUpCredits}`; browser navigates to the returned URL; current and non-purchasable plans have disabled buttons | auto |
+| BILL-04 | P1 | Checkout answers 503 STRIPE_NOT_CONFIGURED / 403; top-up of 0 | Explained messages; client-side "whole number of credits" error | auto |
+| BILL-05 | P1 | Manage in billing portal | `POST /billing/portal`, navigates to returned URL | auto |
+| BILL-06 | P1 | `?checkout=success` / `?checkout=cancel` | "Payment received" / "Checkout cancelled" notices | auto |
+| BILL-07 | P1 | Usage grouped by day / feature / member | Table per grouping (aria-pressed toggle) | auto |
+| BILL-08 | P1 | 25 transactions, page size 10 | Page 1 of 3 -> 3 of 3; Previous/Next disabled at the ends; 10/10/5 rows | auto |
+| BILL-09 | P0 | serviceState suspended / low_balance / in_overage / healthy | Shell banner with "Open billing" link (none when healthy); Billing shows the service badge | auto |
+| BILL-10 | P2 | Sidebar Billing link | Navigates to `/:slug/billing` | auto |
+| BILL-11 | P0 | Create session answers 402 INSUFFICIENT_CREDITS | "Not enough credits" alert with Open billing link (native capture errors with that code get an Open billing action in CaptureRecovery) | auto |
+| BILL-20 | P0 | axe: billing page with banner and success notice, dark + light | no serious/critical | auto |
+| BILL-21 | P1 | Screenshots billing at 1280 and 390, dark + light | match | auto |

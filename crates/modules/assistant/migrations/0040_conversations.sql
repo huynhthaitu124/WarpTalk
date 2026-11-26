@@ -1,5 +1,5 @@
 -- WarpBot conversations (05a "Assistant"). One conversation belongs to one user in one workspace.
-CREATE TABLE assistant.assistant_conversations (
+CREATE TABLE IF NOT EXISTS assistant.assistant_conversations (
     id              uuid         PRIMARY KEY,
     workspace_id    uuid         NOT NULL,
     user_id         uuid         NOT NULL,
@@ -10,13 +10,13 @@ CREATE TABLE assistant.assistant_conversations (
     is_archived     boolean      NOT NULL DEFAULT false
 );
 
-CREATE INDEX ix_assistant_conversations_owner
+CREATE INDEX IF NOT EXISTS ix_assistant_conversations_owner
     ON assistant.assistant_conversations (workspace_id, user_id, is_archived, last_message_at DESC);
 
 -- user_id is null on the assistant's own replies.
 -- tool_results_json on an assistant reply holds the sources the answer cited (JSON array of
 -- {marker, kind, title, ref}); the tool calls themselves are rows of assistant_tool_calls.
-CREATE TABLE assistant.assistant_messages (
+CREATE TABLE IF NOT EXISTS assistant.assistant_messages (
     id                uuid        PRIMARY KEY,
     conversation_id   uuid        NOT NULL
         REFERENCES assistant.assistant_conversations (id) ON DELETE CASCADE,
@@ -32,10 +32,10 @@ CREATE TABLE assistant.assistant_messages (
     completed_at      timestamptz
 );
 
-CREATE INDEX ix_assistant_messages_conversation
+CREATE INDEX IF NOT EXISTS ix_assistant_messages_conversation
     ON assistant.assistant_messages (workspace_id, conversation_id, created_at);
 
-CREATE TABLE assistant.assistant_tool_calls (
+CREATE TABLE IF NOT EXISTS assistant.assistant_tool_calls (
     id             uuid         PRIMARY KEY,
     message_id     uuid         NOT NULL
         REFERENCES assistant.assistant_messages (id) ON DELETE CASCADE,
@@ -48,4 +48,4 @@ CREATE TABLE assistant.assistant_tool_calls (
     completed_at   timestamptz
 );
 
-CREATE INDEX ix_assistant_tool_calls_message ON assistant.assistant_tool_calls (message_id);
+CREATE INDEX IF NOT EXISTS ix_assistant_tool_calls_message ON assistant.assistant_tool_calls (message_id);

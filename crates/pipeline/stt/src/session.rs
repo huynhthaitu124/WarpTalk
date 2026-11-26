@@ -64,9 +64,16 @@ impl OpenAiRealtimeStt {
 
     /// The `session.update` for a speaker.
     pub fn session_config(&self, lang: Option<&str>) -> SessionConfig {
+        self.session_config_with(lang, &SessionHints::default())
+    }
+
+    /// Like [`Self::session_config`] with extra hints: more expected languages (plural-hint
+    /// models only; single-hint models get the primary) and a vocabulary prompt.
+    pub fn session_config_with(&self, lang: Option<&str>, hints: &SessionHints) -> SessionConfig {
         let lang = lang.or(self.cfg.language_hint.as_deref());
         let mut t = TranscriptionConfig {
             model: self.cfg.model.clone(),
+            prompt: hints.prompt.clone().filter(|p| !p.trim().is_empty()),
             ..TranscriptionConfig::default()
         };
         if let Some(l) = lang.filter(|l| *l != "auto") {
@@ -74,15 +81,69 @@ impl OpenAiRealtimeStt {
                 // Declared language first; English stays expected so embedded English product
                 // terms are not forced into a phonetic rendering (upstream finding).
                 t.languages.push(l.to_string());
-                if l != "en" {
+                for extra in &hints.languages {
+                    if extra != l && !t.languages.contains(extra) {
+                        t.languages.push(extra.clone());
+                    }
+                }
+                if l != "en" && !t.languages.iter().any(|x| x == "en") {
                     t.languages.push("en".into());
                 }
             } else {
                 t.language = Some(l.to_string());
             }
+        } else if self.cfg.uses_plural_languages() && !hints.languages.is_empty() {
+            t.languages = hints.languages.clone();
         }
         SessionConfig::transcription(t, self.cfg.wants_logprobs())
     }
+
+    /// `open_session` with [`SessionHints`] (the plain trait method uses the defaults).
+    pub async fn open_session_with(
+        &self,
+        params: SessionParams,
+        sink: mpsc::Sender<SttEvent>,
+        hints: &SessionHints,
+    ) -> Result<Box<dyn SttSession>, SttError> {
+        let socket = self.pool.claim().await?;
+        let (mut writer, reader_half) = socket.ws.split();
+        let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
+        // Fire-and-forget: the server applies events in order, so audio may follow directly.
+        send_event(
+            &mut writer,
+            &ClientEvent::SessionUpdate {
+                session: self.session_config_with(lang.as_deref(), hints),
+            },
+        )
+        .await?;
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let dead = Arc::new(AtomicBool::new(false));
+        let reader = tokio::spawn(read_loop(
+            reader_half,
+            cmd_rx,
+            sink,
+            TurnMachine::new(self.cfg.logprob_filter()),
+            self.cfg.event_timeout(),
+            dead.clone(),
+        ));
+        Ok(Box::new(OpenAiSession {
+            writer,
+            cmd: cmd_tx,
+            reader,
+            dead,
+            lang,
+            event_timeout: self.cfg.event_timeout(),
+        }))
+    }
+}
+
+/// Optional per-session hints beyond the single language of `SessionParams`.
+#[derive(Debug, Clone, Default)]
+pub struct SessionHints {
+    /// Other languages to expect (code-switching), base codes.
+    pub languages: Vec<String>,
+    /// Vocabulary / glossary prompt.
+    pub prompt: Option<String>,
 }
 
 enum ReaderCmd {
@@ -107,35 +168,8 @@ impl SpeechToText for OpenAiRealtimeStt {
         params: SessionParams,
         sink: mpsc::Sender<SttEvent>,
     ) -> Result<Box<dyn SttSession>, SttError> {
-        let socket = self.pool.claim().await?;
-        let (mut writer, reader_half) = socket.ws.split();
-        let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
-        // Fire-and-forget: the server applies events in order, so audio may follow directly.
-        send_event(
-            &mut writer,
-            &ClientEvent::SessionUpdate {
-                session: self.session_config(lang.as_deref()),
-            },
-        )
-        .await?;
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let dead = Arc::new(AtomicBool::new(false));
-        let reader = tokio::spawn(read_loop(
-            reader_half,
-            cmd_rx,
-            sink,
-            TurnMachine::new(self.cfg.logprob_filter()),
-            self.cfg.event_timeout(),
-            dead.clone(),
-        ));
-        Ok(Box::new(OpenAiSession {
-            writer,
-            cmd: cmd_tx,
-            reader,
-            dead,
-            lang,
-            event_timeout: self.cfg.event_timeout(),
-        }))
+        self.open_session_with(params, sink, &SessionHints::default())
+            .await
     }
 }
 

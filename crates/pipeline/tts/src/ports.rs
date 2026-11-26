@@ -89,8 +89,10 @@ impl CachedAudio {
             return None;
         }
         let pcm: Vec<f32> = body
-            .chunks_exact(2)
-            .map(|p| f32::from(i16::from_le_bytes([p[0], p[1]])) / 32767.0)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|p| f32::from(i16::from_le_bytes(*p)) / 32767.0)
             .collect();
         Some(Self {
             sample_rate,

@@ -45,6 +45,22 @@ export interface CaptureStatus {
   dubTrack?: string | null;
   error?: { code: string; message: string };
 }
+/** `startCopilotSession` (P1, apps/macos/BRIDGE.md): the app captures mic ("me") + meeting-app audio ("others") and posts segments itself. */
+export interface StartCopilotSessionOptions {
+  sessionId: string;
+  accessToken: string;
+  apiBaseUrl: string;
+  /** Meeting app whose audio is the "others" channel (a `listAudioApps()` bundle id). */
+  appBundleId?: string;
+  /** Input device for the "me" channel; omitted = system default. */
+  micDeviceUid?: string;
+  languages?: { me: string; others: string };
+}
+export interface OverlaySuggestion { id: string; category: string; content: string; followUp?: string }
+export type CopilotChannel = 'me' | 'others';
+export interface CopilotSegmentEvent {
+  clientSegmentId: string; channel: CopilotChannel; text: string; language?: string; startMs?: number; endMs?: number; confidence?: number; isFinal?: boolean;
+}
 export interface OverlayCaption { speaker?: string; text: string; translation?: string; segmentId?: string; isFinal?: boolean }
 export type Permissions = Record<PermissionKind, PermissionState>;
 
@@ -55,6 +71,15 @@ export interface WarptalkNative {
   startExternalCapture(o: StartExternalCaptureOptions): Promise<CaptureStatus>;
   stopExternalCapture(): Promise<CaptureStatus>;
   captureStatus(): Promise<CaptureStatus>;
+  /** Optional until the macOS app implements it (P1 TODO, see BRIDGE.md): hosts without it behave like a plain browser. */
+  startCopilotSession?(o: StartCopilotSessionOptions): Promise<CaptureStatus>;
+  stopCopilotSession?(): Promise<CaptureStatus>;
+  /** Running state of the copilot capture (`sessionId` of the attached session when running). */
+  copilotStatus?(): Promise<CaptureStatus & { sessionId?: string | null }>;
+  pushOverlaySuggestion?(s: OverlaySuggestion): Promise<null>;
+  clearOverlaySuggestion?(id: string): Promise<null>;
+  /** Optional: input devices for the "me" channel. */
+  listInputDevices?(): Promise<{ uid: string; name: string }[]>;
   updateAuth(o: { accessToken: string }): Promise<{ updated: true }>;
   showOverlay(visible: boolean): Promise<{ visible: boolean }>;
   pushOverlayCaption(c: OverlayCaption): Promise<null>;
@@ -99,7 +124,12 @@ export type NativeEvent =
   | { type: 'error'; ts: string; code: string; message: string; fatal: boolean }
   | { type: 'auth-required'; ts: string; reason: 'heartbeat' }
   | { type: 'log'; ts: string; message: string }
-  | { type: 'overlay-command'; ts: string; command: OverlayCommand; value?: string };
+  | { type: 'overlay-command'; ts: string; command: OverlayCommand; value?: string }
+  | { type: 'copilot.partial'; channel: CopilotChannel; text: string }
+  | { type: 'copilot.segment'; segment: CopilotSegmentEvent }
+  | { type: 'copilot.status'; channel?: CopilotChannel; kind: string; detail?: string }
+  | { type: 'copilot.error'; channel?: CopilotChannel; code: string; message: string }
+  | { type: 'copilot.levels'; channel: CopilotChannel; rms: number };
 
 export function getNative(): WarptalkNative | undefined {
   if (typeof window === 'undefined') return undefined;

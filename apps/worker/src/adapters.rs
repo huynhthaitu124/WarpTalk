@@ -223,3 +223,89 @@ fn classify(e: &LlmError) -> TranslateError {
         TranslateError::Permanent(e.to_string())
     }
 }
+
+/// Transcript reads stay a (TEMPORARY) cross-schema read inside the assistant crate; the
+/// transcript module has no query facade yet.
+pub use warptalk_assistant::summary::PgTranscriptSource;
+
+/// Summary room facts through the owning modules' pool-only query facades (no SQL here).
+pub mod summary_ports {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use sqlx::PgPool;
+    use warptalk_assistant::summary::{
+        ComposedRoomMetaSource, CopilotNameSource, CopilotNames, ExternalLlmGate, HostDirectory,
+        RoomFactsData, RoomFactsSource,
+    };
+    use warptalk_kernel::{AppResult, RoomId, UserId, WorkspaceId};
+
+    struct RoomFacts(warptalk_room::RoomReader);
+
+    #[async_trait]
+    impl RoomFactsSource for RoomFacts {
+        async fn room_facts(&self, room: RoomId) -> AppResult<Option<RoomFactsData>> {
+            Ok(self.0.room_facts(room).await?.map(|f| RoomFactsData {
+                workspace_id: f.workspace_id,
+                host_id: f.host_id,
+                title: f.title,
+                room_type: f.room_type,
+                source_language: f.source_language,
+                target_languages: f.target_languages,
+                series_id: f.series_id,
+                participants: f
+                    .participants
+                    .into_iter()
+                    .map(|p| (p.display_name, p.user_id))
+                    .collect(),
+            }))
+        }
+    }
+
+    struct Hosts(warptalk_identity::UserDirectory);
+
+    #[async_trait]
+    impl HostDirectory for Hosts {
+        async fn display_name(&self, user: UserId) -> AppResult<Option<String>> {
+            Ok(self.0.user_summary(user).await?.map(|u| u.full_name))
+        }
+    }
+
+    struct CopilotNameLookup(warptalk_copilot::CopilotQueries);
+
+    #[async_trait]
+    impl CopilotNameSource for CopilotNameLookup {
+        async fn names(&self, room: RoomId) -> AppResult<Option<CopilotNames>> {
+            Ok(self.0.session_names(room).await?.map(|n| CopilotNames {
+                me: n.me,
+                others: n.others,
+            }))
+        }
+    }
+
+    /// `externalLlmAllowed` through the workspace module's AI policy. Fail-closed.
+    pub struct WorkspaceExternalLlmGate(pub warptalk_workspace::WorkspaceQueries);
+
+    #[async_trait]
+    impl ExternalLlmGate for WorkspaceExternalLlmGate {
+        async fn external_llm_allowed(&self, workspace: WorkspaceId) -> bool {
+            match self.0.ai_policy(workspace).await {
+                Ok(p) => p.external_llm_allowed,
+                Err(e) => {
+                    tracing::warn!(error = %e, "external LLM policy lookup failed; denying");
+                    false
+                }
+            }
+        }
+    }
+
+    pub fn room_meta_source(pool: PgPool) -> ComposedRoomMetaSource {
+        ComposedRoomMetaSource {
+            rooms: Arc::new(RoomFacts(warptalk_room::RoomReader::new(pool.clone()))),
+            hosts: Arc::new(Hosts(warptalk_identity::UserDirectory::new(pool.clone()))),
+            copilot: Arc::new(CopilotNameLookup(warptalk_copilot::CopilotQueries::new(
+                pool,
+            ))),
+        }
+    }
+}

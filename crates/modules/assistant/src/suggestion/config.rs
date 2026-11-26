@@ -31,14 +31,18 @@
 //!       "retrieval": "never|optional|required", "kind": "hint|follow_up",
 //!       "severity": "info|warning|critical", "ttl_seconds": 120, "wire_name": "action",
 //!       "allow_general_knowledge": false, "enabled": true,
+//!       "roles": ["other", "unknown"],         // speaker roles it may fire on (omit = all)
+//!       "skip_cooldown": true,                 // latency-critical: ignore the slot cooldown
 //!       "actions": [ { "kind": "create_action_item", "label": "Create task" } ] } },
-//!   "heuristics": { "<lang or *>": { "question_marks": [], "question_words": [], "filler_words": [] } },
+//!   "heuristics": { "<lang or *>": { "question_marks": [], "question_words": [], "filler_words": [], "ask_phrases": [] } },
 //!   "prompts": { "<name>": "template text" },                     // base-compatible overrides
 //!   "prompt_templates": { "<name>": { "version": "v2", "text": "..." } },   // versioned overrides
 //!   "language": { "mode": "listener|speaker|fixed", "fixed": "en", "max_reader_languages": 4,
 //!                 "scale_tokens_per_language": true, "names": { "en": "English" } },
 //!   "hygiene": { "blocked_phrases": [], "redact_pii": true, "digit_run_min": 10,
 //!                "scrub_input": true, "min_content_chars": 1 },
+//!   "safety": { "enabled": true, "block_unknown_urls": true, "block_credential_requests": true,
+//!               "allow_transcript_urls": true, "allowed_hosts": [] },
 //!   "dedup": { "window_seconds": 900 },                           // 0 disables
 //!   "retrieval": { "top_k": 3, "timeout_ms": 3000, "max_snippet_chars": 1200 },
 //!   "follow_up": { "verify_in_transcript": true, "task_max_chars": 1000,
@@ -50,7 +54,8 @@
 //! ```
 //!
 //! Prompt names: `decide`, `decide_user`, `generate`, `generate_user`, `untrusted_rule`,
-//! `translations_rule`, `general_knowledge_rule`, `follow_up_rule`. Variables are written
+//! `translations_rule`, `general_knowledge_rule`, `follow_up_rule`, `perspective_rule`,
+//! `decide_answer_examples`, `generate_answer_examples`. Variables are written
 //! `{{name}}`; see [`crate::suggestion::prompt::KNOWN_VARS`].
 
 use std::collections::BTreeMap;
@@ -59,6 +64,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use warptalk_settings::{NS_SUGGESTION, SettingsStore, SuggestionCategory, Validate, check_range};
 
+use super::model::Role;
 use super::prompt;
 
 /// Register [`SuggestionConfig`] as the validator of the `suggestion` namespace (replaces the
@@ -111,6 +117,11 @@ pub struct CategoryRule {
     pub wire_name: Option<String>,
     pub allow_general_knowledge: Option<bool>,
     pub actions: Option<Vec<ActionSpec>>,
+    /// Speaker roles this category may fire on: any of `self`, `other`, `unknown`. Omitted or
+    /// empty = every role.
+    pub roles: Option<Vec<String>>,
+    /// The hint is latency-critical: it ignores the slot cooldown (budgets and dedup still apply).
+    pub skip_cooldown: Option<bool>,
 }
 
 /// A category after built-in rules, overlays and toggles are merged.
@@ -128,6 +139,19 @@ pub struct ResolvedCategory {
     pub wire_name: String,
     pub allow_general_knowledge: bool,
     pub actions: Vec<ActionSpec>,
+    /// Allowed speaker roles (`self` / `other` / `unknown`); empty = all.
+    pub roles: Vec<String>,
+    pub skip_cooldown: bool,
+}
+
+impl ResolvedCategory {
+    pub fn allows_role(&self, role: Role) -> bool {
+        self.roles.is_empty()
+            || self
+                .roles
+                .iter()
+                .any(|r| r.eq_ignore_ascii_case(role.as_str()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -137,6 +161,9 @@ pub struct HeuristicLang {
     pub question_words: Vec<String>,
     /// A segment made only of these words is rejected by stage 0.
     pub filler_words: Vec<String>,
+    /// Phrases (matched on whole words, anywhere in the segment) that suggest the speaker is
+    /// asking for a reply or a decision. Only prioritises a segment; never decides to suggest.
+    pub ask_phrases: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -373,6 +400,8 @@ pub struct SuggestionConfig {
     pub prompt_templates: BTreeMap<String, PromptTemplate>,
     pub language: LanguageConfig,
     pub hygiene: HygieneConfig,
+    /// Output validation against prompt injection (ungrounded URLs, credential requests).
+    pub safety: crate::safety::OutputPolicy,
     pub dedup: DedupConfig,
     pub retrieval: RetrievalConfig,
     pub follow_up: FollowUpConfig,
@@ -413,6 +442,7 @@ impl Default for SuggestionConfig {
             prompt_templates: BTreeMap::new(),
             language: LanguageConfig::default(),
             hygiene: HygieneConfig::default(),
+            safety: crate::safety::OutputPolicy::default(),
             dedup: DedupConfig::default(),
             retrieval: RetrievalConfig::default(),
             follow_up: FollowUpConfig::default(),
@@ -504,6 +534,15 @@ impl Validate for SuggestionConfig {
                     "category_rules.{id}.severity must be one of {SEVERITIES:?}"
                 ));
             }
+            if let Some(roles) = &rule.roles
+                && let Some(bad) = roles.iter().find(|r| {
+                    !["self", "other", "unknown"].contains(&r.trim().to_lowercase().as_str())
+                })
+            {
+                return Err(format!(
+                    "category_rules.{id}.roles: `{bad}` is not one of self, other, unknown"
+                ));
+            }
             if !builtin.iter().any(|b| &b.id == id) {
                 let ok = |o: &Option<String>| o.as_deref().is_some_and(|s| !s.trim().is_empty());
                 if !ok(&rule.description) || !ok(&rule.contract) {
@@ -592,6 +631,8 @@ fn apply_rule(id: &str, rule: &CategoryRule, base: Option<&ResolvedCategory>) ->
         wire_name: id.to_string(),
         allow_general_knowledge: false,
         actions: Vec::new(),
+        roles: Vec::new(),
+        skip_cooldown: false,
     });
     if let Some(v) = rule.enabled {
         r.enabled = v;
@@ -625,6 +666,12 @@ fn apply_rule(id: &str, rule: &CategoryRule, base: Option<&ResolvedCategory>) ->
     }
     if let Some(v) = &rule.actions {
         r.actions = v.clone();
+    }
+    if let Some(v) = &rule.roles {
+        r.roles = v.iter().map(|s| s.trim().to_lowercase()).collect();
+    }
+    if let Some(v) = rule.skip_cooldown {
+        r.skip_cooldown = v;
     }
     r
 }
@@ -690,6 +737,7 @@ impl SuggestionConfig {
                 question_marks: choose(cfg.map(|c| &c.question_marks), builtin.question_marks),
                 question_words: choose(cfg.map(|c| &c.question_words), builtin.question_words),
                 filler_words: choose(cfg.map(|c| &c.filler_words), builtin.filler_words),
+                ask_phrases: choose(cfg.map(|c| &c.ask_phrases), builtin.ask_phrases),
             }
         };
         let mut out = pick("*");
@@ -699,6 +747,7 @@ impl SuggestionConfig {
             merge_list(&mut out.question_marks, &l.question_marks);
             merge_list(&mut out.question_words, &l.question_words);
             merge_list(&mut out.filler_words, &l.filler_words);
+            merge_list(&mut out.ask_phrases, &l.ask_phrases);
         }
         out
     }
@@ -740,6 +789,7 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "answer",
                 "clarification",
                 "term",
                 "consideration",
@@ -825,5 +875,38 @@ mod tests {
             custom.heuristics_for("en").filler_words,
             vec!["zzz".to_string()]
         );
+    }
+
+    #[test]
+    fn category_roles_are_configurable_and_filter() {
+        let cfg: SuggestionConfig = serde_json::from_value(json!({
+            "category_rules": {"term": {"roles": ["self"]}, "fact": {"roles": []}}
+        }))
+        .unwrap();
+        let by = |id: &str| {
+            cfg.resolved_categories()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+        };
+        let answer = by("answer");
+        assert!(answer.allows_role(Role::Other));
+        assert!(!answer.allows_role(Role::SelfSpeaker));
+        assert!(
+            !answer.allows_role(Role::Unknown),
+            "no change for regular meetings"
+        );
+        assert!(answer.skip_cooldown);
+        assert!(by("clarification").allows_role(Role::Unknown));
+        assert!(!by("clarification").allows_role(Role::SelfSpeaker));
+        assert!(by("term").allows_role(Role::SelfSpeaker));
+        assert!(!by("term").allows_role(Role::Other));
+        assert!(
+            by("fact").allows_role(Role::SelfSpeaker),
+            "empty = all roles"
+        );
+        let bad: SuggestionConfig =
+            serde_json::from_value(json!({"category_rules": {"term": {"roles": ["me"]}}})).unwrap();
+        assert!(bad.validate().is_err());
     }
 }

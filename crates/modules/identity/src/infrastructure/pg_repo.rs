@@ -5,8 +5,8 @@ use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppError, AppResult, UserId};
 
 use crate::application::ports::{
-    ClientInfo, IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, SessionRecord,
-    UserAuthRecord,
+    ClientInfo, IdentityRepository, NewGoogleUser, NewRefreshToken, NewUser, RotateOutcome,
+    SessionRecord, UserAuthRecord,
 };
 use crate::domain::{AccountFlags, Profile, Settings, UserSummary};
 
@@ -20,7 +20,7 @@ impl PgIdentityRepository {
     }
 }
 
-const AUTH_COLS: &str = "id, email, password_hash, email_verified, is_active, is_locked, \
+const AUTH_COLS: &str = "id, email, password_hash, google_id, email_verified, is_active, is_locked, \
                          locked_until, (deleted_at IS NOT NULL) AS deleted";
 
 fn auth_record(r: &PgRow) -> Result<UserAuthRecord, sqlx::Error> {
@@ -28,6 +28,7 @@ fn auth_record(r: &PgRow) -> Result<UserAuthRecord, sqlx::Error> {
         id: UserId::from_uuid(r.try_get("id")?),
         email: r.try_get("email")?,
         password_hash: r.try_get("password_hash")?,
+        google_id: r.try_get("google_id")?,
         flags: AccountFlags {
             email_verified: r.try_get("email_verified")?,
             is_active: r.try_get("is_active")?,
@@ -179,6 +180,209 @@ impl IdentityRepository for PgIdentityRepository {
         .await
         .map_err(map_sqlx_error)?;
         Ok(res.rows_affected() == 1)
+    }
+
+    async fn set_verification_token(
+        &self,
+        id: UserId,
+        hash: &str,
+        expires_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE auth.users
+                SET email_verification_token_hash = $2,
+                    email_verification_token_expires_at = $3, updated_at = $4
+              WHERE id = $1 AND email_verified = false AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(hash)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn set_reset_token(
+        &self,
+        id: UserId,
+        hash: &str,
+        expires_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE auth.users
+                SET password_reset_token_hash = $2,
+                    password_reset_token_expires_at = $3, updated_at = $4
+              WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(hash)
+        .bind(expires_at)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn reset_password_with_token(
+        &self,
+        hash: &str,
+        password_hash: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<UserId>> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // The UPDATE takes the row lock, so two concurrent uses of one token cannot both win.
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "UPDATE auth.users
+                SET password_hash = $2, password_reset_token_hash = NULL,
+                    password_reset_token_expires_at = NULL, failed_login_attempts = 0,
+                    locked_until = NULL, updated_at = $3
+              WHERE password_reset_token_hash = $1
+                AND password_reset_token_expires_at > $3
+                AND deleted_at IS NULL
+          RETURNING id",
+        )
+        .bind(hash)
+        .bind(password_hash)
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        sqlx::query(
+            "UPDATE auth.refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(Some(UserId::from_uuid(id)))
+    }
+
+    async fn change_password(
+        &self,
+        id: UserId,
+        password_hash: &str,
+        keep_family: Uuid,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query(
+            "UPDATE auth.users
+                SET password_hash = $2, password_reset_token_hash = NULL,
+                    password_reset_token_expires_at = NULL, updated_at = $3, updated_by = $1
+              WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(password_hash)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        sqlx::query(
+            "UPDATE auth.refresh_tokens SET revoked_at = $3
+              WHERE user_id = $1 AND family_id <> $2 AND revoked_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(keep_family)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        tx.commit().await.map_err(map_sqlx_error)
+    }
+
+    async fn find_auth_by_google_id(&self, google_id: &str) -> AppResult<Option<UserAuthRecord>> {
+        let row = sqlx::query(&format!(
+            "SELECT {AUTH_COLS} FROM auth.users WHERE google_id = $1"
+        ))
+        .bind(google_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        row.as_ref()
+            .map(auth_record)
+            .transpose()
+            .map_err(map_sqlx_error)
+    }
+
+    async fn insert_google_user(&self, u: NewGoogleUser) -> AppResult<()> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let res = sqlx::query(
+            "INSERT INTO auth.users (id, email, password_hash, full_name, avatar_url, google_id,
+                                     email_verified, email_verified_at, created_at)
+             VALUES ($1, $2, NULL, $3, $4, $5, true, $6, $6)",
+        )
+        .bind(u.id.as_uuid())
+        .bind(&u.email)
+        .bind(&u.full_name)
+        .bind(&u.avatar_url)
+        .bind(&u.google_id)
+        .bind(u.now)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = res {
+            if let sqlx::Error::Database(db) = &e
+                && db.code().as_deref() == Some("23505")
+            {
+                return Err(AppError::conflict(
+                    "EMAIL_TAKEN",
+                    "email is already registered",
+                ));
+            }
+            return Err(map_sqlx_error(e));
+        }
+        sqlx::query("INSERT INTO auth.user_settings (id, user_id, updated_at) VALUES ($1, $2, $3)")
+            .bind(Uuid::now_v7())
+            .bind(u.id.as_uuid())
+            .bind(u.now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        tx.commit().await.map_err(map_sqlx_error)
+    }
+
+    async fn link_google(&self, id: UserId, google_id: &str, now: DateTime<Utc>) -> AppResult<()> {
+        let res = sqlx::query(
+            "UPDATE auth.users SET google_id = $2, updated_at = $3
+              WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(google_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
+        match res {
+            Ok(_) => Ok(()),
+            Err(sqlx::Error::Database(db)) if db.code().as_deref() == Some("23505") => {
+                Err(AppError::conflict(
+                    "GOOGLE_ACCOUNT_IN_USE",
+                    "google account is linked elsewhere",
+                ))
+            }
+            Err(e) => Err(map_sqlx_error(e)),
+        }
+    }
+
+    async fn unlink_google(&self, id: UserId, now: DateTime<Utc>) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE auth.users SET google_id = NULL, updated_at = $2
+              WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id.as_uuid())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     async fn is_system_admin(&self, id: UserId) -> AppResult<bool> {

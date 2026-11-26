@@ -23,10 +23,14 @@ pub use application::voice::{
     NoopVoiceCloner, NoopVoiceProviderAdmin, NoopVoiceStatePublisher, VoiceCloner, VoiceDeps,
     VoiceProviderAdmin, VoiceRuntimeState, VoiceStatePublisher,
 };
-pub use application::{IdentityRepository, VerificationMailer};
+pub use application::{
+    GoogleIdVerifier, GoogleProfile, IdentityRepository, MemoryThrottle, Throttle,
+    VerificationMailer,
+};
 pub use domain::{Policy, UserSummary};
 pub use infrastructure::{
-    CartesiaVoice, DevMailCapture, LogMailer, RedisVoiceStatePublisher, consent_key,
+    CartesiaVoice, DevMailCapture, EmailMailer, GoogleTokenVerifier, LogMailer, RedisThrottle,
+    RedisVoiceStatePublisher, consent_key,
 };
 
 pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
@@ -60,6 +64,16 @@ pub struct IdentityDeps {
     pub voice: VoiceDeps,
 }
 
+/// Optional collaborators (kept out of [`IdentityDeps`] so existing struct literals still compile).
+#[derive(Default)]
+pub struct IdentityExtras {
+    /// Abuse limits for email sends (BR-87). `None`: in-process counters (single instance only);
+    /// production wires [`RedisThrottle`].
+    pub throttle: Option<Arc<dyn Throttle>>,
+    /// Google ID-token verifier. `None`: `POST /auth/google` answers 503 `GOOGLE_NOT_CONFIGURED`.
+    pub google: Option<Arc<dyn GoogleIdVerifier>>,
+}
+
 pub struct IdentityModule {
     state: http::HttpState,
     repo: Arc<dyn IdentityRepository>,
@@ -68,6 +82,13 @@ pub struct IdentityModule {
 
 impl IdentityModule {
     pub fn new(deps: IdentityDeps) -> Self {
+        Self::with_extras(deps, IdentityExtras::default())
+    }
+
+    pub fn with_extras(deps: IdentityDeps, extras: IdentityExtras) -> Self {
+        let throttle = extras
+            .throttle
+            .unwrap_or_else(|| Arc::new(MemoryThrottle::new(deps.clock.clone())));
         let repo: Arc<dyn IdentityRepository> =
             Arc::new(infrastructure::PgIdentityRepository::new(deps.pool.clone()));
         let voice = Arc::new(application::voice::VoiceService::new(
@@ -81,6 +102,8 @@ impl IdentityModule {
             deps.jwt.clone(),
             deps.clock.clone(),
             deps.policy,
+            throttle,
+            extras.google,
         ));
         let profile = Arc::new(application::ProfileService::new(repo.clone(), deps.clock));
         Self {
@@ -110,6 +133,24 @@ impl IdentityModule {
     /// Retries provider voice deletions that failed earlier (call from a periodic job).
     pub async fn retry_voice_deletions(&self, limit: i64) -> AppResult<usize> {
         self.voice.retry_pending_deletions(limit).await
+    }
+}
+
+/// Pool-only read facade for workers that need display names (no mailer/policy/voice wiring).
+#[derive(Clone)]
+pub struct UserDirectory {
+    repo: Arc<dyn IdentityRepository>,
+}
+
+impl UserDirectory {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            repo: Arc::new(infrastructure::PgIdentityRepository::new(pool)),
+        }
+    }
+
+    pub async fn user_summary(&self, id: UserId) -> AppResult<Option<UserSummary>> {
+        self.repo.find_summary_by_id(id).await
     }
 }
 

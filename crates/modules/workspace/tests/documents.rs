@@ -992,3 +992,253 @@ async fn documents_unavailable_without_storage() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+// ---- reindex ----------------------------------------------------------------------------
+
+impl Ctx {
+    async fn doc(&self, ws: &str, owner: UserId, name: &str, data: &[u8]) -> String {
+        let (st, v) = self.upload(ws, owner, name, data, &[]).await;
+        assert_eq!(st, StatusCode::CREATED, "{v}");
+        v["id"].as_str().unwrap().to_owned()
+    }
+
+    /// Apply a worker result with a reason (`blocked` = skipped, `failed`, `indexed`).
+    async fn finish(&self, ws: &str, doc: &str, rev: i32, status: &str, chunks: u32, reason: &str) {
+        let mut f = result_fields(ws, doc, rev, status, chunks);
+        f.retain(|(k, _)| *k != "reason");
+        f.push(("reason", reason.to_owned()));
+        self.result(&f).await;
+    }
+
+    async fn get_doc(&self, ws: &str, id: &str, u: UserId) -> Value {
+        self.call(
+            Method::GET,
+            &format!("/workspaces/{ws}/documents/{id}"),
+            u,
+            None,
+        )
+        .await
+        .1
+    }
+}
+
+const PDF: &[u8] = b"%PDF-1.4\n%scan";
+
+#[tokio::test]
+async fn skipped_document_surfaces_reason_and_reindexes_to_completed() {
+    let Some(c) = ctx().await else { return };
+    let owner = UserId::new();
+    let ws = c.create_ws(owner).await;
+    let id = c.doc(&ws, owner, "scan.pdf", PDF).await;
+    c.finish(&ws, &id, 1, "blocked", 0, "ocr_unavailable").await;
+    let v = c.get_doc(&ws, &id, owner).await;
+    assert_eq!(v["ingestionStatus"], "skipped");
+    assert_eq!(v["skipReason"], "ocr_unavailable");
+    assert_eq!(v["ingestionFailureReason"], "ocr_unavailable");
+
+    let uri = format!("/workspaces/{ws}/documents/{id}/reindex");
+    let (st, v) = c.call(Method::POST, &uri, owner, None).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    assert_eq!(v["queued"], true);
+    assert_eq!(v["document"]["ingestionStatus"], "pending");
+    assert!(v["document"]["skipReason"].is_null());
+    let reqs = c.stream_entries(EMBEDDING_INDEX_REQUESTS, &id).await;
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[1]["job_id"], format!("{id}:2"));
+    assert_eq!(reqs[1]["needs_extraction"], true);
+
+    // Idempotent: still pending -> nothing new is published.
+    let (st, v) = c.call(Method::POST, &uri, owner, None).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    assert_eq!(v["queued"], false);
+    assert_eq!(
+        c.stream_entries(EMBEDDING_INDEX_REQUESTS, &id).await.len(),
+        2
+    );
+
+    // A late result of the first attempt is stale; the OCR-enabled second attempt completes.
+    c.finish(&ws, &id, 1, "blocked", 0, "ocr_unavailable").await;
+    assert_eq!(
+        c.get_doc(&ws, &id, owner).await["ingestionStatus"],
+        "pending"
+    );
+    c.finish(&ws, &id, 2, "indexed", 4, "").await;
+    let v = c.get_doc(&ws, &id, owner).await;
+    assert_eq!(v["ingestionStatus"], "completed");
+    assert_eq!(v["aiEligible"], true);
+    assert!(v["skipReason"].is_null());
+}
+
+#[tokio::test]
+async fn reindex_requires_owner_or_admin_and_a_visible_ai_allowed_document() {
+    let Some(c) = ctx().await else { return };
+    let owner = UserId::new();
+    let ws = c.create_ws(owner).await;
+    let id = c.doc(&ws, owner, "a.pdf", PDF).await;
+    c.finish(&ws, &id, 1, "blocked", 0, "ocr_unavailable").await;
+    let member = UserId::new();
+    c.add_member(&ws, member, WorkspaceRole::Member).await;
+    let admin = UserId::new();
+    c.add_member(&ws, admin, WorkspaceRole::Admin).await;
+    let stranger = UserId::new();
+
+    let one = format!("/workspaces/{ws}/documents/{id}/reindex");
+    let batch = format!("/workspaces/{ws}/documents/reindex");
+    for uri in [&one, &batch] {
+        let (st, _) = c.call(Method::POST, uri, member, None).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{uri}");
+        let (st, _) = c.call(Method::POST, uri, stranger, None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{uri}");
+        let (st, _, _) = c
+            .raw(Method::POST, uri, UserId::new(), None, Vec::new())
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let (st, _) = c
+        .call(
+            Method::POST,
+            &format!("/workspaces/{ws}/documents/{}/reindex", Uuid::now_v7()),
+            owner,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // Nothing was published by the refused calls.
+    assert_eq!(
+        c.stream_entries(EMBEDDING_INDEX_REQUESTS, &id).await.len(),
+        1
+    );
+
+    let (st, v) = c.call(Method::POST, &one, admin, None).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+
+    // AI retrieval switched off: reindex is refused.
+    let off = c.doc(&ws, owner, "off.pdf", PDF).await;
+    let (st, _) = c
+        .call(
+            Method::PATCH,
+            &format!("/workspaces/{ws}/documents/{off}"),
+            owner,
+            Some(json!({ "aiRetrievalAllowed": false })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &format!("/workspaces/{ws}/documents/{off}/reindex"),
+            owner,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["code"], "AI_RETRIEVAL_NOT_ALLOWED");
+}
+
+#[tokio::test]
+async fn batch_reindex_is_bounded_scoped_and_idempotent() {
+    let Some(c) = ctx().await else { return };
+    let owner = UserId::new();
+    let ws = c.create_ws(owner).await;
+    let mut skipped = Vec::new();
+    for i in 0..3 {
+        let id = c.doc(&ws, owner, &format!("s{i}.pdf"), PDF).await;
+        c.finish(&ws, &id, 1, "blocked", 0, "ocr_unavailable").await;
+        skipped.push(id);
+    }
+    let failed = c.doc(&ws, owner, "f.pdf", PDF).await;
+    c.finish(&ws, &failed, 1, "failed", 0, "boom").await;
+    let done = c.doc(&ws, owner, "ok.txt", b"hello").await;
+    c.finish(&ws, &done, 1, "indexed", 2, "").await;
+    // AI-disallowed skipped documents are never picked up.
+    let (_, v) = c
+        .upload(
+            &ws,
+            owner,
+            "private.md",
+            b"# x",
+            &[text("aiRetrievalAllowed", "false")],
+        )
+        .await;
+    let private = v["id"].as_str().unwrap().to_owned();
+
+    let url = |q: &str| format!("/workspaces/{ws}/documents/reindex{q}");
+    let (st, v) = c
+        .call(Method::POST, &url("?status=bogus"), owner, None)
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+
+    let (st, v) = c
+        .call(Method::POST, &url("?status=skipped&limit=2"), owner, None)
+        .await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    assert_eq!(
+        (v["queued"].as_u64(), v["remaining"].as_i64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(v["queuedIds"].as_array().unwrap().len(), 2);
+
+    // Default status is skipped; the batch drains the rest and nothing is queued twice.
+    let (_, v) = c.call(Method::POST, &url(""), owner, None).await;
+    assert_eq!(
+        (v["queued"].as_u64(), v["remaining"].as_i64()),
+        (Some(1), Some(0))
+    );
+    let (_, v) = c
+        .call(Method::POST, &url("?status=skipped"), owner, None)
+        .await;
+    assert_eq!(v["queued"], 0);
+    for id in &skipped {
+        assert_eq!(
+            c.stream_entries(EMBEDDING_INDEX_REQUESTS, id).await.len(),
+            2,
+            "{id}"
+        );
+        assert_eq!(
+            c.get_doc(&ws, id, owner).await["ingestionStatus"],
+            "pending"
+        );
+    }
+    for untouched in [&failed, &done, &private] {
+        assert_eq!(
+            c.stream_entries(EMBEDDING_INDEX_REQUESTS, untouched)
+                .await
+                .len(),
+            usize::from(*untouched != private)
+        );
+    }
+
+    let (_, v) = c
+        .call(Method::POST, &url("?status=failed"), owner, None)
+        .await;
+    assert_eq!(v["queued"], 1);
+    assert_eq!(v["queuedIds"][0], failed.as_str());
+
+    let (_, v) = c.call(Method::POST, &url("?status=all"), owner, None).await;
+    assert_eq!(
+        (v["queued"].as_u64(), v["remaining"].as_i64()),
+        (Some(1), Some(0))
+    );
+    assert_eq!(v["queuedIds"][0], done.as_str());
+    // Pending documents are skipped by `all` as well.
+    let (_, v) = c.call(Method::POST, &url("?status=all"), owner, None).await;
+    assert_eq!(v["queued"], 0);
+}
+
+#[tokio::test]
+async fn images_are_accepted_by_magic_bytes_and_sent_for_extraction() {
+    let Some(c) = ctx().await else { return };
+    let owner = UserId::new();
+    let ws = c.create_ws(owner).await;
+    let png = b"\x89PNG\r\n\x1a\n....";
+    let (st, v) = c.upload(&ws, owner, "scan.PNG", png, &[]).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(v["mimeType"], "image/png");
+    let id = v["id"].as_str().unwrap();
+    let reqs = c.stream_entries(EMBEDDING_INDEX_REQUESTS, id).await;
+    assert_eq!(reqs[0]["needs_extraction"], true);
+    assert_eq!(reqs[0]["mime_type"], "image/png");
+    let (st, v) = c.upload(&ws, owner, "fake.jpg", b"not a jpeg", &[]).await;
+    assert_eq!(st, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{v}");
+    assert_eq!(v["code"], "FILE_CONTENT_MISMATCH");
+}

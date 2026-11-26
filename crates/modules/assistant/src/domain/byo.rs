@@ -95,6 +95,19 @@ impl From<crate::suggestion::Purpose> for LlmPurpose {
         match p {
             crate::suggestion::Purpose::SuggestionDecide => Self::SuggestionDecide,
             crate::suggestion::Purpose::SuggestionGenerate => Self::SuggestionGenerate,
+            crate::suggestion::Purpose::Summary => Self::Summary,
+            crate::suggestion::Purpose::Chat => Self::Assistant,
+        }
+    }
+}
+
+impl LlmPurpose {
+    /// Overrides to try, in order, when resolving `purpose` for a workspace: the purpose's own
+    /// override, then the legacy one it replaced (`chat` used to run under `summary`).
+    pub fn resolution_chain(purpose: crate::suggestion::Purpose) -> Vec<Self> {
+        match purpose {
+            crate::suggestion::Purpose::Chat => vec![Self::Assistant, Self::Summary],
+            p => vec![p.into()],
         }
     }
 }

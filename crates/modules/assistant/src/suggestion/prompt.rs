@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use super::config::SuggestionConfig;
 
-pub const TEMPLATE_NAMES: [&str; 8] = [
+pub const TEMPLATE_NAMES: [&str; 11] = [
     "decide",
     "decide_user",
     "generate",
@@ -18,9 +18,13 @@ pub const TEMPLATE_NAMES: [&str; 8] = [
     "translations_rule",
     "general_knowledge_rule",
     "follow_up_rule",
+    "perspective_rule",
+    "decide_answer_examples",
+    "generate_answer_examples",
 ];
 
-pub const KNOWN_VARS: [&str; 17] = [
+pub const KNOWN_VARS: [&str; 20] = [
+    "nonce",
     "untrusted_rule",
     "category_descriptions",
     "category_ids",
@@ -38,6 +42,8 @@ pub const KNOWN_VARS: [&str; 17] = [
     "documents",
     "reader_languages",
     "segment_language",
+    "perspective_rule",
+    "answer_examples",
 ];
 
 pub const BUILTIN_VERSION: &str = "builtin-1";
@@ -52,6 +58,9 @@ fn builtin(name: &str) -> &'static str {
         "translations_rule" => include_str!("prompts/translations_rule.md"),
         "general_knowledge_rule" => include_str!("prompts/general_knowledge_rule.md"),
         "follow_up_rule" => include_str!("prompts/follow_up_rule.md"),
+        "perspective_rule" => include_str!("prompts/perspective_rule.md"),
+        "decide_answer_examples" => include_str!("prompts/decide_answer_examples.md"),
+        "generate_answer_examples" => include_str!("prompts/generate_answer_examples.md"),
         _ => "",
     }
 }

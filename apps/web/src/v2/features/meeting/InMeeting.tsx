@@ -4,7 +4,7 @@ import { ParticipantAvatar, useToast } from '@v2/ui';
 import { cn } from '@v2/lib/cn';
 import { languageLabel } from '@v2/lib/languages';
 import { baseIdentity, mergeCaption, parseCaption, pickTranslation, resolveSpeakers, senderLabel, type CaptionLine } from '@v2/lib/captions';
-import { useFollowUps, useSuggestionStream, useSuggestionTriage } from '@v2/lib/suggestions';
+import { useFollowUps, useSuggestionFeedback, useSuggestionStream, useSuggestionTriage } from '@v2/lib/suggestions';
 import { useParticipantAction, useParticipants, useRoomAction, useUpdateMyLanguages } from '@v2/lib/queries';
 import type { Room } from '@v2/lib/schemas';
 import { StatusStrip, type TimedCaptionLine } from '../MeetingParts';
@@ -170,7 +170,8 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
   const stream = useSuggestionStream(room.id, captionLang);
   const triage = useSuggestionTriage(stream.items);
   const followUps = useFollowUps(room.id, stream.status !== 'unavailable');
-  const suggestions = stream.status === 'unavailable' ? undefined : { items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze };
+  const feedback = useSuggestionFeedback();
+  const suggestions = stream.status === 'unavailable' ? undefined : { items: triage.visible, followUps: followUps.data ?? [], onDismiss: triage.dismiss, onSnooze: triage.snooze, feedback };
   const byUser = useMemo(() => new Map(roster.filter((p) => p.userId).map((p) => [p.userId as string, p])), [roster]);
   const tiles = useMemo<TileInfo[]>(() => session.participants.map((p) => {
     const r = byUser.get(baseIdentity(p.identity));
@@ -306,6 +307,8 @@ export function InMeeting({ room, session, selfUserId, selfName, listen, onListe
             }}
             unread={unread}
             suggestions={suggestions}
+            askRoomId={room.id}
+            onCitation={() => setTab('transcript')}
             onCollapse={() => setPanelOpen(false)}
           />
         </section>

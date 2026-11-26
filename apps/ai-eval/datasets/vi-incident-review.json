@@ -1,0 +1,343 @@
+{
+  "id": "vi-incident-review",
+  "language": "vi",
+  "title": "Review sự cố thanh toán (postmortem)",
+  "participants": [
+    "Dũng",
+    "Hà",
+    "Khoa",
+    "Vy"
+  ],
+  "lines": [
+    {
+      "t_ms": 9665,
+      "channel": "me",
+      "speaker": "Dũng",
+      "text": "Mình bắt đầu buổi review sự cố thanh toán hôm thứ Ba, mục tiêu là blameless, không đi tìm người có lỗi."
+    },
+    {
+      "t_ms": 19660,
+      "channel": "others",
+      "speaker": "Hà",
+      "text": "Timeline thì alert đầu tiên nổ lúc 14 giờ 05, nhưng đến 14 giờ 20 on-call mới ack vì alert bị trộn với noise."
+    },
+    {
+      "t_ms": 31250,
+      "channel": "others",
+      "speaker": "Khoa",
+      "text": "Nguyên nhân gốc là connection pool của service đơn hàng bị exhausted, sau bản deploy lúc 13 giờ 50 tăng số worker mà không tăng pool size."
+    },
+    {
+      "t_ms": 40420,
+      "channel": "others",
+      "speaker": "Vy",
+      "text": "Phía support nhận khoảng ba trăm ticket trong lúc đó, khách phàn nàn là không thanh toán được."
+    },
+    {
+      "t_ms": 47885,
+      "channel": "me",
+      "speaker": "Dũng",
+      "text": "Cuối cùng mình rollback lúc 15 giờ 10 thì hệ thống ổn định lại."
+    },
+    {
+      "t_ms": 54910,
+      "channel": "others",
+      "speaker": "Hà",
+      "text": "Vậy sự cố kéo dài khoảng hai tiếng rưỡi đúng không anh?"
+    },
+    {
+      "t_ms": 63420,
+      "channel": "me",
+      "speaker": "Dũng",
+      "text": "Không, từ 14 giờ 05 đến 15 giờ 10 là sáu mươi lăm phút, mình tính MTTR là 65 phút."
+    },
+    {
+      "t_ms": 72370,
+      "channel": "others",
+      "speaker": "Khoa",
+      "text": "Mình đề xuất thêm circuit breaker cho lời gọi sang dịch vụ thanh toán để lỗi không lan ra."
+    },
+    {
+      "t_ms": 81210,
+      "channel": "others",
+      "speaker": "Hà",
+      "text": "Alert thì mình sẽ tách ra, chỉ page khi p99 latency vượt ngưỡng trong năm phút liên tục."
+    },
+    {
+      "t_ms": 90050,
+      "channel": "others",
+      "speaker": "Vy",
+      "text": "Mình cần có template thông báo cho khách khi có sự cố, hiện giờ mỗi người viết một kiểu."
+    },
+    {
+      "t_ms": 99550,
+      "channel": "me",
+      "speaker": "Dũng",
+      "text": "Chốt nhé: Khoa thêm circuit breaker và tăng pool size trước thứ Sáu, Hà tách alert trong sprint này."
+    },
+    {
+      "t_ms": 108995,
+      "channel": "others",
+      "speaker": "Khoa",
+      "text": "Ok anh, nhưng mình cần staging giống production để test tải, hiện giờ staging chỉ bằng một phần tư."
+    },
+    {
+      "t_ms": 117065,
+      "channel": "others",
+      "speaker": "Vy",
+      "text": "Anh Dũng ơi, bên support có cần tham gia diễn tập sự cố lần sau không anh?"
+    },
+    {
+      "t_ms": 124420,
+      "channel": "me",
+      "speaker": "Dũng",
+      "text": "Có chứ, mình sẽ gửi lịch diễn tập cho Vy sau khi chốt với Hà."
+    },
+    {
+      "t_ms": 131610,
+      "channel": "others",
+      "speaker": "Hà",
+      "text": "Về RCA chính thức, mình sẽ viết bản nháp rồi đưa lên wiki."
+    }
+  ],
+  "snippets": [],
+  "expectations": {
+    "suggestions": {
+      "expected": [
+        {
+          "at_line": 2,
+          "category": "term",
+          "must_include": [
+            "connection pool"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 5,
+          "category": "correction|clarification",
+          "must_include": [],
+          "must_not_include": [
+            "hai tiếng rưỡi là đúng"
+          ]
+        },
+        {
+          "at_line": 7,
+          "category": "term",
+          "must_include": [
+            "circuit breaker"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 9,
+          "category": "action_item",
+          "must_include": [
+            "template"
+          ],
+          "must_not_include": [
+            "thứ Sáu",
+            "thứ Hai"
+          ]
+        },
+        {
+          "at_line": 12,
+          "category": "answer",
+          "must_include": [
+            "diễn tập"
+          ],
+          "must_not_include": []
+        },
+        {
+          "at_line": 13,
+          "category": "follow_up",
+          "must_include": [
+            "diễn tập"
+          ],
+          "must_not_include": [
+            "thứ"
+          ]
+        },
+        {
+          "at_line": 14,
+          "category": "action_item|follow_up",
+          "must_include": [
+            "RCA"
+          ],
+          "must_not_include": [
+            "thứ Sáu",
+            "ngày mai"
+          ]
+        }
+      ],
+      "forbidden": [
+        {
+          "at_line": 6,
+          "category": "correction"
+        },
+        {
+          "at_line": 10,
+          "category": "action_item"
+        }
+      ],
+      "must_not_include": [
+        "18%"
+      ]
+    },
+    "summary": {
+      "decisions": [
+        {
+          "keywords": [
+            "circuit breaker",
+            "pool size"
+          ]
+        },
+        {
+          "keywords": [
+            "tách",
+            "alert"
+          ]
+        }
+      ],
+      "action_items": [
+        {
+          "owner": "Khoa",
+          "task_keywords": [
+            "circuit breaker",
+            "pool size"
+          ],
+          "deadline": "thứ Sáu"
+        },
+        {
+          "owner": "Hà",
+          "task_keywords": [
+            "tách",
+            "alert"
+          ],
+          "deadline": "sprint này"
+        },
+        {
+          "owner": "Hà",
+          "task_keywords": [
+            "RCA",
+            "wiki"
+          ]
+        },
+        {
+          "owner": "Dũng",
+          "task_keywords": [
+            "lịch",
+            "diễn tập",
+            "Vy"
+          ]
+        }
+      ],
+      "must_not_include": [
+        "kéo dài hai tiếng",
+        "hai tiếng rưỡi",
+        "18%",
+        "kéo dài khoảng hai tiếng"
+      ]
+    }
+  },
+  "fake": {
+    "suggestions": [
+      {
+        "at_line": 2,
+        "category": "term",
+        "content": "Connection pool: nhóm kết nối cơ sở dữ liệu dùng lại thay vì mở mới mỗi lần.",
+        "detail": "Hết pool nghĩa là yêu cầu mới phải chờ.",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 5,
+        "category": "correction",
+        "content": "Timeline: alert 14 giờ 05, rollback 15 giờ 10, tức khoảng 65 phút chứ không phải hai tiếng rưỡi.",
+        "detail": "",
+        "source": ""
+      },
+      {
+        "at_line": 7,
+        "category": "term",
+        "content": "Circuit breaker: ngắt lời gọi tới dịch vụ lỗi để tránh lỗi lan rộng.",
+        "detail": "",
+        "source": "general knowledge"
+      },
+      {
+        "at_line": 9,
+        "category": "action_item",
+        "content": "Cần template thông báo sự cố cho khách; chưa rõ ai làm và khi nào.",
+        "detail": "Thiếu owner và hạn.",
+        "source": "",
+        "follow_up": {
+          "task": "Soạn template thông báo sự cố cho khách"
+        }
+      },
+      {
+        "at_line": 12,
+        "category": "answer",
+        "content": "Vy hỏi support có tham gia diễn tập sự cố lần sau không.",
+        "detail": "Dũng trả lời có.",
+        "source": ""
+      },
+      {
+        "at_line": 13,
+        "category": "follow_up",
+        "content": "Dũng sẽ gửi lịch diễn tập cho Vy sau khi chốt với Hà.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Dũng",
+          "task": "Gửi lịch diễn tập cho Vy"
+        }
+      },
+      {
+        "at_line": 10,
+        "category": "action_item",
+        "content": "Khoa thêm circuit breaker trước thứ Sáu, Hà tách alert trong sprint này.",
+        "detail": "",
+        "source": "",
+        "follow_up": {
+          "owner": "Khoa",
+          "task": "Thêm circuit breaker",
+          "due": "thứ Sáu"
+        }
+      }
+    ],
+    "summary": {
+      "summary_short": "Review sự cố thanh toán: connection pool cạn sau deploy, rollback sau khoảng hai tiếng.",
+      "summary_detailed": "Alert lúc 14 giờ 05, on-call ack lúc 14 giờ 20, rollback lúc 15 giờ 10. Nguyên nhân gốc là connection pool bị exhausted. Sự cố kéo dài hai tiếng rưỡi. Nhóm quyết định thêm circuit breaker, tăng pool size và tách alert.",
+      "decisions": [
+        "Thêm circuit breaker và tăng pool size",
+        "Tách alert, chỉ page theo p99 latency"
+      ],
+      "action_items": [
+        {
+          "task": "Thêm circuit breaker và tăng pool size",
+          "owner": "Khoa",
+          "due": "thứ Sáu",
+          "source_segments": []
+        },
+        {
+          "task": "Tách alert",
+          "owner": "Hà",
+          "due": "sprint này",
+          "source_segments": []
+        },
+        {
+          "task": "Viết bản nháp RCA đưa lên wiki",
+          "owner": "Hà",
+          "due": null,
+          "source_segments": []
+        }
+      ],
+      "open_questions": [
+        "Cần template thông báo sự cố cho khách"
+      ],
+      "topics": [
+        "sự cố thanh toán",
+        "connection pool",
+        "alert"
+      ]
+    }
+  }
+}

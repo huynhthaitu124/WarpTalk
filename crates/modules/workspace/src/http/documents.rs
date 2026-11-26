@@ -4,7 +4,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, Multipart, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ use super::dto::map_page;
 use crate::application::documents::{
     DocumentFilter, DocumentRecord, DocumentService, Download, PatchInput, UploadInput, too_large,
 };
+use crate::domain::documents::ReindexScope;
 
 /// Multipart framing overhead allowed on top of the file size limit.
 const MULTIPART_OVERHEAD: usize = 1024 * 1024;
@@ -43,6 +44,11 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             "/workspaces/{id}/documents/{doc_id}/download",
             get(download),
         )
+        .route("/workspaces/{id}/documents/reindex", post(reindex_batch))
+        .route(
+            "/workspaces/{id}/documents/{doc_id}/reindex",
+            post(reindex_one),
+        )
 }
 
 /// Mounted instead of [`routes`] when no object store is configured.
@@ -66,6 +72,11 @@ pub fn unavailable_routes() -> Router<AppState> {
         .route(
             "/workspaces/{id}/documents/{doc_id}/download",
             get(unavailable),
+        )
+        .route("/workspaces/{id}/documents/reindex", post(unavailable))
+        .route(
+            "/workspaces/{id}/documents/{doc_id}/reindex",
+            post(unavailable),
         )
 }
 
@@ -97,6 +108,9 @@ pub struct DocumentDto {
     /// pending | completed | skipped | failed
     pub ingestion_status: String,
     pub ingestion_failure_reason: Option<String>,
+    /// Why the document was skipped (`ocr_unavailable`, `unsupported_type`,
+    /// `external_llm_disallowed`, `no_indexable_content`, ...); only set while `skipped`.
+    pub skip_reason: Option<String>,
     pub last_indexed_at: Option<DateTime<Utc>>,
     pub uploaded_by: Option<UserId>,
     pub created_at: DateTime<Utc>,
@@ -117,6 +131,9 @@ impl From<DocumentRecord> for DocumentDto {
             access_level: d.access_level.as_str(),
             ai_retrieval_allowed: d.ai_retrieval_allowed,
             ai_eligible: d.ai_eligible,
+            skip_reason: (d.ingestion_status == crate::domain::documents::ingestion::SKIPPED)
+                .then(|| d.ingestion_failure_reason.clone())
+                .flatten(),
             ingestion_status: d.ingestion_status,
             ingestion_failure_reason: d.ingestion_failure_reason,
             last_indexed_at: d.last_indexed_at,
@@ -314,6 +331,72 @@ pub async fn archive_one(
 ) -> AppResult<StatusCode> {
     docs(&s)?.archive(ws, auth.user_id(), id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReindexDto {
+    /// False when the document was already pending.
+    pub queued: bool,
+    pub document: DocumentDto,
+}
+
+/// `POST /workspaces/{id}/documents/{docId}/reindex` (owner/admin): 202.
+pub async fn reindex_one(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path((ws, id)): Path<(WorkspaceId, Uuid)>,
+) -> AppResult<(StatusCode, Json<ReindexDto>)> {
+    let r = docs(&s)?.reindex(ws, auth.user_id(), id).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ReindexDto {
+            queued: r.queued,
+            document: r.document.into(),
+        }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct ReindexQuery {
+    /// `skipped` (default) | `failed` | `all`
+    pub status: Option<String>,
+    /// Batch size (default 50, max 200).
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchReindexDto {
+    pub queued: usize,
+    pub queued_ids: Vec<Uuid>,
+    pub not_eligible: u32,
+    pub failed_ids: Vec<Uuid>,
+    /// Matching documents left beyond this batch; call again to continue.
+    pub remaining: i64,
+}
+
+/// `POST /workspaces/{id}/documents/reindex?status=skipped|failed|all` (owner/admin): 202.
+pub async fn reindex_batch(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(ws): Path<WorkspaceId>,
+    Query(q): Query<ReindexQuery>,
+) -> AppResult<(StatusCode, Json<BatchReindexDto>)> {
+    let scope = ReindexScope::parse(q.status.as_deref().unwrap_or("skipped"))?;
+    let r = docs(&s)?
+        .reindex_batch(ws, auth.user_id(), scope, q.limit)
+        .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(BatchReindexDto {
+            queued: r.queued.len(),
+            queued_ids: r.queued,
+            not_eligible: r.not_eligible,
+            failed_ids: r.failed,
+            remaining: r.remaining,
+        }),
+    ))
 }
 
 /// `Content-Disposition: attachment` with an ASCII fallback and an RFC 5987 `filename*`.

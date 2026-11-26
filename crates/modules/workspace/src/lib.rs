@@ -38,7 +38,9 @@ pub use application::ports::{
 };
 pub use domain::AiPolicy;
 pub use domain::entitlements::{EntitlementKind, EntitlementSnapshot, EntitlementValue};
-pub use infrastructure::mailers::{DevInvitationMailCapture, LogInvitationMailer};
+pub use infrastructure::mailers::{
+    DevInvitationMailCapture, EmailInvitationMailer, LogInvitationMailer,
+};
 pub use infrastructure::redis_documents::{
     RedisDocumentIndexPublisher, document_results_consumer_config,
 };

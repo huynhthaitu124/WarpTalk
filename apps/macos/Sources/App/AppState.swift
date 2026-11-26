@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     let overlayModel: OverlayModel
     let overlay: OverlayController
     let capture: NativeCaptureController
+    let copilot: CopilotSessionController
     let bridge: NativeBridge
     let web: WebViewModel
 
@@ -21,10 +22,11 @@ final class AppState: ObservableObject {
                                               defaultBackendURL: { settings.backendURL },
                                               defaultDubDeviceUID: { settings.dubOutputDeviceUID })
         let overlayWeb = OverlayWebController(settings: settings)
-        let bridge = NativeBridge(capture: capture, overlay: overlay, overlayModel: overlayModel,
+        let copilot = CopilotSessionController(deps: .live(permissions: permissions, settings: settings))
+        let bridge = NativeBridge(capture: capture, copilot: copilot, overlay: overlay, overlayModel: overlayModel,
                                   overlayWeb: overlayWeb, permissions: permissions, settings: settings)
         self.settings = settings; self.permissions = permissions; self.overlayModel = overlayModel
-        self.overlay = overlay; self.capture = capture; self.bridge = bridge
+        self.overlay = overlay; self.capture = capture; self.copilot = copilot; self.bridge = bridge
         self.web = WebViewModel(settings: settings, bridge: bridge)
     }
 }

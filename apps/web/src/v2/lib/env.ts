@@ -22,3 +22,18 @@ export function apiBaseUrl(): string {
 export function apiUrl(path: string): string {
   return `${apiBaseUrl()}/api/v1${path}`;
 }
+
+const GOOGLE_BUILD_ID: string = (process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? '').trim();
+
+/**
+ * Google OAuth client id for Google Identity Services ("Sign in with Google"), from the build-time
+ * `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. Empty = the Google button/section is hidden everywhere.
+ * The e2e harness build (`NEXT_PUBLIC_E2E_HARNESS=1`) may inject one per test via `window.__E2E_GOOGLE_CLIENT_ID__`.
+ */
+export function googleClientId(): string {
+  if (GOOGLE_BUILD_ID) return GOOGLE_BUILD_ID;
+  if (process.env.NEXT_PUBLIC_E2E_HARNESS === '1' && typeof window !== 'undefined') {
+    return String((window as unknown as { __E2E_GOOGLE_CLIENT_ID__?: string }).__E2E_GOOGLE_CLIENT_ID__ ?? '').trim();
+  }
+  return '';
+}

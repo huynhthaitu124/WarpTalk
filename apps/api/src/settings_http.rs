@@ -11,9 +11,9 @@ use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, RoomId, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_room::RoomQueries;
 use warptalk_settings::{
-    AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_PLATFORM_STATUS, NS_RAG, NS_SUGGESTION,
-    PipelineSettings, PlatformStatusSettings, RagSettings, Scope, ScopeChain, SettingsStore,
-    SuggestionSettings,
+    AiProvidersSettings, FeatureFlags, NS_AI_PROVIDERS, NS_FEATURES, NS_PIPELINE,
+    NS_PLATFORM_STATUS, NS_RAG, NS_SUGGESTION, PipelineSettings, PlatformStatusSettings,
+    RagSettings, Scope, ScopeChain, SettingsStore, SuggestionSettings,
 };
 use warptalk_web::extract::{Json, Path, Query};
 use warptalk_web::{AuthUser, JwtKeys};
@@ -94,6 +94,7 @@ fn known_namespace(ns: &str) -> AppResult<()> {
         NS_RAG,
         NS_AI_PROVIDERS,
         NS_PLATFORM_STATUS,
+        NS_FEATURES,
     ]
     .contains(&ns)
     {
@@ -217,6 +218,7 @@ async fn effective_value(store: &SettingsStore, ns: &str, chain: ScopeChain) -> 
         NS_PLATFORM_STATUS => ser(store
             .get::<PlatformStatusSettings>(ns, ScopeChain::platform())
             .await?),
+        NS_FEATURES => ser(store.get::<FeatureFlags>(ns, chain).await?),
         _ => Err(AppError::not_found(format!("unknown namespace `{ns}`"))),
     }
 }

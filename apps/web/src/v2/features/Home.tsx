@@ -1,13 +1,16 @@
 import { useMemo, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { Brain, Keyboard, Plus, SquaresFour, UserPlus } from '@phosphor-icons/react';
+import { Brain, CheckCircle, Keyboard, Plus, Sparkle, SquaresFour, UserPlus } from '@phosphor-icons/react';
 import { Alert, Button, EmptyState, GroupHeader, PageBody, PageHeader, SectionLabel, Skeleton } from '@v2/ui';
 import { useProfile } from '@v2/lib/auth';
 import { canAdmin, useWorkspace } from '@v2/lib/workspace';
 import { useRoomList } from '@v2/lib/queries';
+import { useFeatures } from '@v2/lib/features';
+import { useSessions } from '@v2/lib/copilot';
 import type { Room } from '@v2/lib/schemas';
 import { PendingInvitations, RUNNING_STATUSES, RoomRow, TERMINAL_STATUSES, UPCOMING_STATUSES, WAITING_STATUSES, roomMoment } from './common';
 import { errMsg } from './errors';
+import { SessionRow } from './Sessions';
 
 function Quick({ to, icon, title, primary }: { to: string; icon: ReactNode; title: string; hint?: string; primary?: boolean }) {
   return (
@@ -42,12 +45,40 @@ function RoomsBand({ title, description, items, emptyTitle, emptyHint, viewAll, 
   );
 }
 
+function RecentSessions({ wsId, viewAll, onStart }: { wsId: string; viewAll: string; onStart(): void }) {
+  const q = useSessions(wsId);
+  const items = (q.data ?? []).slice(0, 6);
+  return (
+    <section className="min-w-0" aria-label="Recent sessions">
+      <GroupHeader>
+        <h2 className="font-medium text-ink">Recent sessions</h2>
+        <span aria-hidden>·</span>
+        <span className="tabular-nums">{items.length}</span>
+        <span className="truncate max-md:hidden">· Your latest copilot sessions.</span>
+        <Link to={viewAll} className="ml-auto shrink-0 text-body-sm">View all</Link>
+      </GroupHeader>
+      {q.isError ? (
+        <PageBody><Alert tone="danger" title="Could not load sessions">{errMsg(q.error)}</Alert></PageBody>
+      ) : q.isLoading ? (
+        <div className="flex flex-col" aria-hidden><Skeleton className="h-11 rounded-none" /><Skeleton className="h-11 rounded-none" /></div>
+      ) : items.length === 0 ? (
+        <PageBody>
+          <EmptyState icon={<Sparkle size={20} weight="duotone" />} title="No sessions yet" description="Start a copilot session to get a live transcript, suggestions, follow-ups and minutes for any meeting." action={<Button variant="primary" onClick={onStart}>Start copilot session</Button>} />
+        </PageBody>
+      ) : (
+        <div role="list" aria-label="Recent sessions list">{items.map((s) => <SessionRow key={s.id} s={s} />)}</div>
+      )}
+    </section>
+  );
+}
+
 /** Workspace dashboard: what is live, what is coming up, what just happened, and the quick actions. */
 export function HomePage() {
   const { current, loading, wsPath } = useWorkspace();
   const profile = useProfile();
   const nav = useNavigate();
-  const rooms = useRoomList(current?.id);
+  const { features } = useFeatures();
+  const rooms = useRoomList(features.translationMeetings ? current?.id : undefined);
   const all = useMemo(() => rooms.data?.pages.flatMap((p) => p.items) ?? [], [rooms.data]);
   const live = useMemo(() => all.filter((r) => RUNNING_STATUSES.includes(r.status)).slice(0, 6), [all]);
   const waiting = useMemo(() => all.filter((r) => WAITING_STATUSES.includes(r.status)).slice(0, 6), [all]);
@@ -64,25 +95,27 @@ export function HomePage() {
   const first = profile.data?.fullName?.split(/\s+/)[0];
   return (
     <>
-      <PageHeader size="page" title={first ? `Welcome back, ${first}` : 'Welcome back'} description={`Here is what is happening in ${current.name}.`} />
+      <PageHeader size="page" title={first ? `Welcome back, ${first}` : 'Welcome back'} description={`Your meeting copilot for ${current.name}: transcripts, suggestions, follow-ups and minutes.`} />
       <PendingInvitations className="px-4 pt-4" />
       <section aria-label="Quick actions" className="px-4 py-4">
         <SectionLabel as="p">Quick jumps</SectionLabel>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Quick primary to={`${wsPath('/meetings')}?new=1`} icon={<Plus size={18} weight="bold" />} title="New meeting" />
-          <Quick to={`${wsPath('/meetings')}?join=1`} icon={<Keyboard size={18} weight="duotone" />} title="Join by code" />
+          {features.copilot && <Quick primary to={`${wsPath('/sessions')}?new=1`} icon={<Sparkle size={18} weight="bold" />} title="Start copilot session" />}
+          {features.copilot && <Quick to={wsPath('/sessions')} icon={<SquaresFour size={18} weight="duotone" />} title="Recent sessions" />}
+          {features.copilot && <Quick to={`${wsPath('/sessions')}?tab=actions`} icon={<CheckCircle size={18} weight="duotone" />} title="Open action items" />}
           <Quick to={wsPath('/knowledge')} icon={<Brain size={18} weight="duotone" />} title="Search knowledge" />
-          {canAdmin(current)
-            ? <Quick to={`${wsPath('/members')}?invite=1`} icon={<UserPlus size={18} weight="duotone" />} title="Invite people" />
-            : <Quick to={wsPath('/meetings')} icon={<SquaresFour size={18} weight="duotone" />} title="All meetings" />}
+          {features.translationMeetings && <Quick to={`${wsPath('/meetings')}?new=1`} icon={<Plus size={18} weight="bold" />} title="New meeting" />}
+          {features.translationMeetings && <Quick to={`${wsPath('/meetings')}?join=1`} icon={<Keyboard size={18} weight="duotone" />} title="Join by code" />}
+          {canAdmin(current) && <Quick to={`${wsPath('/members')}?invite=1`} icon={<UserPlus size={18} weight="duotone" />} title="Invite people" />}
         </div>
       </section>
-      {rooms.isError ? (
+      {features.copilot && <RecentSessions wsId={current.id} viewAll={wsPath('/sessions')} onStart={() => nav(`${wsPath('/sessions')}?new=1`)} />}
+      {!features.translationMeetings ? null : rooms.isError ? (
         <PageBody><Alert tone="danger" title="Could not load meetings">{errMsg(rooms.error)}</Alert></PageBody>
       ) : rooms.isLoading ? (
         <div className="flex flex-col" aria-hidden><Skeleton className="h-11 rounded-none" /><Skeleton className="h-11 rounded-none" /></div>
       ) : all.length === 0 ? (
-        <PageBody><EmptyState icon={<SquaresFour size={20} weight="duotone" />} title="No meetings yet" description="Create your first meeting, share the code, and start translating." action={<Button variant="primary" onClick={() => nav(`${wsPath('/meetings')}?new=1`)}>Create meeting</Button>} /></PageBody>
+        <PageBody><EmptyState icon={<SquaresFour size={20} weight="duotone" />} title="No meetings yet" description="Create your first meeting and share the code." action={<Button variant="primary" onClick={() => nav(`${wsPath('/meetings')}?new=1`)}>Create meeting</Button>} /></PageBody>
       ) : (
         <div className="flex min-w-0 flex-col border-t border-row">
           <RoomsBand title="Live now" description="Meetings you can join right now." items={live} emptyTitle="Nothing live" emptyHint="Start a meeting and it shows up here." viewAll={wsPath('/meetings')} showOpen />

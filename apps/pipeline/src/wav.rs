@@ -67,12 +67,16 @@ pub fn parse_wav(bytes: &[u8]) -> Result<WavAudio, WavError> {
     let ch = usize::from(ch);
     let interleaved: Vec<f32> = match (tag, bits) {
         (1, 16) => data
-            .chunks_exact(2)
-            .map(|c| f32::from(i16::from_le_bytes([c[0], c[1]])) / 32768.0)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| f32::from(i16::from_le_bytes(*c)) / 32768.0)
             .collect(),
         (3, 32) => data
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect(),
         _ => {
             return Err(WavError::Format(format!(

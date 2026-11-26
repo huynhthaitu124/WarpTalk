@@ -29,6 +29,7 @@
 
 mod config;
 pub mod far_side_dedupe;
+pub mod lang;
 mod pool;
 pub mod protocol;
 pub mod sentence;
@@ -36,5 +37,6 @@ mod session;
 pub mod turns;
 
 pub use config::{LogprobFilter, OpenAiSttConfig, base_language};
+pub use lang::{Detected, Dominant, LangDetectConfig, detect, resolve_language};
 pub use pool::{PoolStats, WarmPool, WarmSocket, connect};
-pub use session::{OpenAiRealtimeStt, encode_pcm16_24k};
+pub use session::{OpenAiRealtimeStt, SessionHints, encode_pcm16_24k};

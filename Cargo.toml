@@ -5,6 +5,7 @@ members = [
     "apps/migrator",
     "apps/pipeline",
     "apps/worker",
+    "apps/ai-eval",
     "crates/shared/*",
     "crates/modules/*",
     "crates/pipeline/*",
@@ -20,6 +21,11 @@ license = "UNLICENSED"
 # Third-party versions are pinned here once and referenced with `{ workspace = true }`
 # from member crates. Added as each crate gets real code.
 [workspace.dependencies]
+# document text extraction (knowledge)
+pdf-extract = "0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+uniffi = { version = "0.29", features = ["cli"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tower = "0.5"
@@ -84,7 +90,12 @@ warptalk-meeting = { path = "crates/modules/meeting" }
 warptalk-transcript = { path = "crates/modules/transcript" }
 warptalk-assistant = { path = "crates/modules/assistant" }
 warptalk-billing = { path = "crates/modules/billing" }
+warptalk-email = { path = "crates/providers/email" }
+warptalk-google = { path = "crates/providers/google" }
+warptalk-stripe = { path = "crates/providers/stripe" }
 warptalk-notification = { path = "crates/modules/notification" }
+warptalk-copilot = { path = "crates/modules/copilot" }
+warptalk-copilot-core = { path = "crates/pipeline/copilot-core" }
 warptalk-knowledge = { path = "crates/modules/knowledge" }
 
 [workspace.lints.rust]

@@ -4,9 +4,11 @@ import {
   Alert, Avatar, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, FieldRow, Input, PageHeader, SectionLabel, SettingsGroup, SettingsRow, Select, Skeleton, StatusPill, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, useToast,
 } from '@v2/ui';
 import { cn } from '@v2/lib/cn';
+import { AccountSecurity } from './AccountSecurity';
 import { AiSettings } from './AiSettings';
 import { GlobalGlossaryAdmin } from './GlobalGlossary';
 import { VoiceSection } from './VoiceProfile';
+import { Feature } from '@v2/lib/features';
 import { useAuth, useProfile } from '@v2/lib/auth';
 import { canAdmin, useWorkspace } from '@v2/lib/workspace';
 import {
@@ -252,13 +254,14 @@ function AccountTab() {
           </div>
         </SettingsGroup>
       </section>
+      <AccountSecurity />
       <section aria-label="Appearance">
         <SectionLabel>Appearance</SectionLabel>
         <SettingsGroup>
           <FieldRow label="Theme"><Select value={theme} onValueChange={(v) => setTheme(v as 'dark' | 'light')} options={[{ value: 'dark', label: 'Dark' }, { value: 'light', label: 'Light' }]} /></FieldRow>
         </SettingsGroup>
       </section>
-      <VoiceSection />
+      <Feature name="voiceClone"><VoiceSection /></Feature>
       <div><Button onClick={() => void logout()}>Sign out</Button></div>
     </div>
   );

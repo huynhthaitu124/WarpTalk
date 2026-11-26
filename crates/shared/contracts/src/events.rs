@@ -56,6 +56,10 @@ pub struct SttResult {
     pub far_speaker_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub far_speaker_confidence: Option<f64>,
+    /// Capture channel of a copilot segment: `"me"` (the user's own microphone) or `"others"`
+    /// (meeting audio). Absent for every other producer. Producer: copilot ingest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
 }
 
 impl SttResult {
@@ -78,6 +82,7 @@ impl SttResult {
             far_speaker_name: None,
             far_speaker_source: None,
             far_speaker_confidence: None,
+            channel: None,
         }
     }
 

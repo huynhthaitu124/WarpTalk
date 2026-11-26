@@ -57,6 +57,69 @@ fn client_info(h: &HeaderMap) -> ClientInfo {
     }
 }
 
+/// Always 202 for a well-formed email (no account probing).
+pub async fn resend_verification(
+    State(s): State<HttpState>,
+    Json(b): Json<EmailRequest>,
+) -> AppResult<StatusCode> {
+    s.auth.resend_verification(&b.email).await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+pub async fn forgot_password(
+    State(s): State<HttpState>,
+    Json(b): Json<EmailRequest>,
+) -> AppResult<StatusCode> {
+    s.auth.forgot_password(&b.email).await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+pub async fn reset_password(
+    State(s): State<HttpState>,
+    Json(b): Json<ResetPasswordRequest>,
+) -> AppResult<StatusCode> {
+    s.auth.reset_password(&b.token, &b.new_password).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn change_password(
+    State(s): State<HttpState>,
+    u: AuthUser,
+    Json(b): Json<ChangePasswordRequest>,
+) -> AppResult<StatusCode> {
+    s.auth
+        .change_password(u.user_id(), u.0.sid, &b.current_password, &b.new_password)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn google_login(
+    State(s): State<HttpState>,
+    headers: HeaderMap,
+    Json(b): Json<GoogleTokenRequest>,
+) -> AppResult<Json<AuthResponse>> {
+    Ok(Json(
+        s.auth
+            .google_login(&b.id_token, client_info(&headers))
+            .await?
+            .into(),
+    ))
+}
+
+pub async fn link_google(
+    State(s): State<HttpState>,
+    u: AuthUser,
+    Json(b): Json<GoogleTokenRequest>,
+) -> AppResult<StatusCode> {
+    s.auth.link_google(u.user_id(), &b.id_token).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn unlink_google(State(s): State<HttpState>, u: AuthUser) -> AppResult<StatusCode> {
+    s.auth.unlink_google(u.user_id()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn login(
     State(s): State<HttpState>,
     headers: HeaderMap,

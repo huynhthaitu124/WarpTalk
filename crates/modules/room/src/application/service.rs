@@ -10,12 +10,12 @@ use warptalk_kernel::{
 
 use super::ports::{
     Caller, ClaimOutcome, Heartbeat, JoinInput, LogInviteNotifier, Mutation, NewBridgeRoom,
-    NewRoom, ParticipantRecord, RoomEventPublisher, RoomInvite, RoomInviteNotifier, RoomRecord,
-    RoomRepo, UpdateLanguagesInput, UpdateRoomInput, WorkspacePolicy,
+    NewCopilotRoom, NewRoom, ParticipantRecord, RoomEventPublisher, RoomInvite, RoomInviteNotifier,
+    RoomRecord, RoomRepo, UpdateLanguagesInput, UpdateRoomInput, WorkspacePolicy,
 };
 use crate::domain::{
     AudioMode, BridgeConfig, BridgeProvider, MAX_INVITES, RoomAction, RoomSettings,
-    RoomSettingsPatch, RoomStatus, generate_room_code, normalize_invite_emails,
+    RoomSettingsPatch, RoomStatus, RoomType, generate_room_code, normalize_invite_emails,
     normalize_meeting_ref, valid_language,
 };
 
@@ -59,6 +59,14 @@ pub struct UpdateRoom {
     pub settings: RoomSettingsPatch,
     /// Replaces the pending invitation list.
     pub invited_emails: Option<Vec<String>>,
+}
+
+pub struct CreateCopilotRoom {
+    pub workspace_id: WorkspaceId,
+    pub title: String,
+    pub host_display_name: String,
+    pub host_language: String,
+    pub other_language: String,
 }
 
 pub struct JoinRoom {
@@ -290,6 +298,58 @@ impl RoomService {
         Err(AppError::internal("could not allocate a unique room code"))
     }
 
+    /// Create an `IN_PROGRESS` copilot room hosted by `user` (a workspace member). No LiveKit seat,
+    /// no pipeline command: only the room row and the host participant.
+    pub async fn create_copilot(
+        &self,
+        user: UserId,
+        req: CreateCopilotRoom,
+    ) -> AppResult<(RoomRecord, warptalk_kernel::ParticipantId)> {
+        let title = req.title.trim().to_owned();
+        if title.is_empty() || title.chars().count() > 255 {
+            return Err(validation(
+                "INVALID_TITLE",
+                "title must be 1-255 characters",
+            ));
+        }
+        if !valid_language(&req.host_language) || !valid_language(&req.other_language) {
+            return Err(validation("INVALID_LANGUAGE", "invalid language code"));
+        }
+        if self
+            .workspace
+            .member_role(req.workspace_id, user)
+            .await?
+            .is_none()
+        {
+            return Err(AppError::forbidden("Not a member of this workspace"));
+        }
+        if !self.workspace.is_active(req.workspace_id).await? {
+            return Err(AppError::conflict(
+                "WORKSPACE_INACTIVE",
+                "The workspace is not available",
+            ));
+        }
+        let now = self.clock.now();
+        for _ in 0..8 {
+            let new = NewCopilotRoom {
+                id: RoomId::new(),
+                workspace_id: req.workspace_id,
+                host: user,
+                host_display_name: req.host_display_name.clone(),
+                title: title.clone(),
+                code: generate_room_code(&mut rand::thread_rng()),
+                source_language: req.host_language.clone(),
+                target_language: req.other_language.clone(),
+                now,
+            };
+            match self.repo.create_copilot(new).await {
+                Err(AppError::Conflict { code, .. }) if code == "DUPLICATE" => continue,
+                other => return other,
+            }
+        }
+        Err(AppError::internal("could not allocate a unique room code"))
+    }
+
     pub async fn list(
         &self,
         user: UserId,
@@ -349,6 +409,12 @@ impl RoomService {
             return Err(validation(
                 "INVALID_DISPLAY_NAME",
                 "displayName must be 1-100 characters",
+            ));
+        }
+        if room.room_type == RoomType::CopilotSession {
+            return Err(AppError::conflict(
+                "NOT_JOINABLE",
+                "A copilot session has no other participants.",
             ));
         }
         if room.status.is_terminal() {

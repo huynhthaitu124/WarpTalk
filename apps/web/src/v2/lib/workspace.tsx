@@ -95,4 +95,9 @@ export function useWorkspace() {
   return c;
 }
 
+/** Like `useWorkspace` but returns null outside a provider (shared components, test harnesses). */
+export function useWorkspaceOptional() {
+  return useContext(WsCtx);
+}
+
 export const canAdmin = (w: Workspace | null) => w?.myRole === 'OWNER' || w?.myRole === 'ADMIN';

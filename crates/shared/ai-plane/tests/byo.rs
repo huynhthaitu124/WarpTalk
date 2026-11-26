@@ -152,6 +152,10 @@ async fn workspace_override_beats_platform_default() {
         .unwrap();
     assert_eq!(r.model.as_deref(), Some("claude-byo-model"));
     assert_eq!(r.boundary, DataBoundary::WorkspaceControlled);
+    assert_eq!(
+        r.key_source,
+        warptalk_assistant::suggestion::KeySource::Workspace
+    );
     assert_eq!(r.provider.id(), ProviderId::Anthropic);
 
     // Another purpose of the same workspace, and another workspace: platform default.
@@ -185,6 +189,45 @@ async fn workspace_override_beats_platform_default() {
         .await
         .unwrap();
     assert_eq!(r.model.as_deref(), Some("gpt-4.1"));
+}
+
+#[tokio::test]
+async fn chat_prefers_assistant_override_and_falls_back_to_the_summary_one() {
+    let Some((db, _)) = env() else { return };
+    let pool = pool(&db).await;
+    let vault = vault();
+    let repo = PgLlmConfigRepository::new(pool.clone());
+    let ai = providers(&pool, vault.clone(), true);
+    let ws = WorkspaceId::new();
+    seed_credential(&repo, &vault, ws, LlmProviderKind::Anthropic).await;
+    let save = |purpose: LlmPurpose, model: &'static str| {
+        let (repo, ws) = (repo.clone(), ws);
+        async move {
+            let mut cfg = input(LlmProviderKind::Anthropic, model);
+            cfg.data_boundary = BoundaryKind::WorkspaceControlled;
+            repo.upsert_config(ws, purpose, &cfg, UserId::new(), chrono::Utc::now())
+                .await
+                .unwrap();
+        }
+    };
+
+    // No override: platform default.
+    let r = ai.for_purpose(ws, Purpose::Chat).await.unwrap();
+    assert_eq!(r.model.as_deref(), Some("gpt-4.1"));
+
+    // Only the legacy `summary` override exists (chat used to run under it): still honoured.
+    save(LlmPurpose::Summary, "claude-summary-model").await;
+    ai.invalidate_workspace(ws);
+    let r = ai.for_purpose(ws, Purpose::Chat).await.unwrap();
+    assert_eq!(r.model.as_deref(), Some("claude-summary-model"));
+
+    // A dedicated `assistant` override wins for chat, summaries keep theirs.
+    save(LlmPurpose::Assistant, "claude-chat-model").await;
+    ai.invalidate_workspace(ws);
+    let r = ai.for_purpose(ws, Purpose::Chat).await.unwrap();
+    assert_eq!(r.model.as_deref(), Some("claude-chat-model"));
+    let r = ai.for_purpose(ws, Purpose::Summary).await.unwrap();
+    assert_eq!(r.model.as_deref(), Some("claude-summary-model"));
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
+import { test as raw } from '../fixtures';
 import { call, createRoom, createWorkspace, expect, test, createUser, login, ok, seedSession, rnd } from '../fixtures';
-import { test as raw } from '@playwright/test';
 
 raw.describe('Workspaces (new user)', () => {
   raw('WS-01 no workspace -> Workspaces page -> create workspace -> its Home', async ({ page }) => {

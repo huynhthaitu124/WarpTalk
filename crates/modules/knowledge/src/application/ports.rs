@@ -290,3 +290,20 @@ pub trait KnowledgeRepository: Send + Sync {
 pub trait ResultPublisher: Send + Sync {
     async fn publish(&self, result: &IndexResult) -> Result<(), String>;
 }
+
+/// Reads the raw bytes of an uploaded document (pdf/docx) for text extraction. Wired by
+/// `apps/worker` over the object store.
+#[async_trait]
+pub trait DocumentSource: Send + Sync {
+    async fn fetch(&self, object_key: &str) -> Result<Vec<u8>, DocumentSourceError>;
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum DocumentSourceError {
+    /// The object does not exist (retrying cannot help).
+    #[error("object not found: {0}")]
+    NotFound(String),
+    /// Storage hiccup (retry).
+    #[error("{0}")]
+    Backend(String),
+}

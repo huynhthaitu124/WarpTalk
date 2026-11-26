@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+warptalk-billing = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 axum = { workspace = true }
@@ -29,6 +30,8 @@ warptalk-telemetry = { workspace = true }
 warptalk-db = { workspace = true }
 warptalk-web = { workspace = true }
 warptalk-identity = { workspace = true }
+warptalk-email = { workspace = true }
+warptalk-google = { workspace = true }
 warptalk-workspace = { workspace = true }
 warptalk-storage = { workspace = true }
 warptalk-room = { workspace = true }
@@ -45,10 +48,17 @@ warptalk-knowledge = { workspace = true }
 warptalk-notification = { workspace = true }
 warptalk-qdrant = { workspace = true }
 warptalk-assistant = { workspace = true }
+warptalk-copilot = { workspace = true }
+warptalk-stt = { workspace = true }
+warptalk-ingress = { workspace = true }
+warptalk-pipeline-runtime = { workspace = true }
 warptalk-transcript = { workspace = true }
 warptalk-llm = { workspace = true }
 warptalk-ai-plane = { workspace = true }
 futures = { workspace = true }
 
 [dev-dependencies]
+warptalk-copilot-core = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tower = { workspace = true, features = ["util"] }
+wiremock = { workspace = true }

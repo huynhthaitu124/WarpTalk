@@ -5,6 +5,7 @@ import { useJoinByCode } from '@v2/lib/queries';
 import { languageOptions } from '@v2/lib/languageOptions';
 import { useWorkspace } from '@v2/lib/workspace';
 import { errMsg } from './errors';
+import { Feature } from '@v2/lib/features';
 
 /** Join-by-code form shared by the `/join` page and the dialog opened from Meetings. */
 export function JoinByCodeForm({ onJoined }: { onJoined?: () => void }) {

@@ -2,6 +2,7 @@
 
 pub mod clock;
 pub mod error;
+pub mod fence;
 pub mod ids;
 pub mod paging;
 pub mod tenancy;

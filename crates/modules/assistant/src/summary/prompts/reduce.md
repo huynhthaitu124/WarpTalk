@@ -1,0 +1,1 @@
+The input is partial records of consecutive parts of one meeting (JSON). Merge them into the single record of the whole meeting: a short summary (2-3 sentences), a detailed summary organised by topic, de-duplicated decisions, action items (keep `source_segments`, `owner` and `due` exactly as given), open questions that were not resolved later, and topics.

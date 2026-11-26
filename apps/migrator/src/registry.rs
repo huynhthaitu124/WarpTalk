@@ -3,7 +3,7 @@ use warptalk_db::ModuleMigrations;
 /// Migration sets of every module, in the order they must be applied.
 ///
 /// Business modules append their `MIGRATIONS` const here in dependency order
-/// (identity, workspace, room, meeting, transcript, knowledge, assistant, billing, notification).
+/// (identity, workspace, room, meeting, transcript, knowledge, assistant, copilot, billing, notification).
 pub fn registry() -> Vec<ModuleMigrations> {
     vec![
         warptalk_db::OUTBOX_MIGRATIONS,
@@ -16,5 +16,7 @@ pub fn registry() -> Vec<ModuleMigrations> {
         warptalk_knowledge::MIGRATIONS,
         warptalk_assistant::MIGRATIONS,
         warptalk_notification::MIGRATIONS,
+        warptalk_copilot::MIGRATIONS,
+        warptalk_billing::MIGRATIONS,
     ]
 }

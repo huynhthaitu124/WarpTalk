@@ -10,10 +10,11 @@ use std::time::Duration;
 
 use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
+use uuid::Uuid;
 use warptalk_bus::xadd;
 use warptalk_contracts::events::{SYSTEM_SPEAKER, SttResult};
 use warptalk_kernel::{Clock, RoomId, WorkspaceId};
-use warptalk_llm::{CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response};
+use warptalk_llm::{CacheHint, JsonSchemaFormat, LlmError, Message, Request, Response, Usage};
 use warptalk_telemetry::{
     Outcome as Metric, STAGE_OUTCOME_METRIC, StageTimer, record_stage_outcome,
 };
@@ -24,7 +25,7 @@ use super::config::{
 use super::config_source::ConfigSource;
 use super::hygiene;
 use super::model::{
-    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, SourceRef,
+    AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, Role, SourceRef,
     SuggestionResult, Turn,
 };
 use super::ports::{
@@ -34,7 +35,10 @@ use super::ports::{
 use super::prompt;
 use super::slot::{SlotDenied, SlotParams, SuggestionState};
 use super::stage0::{self, Stage0};
+use super::store::{ContextLine, SuggestionRecord, SuggestionStore};
 use super::window::{RollingWindow, estimate_tokens};
+use crate::safety::{self, Fence, Lang};
+use crate::usage::{SharedUsageSink, UsageEvent};
 
 const STAGE_DECIDE: &str = "suggestion_decide";
 const STAGE_GENERATE: &str = "suggestion_generate";
@@ -75,7 +79,16 @@ pub struct Admitted {
     stt: SttResult,
     turn: Turn,
     context: Vec<Turn>,
+    /// Another participant asks for a reply and the `answer` fast path may apply.
+    answer_candidate: bool,
     _guard: InflightGuard,
+}
+
+impl Admitted {
+    /// Role of the speaker of the admitted segment.
+    pub fn role(&self) -> Role {
+        self.turn.role
+    }
 }
 
 pub enum Admission {
@@ -85,6 +98,8 @@ pub enum Admission {
 
 pub struct SuggestionEngine {
     deps: EngineDeps,
+    usage: Option<SharedUsageSink>,
+    store: Option<Arc<dyn SuggestionStore>>,
     windows: Mutex<HashMap<RoomId, RollingWindow>>,
     inflight: Arc<Mutex<HashSet<RoomId>>>,
 }
@@ -121,6 +136,7 @@ struct Generated {
     translations: BTreeMap<String, (String, String)>,
     follow_up: Option<Value>,
     tokens: u32,
+    model: String,
 }
 
 fn fin(outcome: Outcome) -> Outcome {
@@ -176,9 +192,45 @@ impl SuggestionEngine {
     pub fn new(deps: EngineDeps) -> Self {
         Self {
             deps,
+            usage: None,
+            store: None,
             windows: Mutex::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// Publish `usage:events` for every LLM call (billing metering).
+    pub fn with_usage(mut self, sink: SharedUsageSink) -> Self {
+        self.usage = Some(sink);
+        self
+    }
+
+    /// Persist every published suggestion so users can rate it and bad cases become eval data.
+    pub fn with_store(mut self, store: Arc<dyn SuggestionStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Fire-and-forget: metering must not add latency to the suggestion path or fail it.
+    /// One event per (segment, stage), so reprocessing a segment is never charged twice.
+    fn meter(&self, a: &Admitted, llm: &ResolvedLlm, model: &str, stage: &str, usage: &Usage) {
+        let Some(sink) = self.usage.clone() else {
+            return;
+        };
+        let (tin, tout) = UsageEvent::tokens_of(usage);
+        let segment = a.stt.segment_id.parse::<Uuid>().ok();
+        let event = UsageEvent::llm(
+            format!("llm_suggestion:{}:{}:{stage}", a.room, a.stt.segment_id),
+            "llm_suggestion",
+            a.workspace.as_uuid(),
+            a.room.as_uuid(),
+            model.to_owned(),
+            llm.key_source,
+            tin,
+            tout,
+            segment,
+        );
+        tokio::spawn(async move { sink.emit(event).await });
     }
 
     /// Drop a finished room's window and watchers.
@@ -248,6 +300,7 @@ impl SuggestionEngine {
             text,
             language: stt.language.clone(),
             at_ms: now_ms,
+            role: Role::from_channel(stt.channel.as_deref()),
         };
         let context = {
             let mut windows = match self.windows.lock() {
@@ -264,6 +317,8 @@ impl SuggestionEngine {
         {
             return Admission::Rejected(fin(Outcome::Stage0Rejected(why)));
         }
+        let answer_candidate = turn.role == Role::Other
+            && stage0::asks_for_response(&turn.text, &cfg.heuristics_for(&stt.language));
         // Gate 6: cap zero disables.
         if cfg.max_per_meeting == 0 {
             return Admission::Rejected(fin(Outcome::CapZero));
@@ -283,6 +338,7 @@ impl SuggestionEngine {
             stt: stt.clone(),
             turn,
             context,
+            answer_candidate,
             _guard: InflightGuard {
                 set: self.inflight.clone(),
                 room,
@@ -290,8 +346,10 @@ impl SuggestionEngine {
         }))
     }
 
-    fn slot_params(a: &Admitted) -> SlotParams {
+    /// `bypass_cooldown`: the hint about to be claimed is latency-critical.
+    fn slot_params(a: &Admitted, bypass_cooldown: bool) -> SlotParams {
         SlotParams {
+            bypass_cooldown,
             room: a.room,
             workspace: a.workspace,
             cooldown_seconds: a.cfg.cooldown_seconds,
@@ -339,7 +397,19 @@ impl SuggestionEngine {
         }
 
         // Gate 8: cooldown / budget probe (read-only, so a doomed attempt spends no tokens).
-        match self.deps.state.probe(&Self::slot_params(&a)).await {
+        // A segment that asks the user something may be an `answer`, which skips the cooldown.
+        let categories: Vec<ResolvedCategory> = cfg
+            .enabled_categories()
+            .into_iter()
+            .filter(|c| c.allows_role(a.turn.role))
+            .collect();
+        let may_bypass = a.answer_candidate && categories.iter().any(|c| c.skip_cooldown);
+        match self
+            .deps
+            .state
+            .probe(&Self::slot_params(&a, may_bypass))
+            .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(d)) => return fin(Self::denied(d)),
             Err(e) => {
@@ -349,7 +419,6 @@ impl SuggestionEngine {
         }
 
         // Stage 1: decide.
-        let categories = cfg.enabled_categories();
         if categories.is_empty() {
             return fin(Outcome::CategoryDisabled);
         }
@@ -372,6 +441,19 @@ impl SuggestionEngine {
         };
         if !category.enabled {
             return fin(Outcome::CategoryDisabled);
+        }
+        if !category.allows_role(a.turn.role) {
+            return fin(Outcome::RoleNotAllowed);
+        }
+        // The probe may have skipped the cooldown for a possible `answer`; any other category
+        // must still respect it (checked before spending the generate call).
+        let bypass = category.skip_cooldown && a.answer_candidate;
+        if may_bypass && !bypass {
+            match self.deps.state.probe(&Self::slot_params(&a, false)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(d)) => return fin(Self::denied(d)),
+                Err(_) => return fin(Outcome::SlotDenied),
+            }
         }
         if decision.confidence < cfg.confidence_floor(&category) {
             return fin(Outcome::BelowConfidence);
@@ -405,7 +487,7 @@ impl SuggestionEngine {
         }
 
         // Atomic claim (cooldown + budgets).
-        match self.deps.state.claim(&Self::slot_params(&a)).await {
+        match self.deps.state.claim(&Self::slot_params(&a, bypass)).await {
             Ok(Ok(())) => {}
             Ok(Err(d)) => return fin(Self::denied(d)),
             Err(e) => {
@@ -465,22 +547,44 @@ impl SuggestionEngine {
         }
     }
 
-    fn render_transcript(a: &Admitted, with_ids: bool) -> String {
+    /// The perspective rule, only when the window carries speaker roles (copilot sessions).
+    fn perspective(a: &Admitted) -> String {
+        let has_roles = a
+            .context
+            .iter()
+            .chain(std::iter::once(&a.turn))
+            .any(|t| t.role != Role::Unknown);
+        if has_roles {
+            prompt::resolve(&a.cfg, "perspective_rule").text
+        } else {
+            String::new()
+        }
+    }
+
+    /// Transcript block inside the per-call data fence (`<<DATA-nonce:transcript>>`); every turn
+    /// is sanitised and flattened to one line so it cannot forge markers or extra lines.
+    fn render_transcript(a: &Admitted, with_ids: bool, fence: &Fence) -> String {
         let line = |t: &Turn, latest: bool| {
+            let name = fence.sanitize(t.role.label().unwrap_or(t.speaker_id.as_str()));
             let who = if with_ids {
-                format!("#{} {}", t.segment_id, t.speaker_id)
+                format!("#{} {}", fence.sanitize(&t.segment_id), name)
             } else {
-                t.speaker_id.clone()
+                name
             };
-            let text = Self::scrub(&a.cfg, &t.text)
-                .replace("</transcript>", "")
-                .replace("<transcript>", "");
+            let text = fence
+                .sanitize(&Self::scrub(&a.cfg, &t.text))
+                .replace('\n', " ");
             let mark = if latest { "   <-- LATEST" } else { "" };
             format!("[{who}] {text}{mark}")
         };
         let mut lines: Vec<String> = a.context.iter().map(|t| line(t, false)).collect();
         lines.push(line(&a.turn, true));
-        format!("<transcript>\n{}\n</transcript>", lines.join("\n"))
+        format!(
+            "{}\n<transcript>\n{}\n</transcript>\n{}",
+            fence.open("transcript"),
+            lines.join("\n"),
+            fence.close("transcript")
+        )
     }
 
     fn request(cfg: &SuggestionConfig, workspace: WorkspaceId, spec: RequestSpec) -> Request {
@@ -527,8 +631,17 @@ impl SuggestionEngine {
         }
     }
 
-    fn untrusted(cfg: &SuggestionConfig) -> String {
-        prompt::resolve(cfg, "untrusted_rule").text
+    /// The untrusted-data rule bound to this call's fence. The embedded template (or a versioned
+    /// override with `{{nonce}}`) is rendered; a custom text that ignores the nonce is still
+    /// safe because the markers themselves carry it.
+    fn untrusted(cfg: &SuggestionConfig, fence: &Fence, lang: &str) -> String {
+        let t = prompt::resolve(cfg, "untrusted_rule");
+        if t.version == prompt::BUILTIN_VERSION {
+            return safety::untrusted_rule(Lang::from_code(lang), fence);
+        }
+        let mut v: BTreeMap<&str, String> = BTreeMap::new();
+        v.insert("nonce", fence.nonce().to_string());
+        prompt::render(&t.text, &v)
     }
 
     async fn decide(
@@ -540,8 +653,21 @@ impl SuggestionEngine {
         let cfg = &a.cfg;
         let sys_t = prompt::resolve(cfg, "decide");
         let user_t = prompt::resolve(cfg, "decide_user");
+        let fence = Fence::new();
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
-        vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert(
+            "untrusted_rule",
+            Self::untrusted(cfg, &fence, &a.stt.language),
+        );
+        vars.insert("perspective_rule", Self::perspective(a));
+        vars.insert(
+            "answer_examples",
+            if !Self::perspective(a).is_empty() && categories.iter().any(|c| c.id == "answer") {
+                prompt::resolve(cfg, "decide_answer_examples").text
+            } else {
+                String::new()
+            },
+        );
         vars.insert(
             "category_descriptions",
             categories
@@ -560,7 +686,7 @@ impl SuggestionEngine {
         );
         let system = prompt::render(&sys_t.text, &vars);
         let mut uvars: BTreeMap<&str, String> = BTreeMap::new();
-        uvars.insert("transcript", Self::render_transcript(a, false));
+        uvars.insert("transcript", Self::render_transcript(a, false, &fence));
         let user = prompt::render(&user_t.text, &uvars);
 
         let mut ids: Vec<Value> = categories.iter().map(|c| json!(c.id)).collect();
@@ -603,6 +729,7 @@ impl SuggestionEngine {
             .await
             .map_err(|_| ())?;
         let tokens = resp.usage.total();
+        self.meter(a, llm, &req.model, STAGE_DECIDE, &resp.usage);
         let Some(v) = extract_json(&resp.text()) else {
             tracing::debug!(room = %a.room, "decide returned no JSON");
             return Err(());
@@ -688,6 +815,23 @@ impl SuggestionEngine {
         set
     }
 
+    /// Knowledge snippets, each inside its own fence (`<<DATA-nonce:source_sN>>`). Empty string
+    /// when there are none.
+    fn render_sources(snippets: &[GroundedSnippet], fence: &Fence) -> String {
+        if snippets.is_empty() {
+            return String::new();
+        }
+        let mut docs = String::from("\n\n<reference_sources>\n");
+        for (i, s) in snippets.iter().enumerate() {
+            let title = fence.sanitize(&s.title).replace('\n', " ");
+            docs.push_str(&format!("--- Source S{}: {} ---\n", i + 1, title));
+            docs.push_str(&fence.wrap(&format!("source_s{}", i + 1), &s.text));
+            docs.push('\n');
+        }
+        docs.push_str("</reference_sources>");
+        docs
+    }
+
     async fn generate(
         &self,
         a: &Admitted,
@@ -706,8 +850,21 @@ impl SuggestionEngine {
             LanguageMode::Fixed => cfg.language.fixed.clone(),
             _ => a.stt.language.clone(),
         };
+        let fence = Fence::new();
         let mut vars: BTreeMap<&str, String> = BTreeMap::new();
-        vars.insert("untrusted_rule", Self::untrusted(cfg));
+        vars.insert(
+            "untrusted_rule",
+            Self::untrusted(cfg, &fence, &a.stt.language),
+        );
+        vars.insert("perspective_rule", Self::perspective(a));
+        vars.insert(
+            "answer_examples",
+            if category.id == "answer" {
+                prompt::resolve(cfg, "generate_answer_examples").text
+            } else {
+                String::new()
+            },
+        );
         vars.insert("contract", category.contract.clone());
         vars.insert("category", category.id.clone());
         vars.insert("max_chars", cfg.max_suggestion_chars.to_string());
@@ -761,19 +918,7 @@ impl SuggestionEngine {
         vars.insert("reader_languages", readers.join(", "));
         let system = prompt::render(&sys_t.text, &vars);
 
-        let mut docs = String::new();
-        if !snippets.is_empty() {
-            docs.push_str("\n\n<reference_sources>\n");
-            for (i, s) in snippets.iter().enumerate() {
-                docs.push_str(&format!(
-                    "--- Source S{}: {} ---\n{}\n",
-                    i + 1,
-                    s.title,
-                    s.text
-                ));
-            }
-            docs.push_str("</reference_sources>");
-        }
+        let docs = Self::render_sources(snippets, &fence);
         let mut uvars: BTreeMap<&str, String> = BTreeMap::new();
         uvars.insert("category", category.id.clone());
         uvars.insert("reason", decision.reason.clone());
@@ -786,7 +931,7 @@ impl SuggestionEngine {
             },
         );
         uvars.insert("segment_language", a.stt.language.clone());
-        uvars.insert("transcript", Self::render_transcript(a, structured));
+        uvars.insert("transcript", Self::render_transcript(a, structured, &fence));
         uvars.insert("documents", docs);
         let user = prompt::render(&user_t.text, &uvars);
 
@@ -854,6 +999,7 @@ impl SuggestionEngine {
             .await
             .map_err(|_| ())?;
         let tokens = resp.usage.total();
+        self.meter(a, llm, &req.model, STAGE_GENERATE, &resp.usage);
         let Some(v) = extract_json(&resp.text()) else {
             return Err(());
         };
@@ -876,6 +1022,7 @@ impl SuggestionEngine {
             translations,
             follow_up: v.get("follow_up").filter(|f| f.is_object()).cloned(),
             tokens,
+            model: req.model.clone(),
         })
     }
 
@@ -963,6 +1110,50 @@ impl SuggestionEngine {
         })
     }
 
+    /// Snapshot of a suggestion about to be published (best effort: a storage failure is logged
+    /// and never blocks delivery).
+    async fn record_suggestion(&self, a: &Admitted, r: &SuggestionResult, model: &str) {
+        let Some(store) = &self.store else { return };
+        let Ok(id) = r.suggestion_id.parse::<uuid::Uuid>() else {
+            return;
+        };
+        let turns: Vec<&Turn> = a.context.iter().chain(std::iter::once(&a.turn)).collect();
+        let t0 = turns.first().map_or(0, |t| t.at_ms);
+        let context = turns
+            .iter()
+            .map(|t| ContextLine {
+                t_ms: (t.at_ms - t0).max(0),
+                channel: match t.role {
+                    Role::SelfSpeaker => "me",
+                    Role::Other => "others",
+                    Role::Unknown => "unknown",
+                }
+                .into(),
+                speaker: t.speaker_id.clone(),
+                text: Self::scrub(&a.cfg, &t.text),
+            })
+            .collect();
+        let rec = SuggestionRecord {
+            id,
+            workspace_id: a.workspace.as_uuid(),
+            room_id: a.room.as_uuid(),
+            segment_id: r.segment_id.clone(),
+            category: r.category.clone(),
+            severity: r.severity.clone(),
+            content: r.content.clone(),
+            detail: r.detail.clone(),
+            language: r.language.clone(),
+            model: model.to_string(),
+            prompt_version: r.prompt_version.clone(),
+            confidence: r.confidence,
+            sources: serde_json::to_value(&r.sources).unwrap_or(Value::Null),
+            context,
+        };
+        if let Err(e) = store.record(&rec).await {
+            tracing::warn!(room = %a.room, error = %e, "could not store suggestion snapshot");
+        }
+    }
+
     /// Output hygiene, dedup and publishing.
     async fn finish(
         &self,
@@ -982,6 +1173,40 @@ impl SuggestionEngine {
         {
             tracing::warn!(room = %a.room, "generate output contained a blocked phrase");
             return fin(Outcome::HygieneDropped);
+        }
+        if cfg.safety.enabled {
+            let mut outs: Vec<&str> = vec![g.content.as_str(), g.detail.as_str()];
+            for (c, d) in g.translations.values() {
+                outs.push(c);
+                outs.push(d);
+            }
+            let fu_text: Vec<String> = g
+                .follow_up
+                .as_ref()
+                .map(|f| {
+                    ["task", "owner", "due"]
+                        .iter()
+                        .map(|k| str_field(f, k))
+                        .collect()
+                })
+                .unwrap_or_default();
+            outs.extend(fu_text.iter().map(String::as_str));
+            let mut trusted: Vec<&str> = Vec::new();
+            for s in snippets {
+                trusted.push(&s.title);
+                trusted.push(&s.text);
+            }
+            let transcript: Vec<&str> = a
+                .context
+                .iter()
+                .chain(std::iter::once(&a.turn))
+                .map(|t| t.text.as_str())
+                .collect();
+            if let Err(v) = safety::check_output(&outs, &trusted, &transcript, &cfg.safety) {
+                tracing::warn!(room = %a.room, reason = v.label(), "generate output failed safety validation");
+                record_custom(STAGE_GENERATE, "unsafe_output");
+                return fin(Outcome::UnsafeOutput);
+            }
         }
         let clean = |s: &str, max: u32| {
             let c = hygiene::clean_text(s, max as usize);
@@ -1061,6 +1286,14 @@ impl SuggestionEngine {
                 copies.push(copy);
             }
         }
+
+        self.record_suggestion(a, &result, &g.model).await;
+        metrics::counter!(
+            "warptalk_suggestion_shown_total",
+            "category" => result.category.clone(),
+            "model" => g.model.clone()
+        )
+        .increment(1);
 
         let mut conn = self.deps.redis.clone();
         let maxlen = cfg.delivery.stream_maxlen as usize;
