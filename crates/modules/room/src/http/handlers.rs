@@ -279,6 +279,7 @@ pub async fn bridge_claim(
                 listen_language: req.listen_language,
                 settings: SettingsRequest::patch(req.settings, None),
                 invited_emails: req.invited_emails,
+                utc_offset_minutes: req.utc_offset_minutes,
             },
         )
         .await?;

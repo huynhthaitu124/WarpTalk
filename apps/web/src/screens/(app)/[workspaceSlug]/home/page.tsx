@@ -5,11 +5,9 @@ import { motion } from "motion/react";
 import { useTranslations } from "next-intl";
 import {
   ChartBar,
-  ClockCounterClockwise,
   CreditCard,
   FileText,
   GearSix,
-  Keyboard,
   MagnifyingGlass,
   Plus,
   Users,
@@ -17,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { cn } from "@/lib/utils";
+import { WORKSPACE_UI_ENABLED } from "@/lib/feature-flags";
 import { useUIStore } from "@/stores/ui-store";
 import { useCanCreateMeetings, useWorkspaceStore } from "@/stores/workspace-store";
 import { useWorkspaceRole } from "@/hooks/use-workspace-role";
@@ -119,30 +118,18 @@ export default function WorkspaceHomePage() {
       onClick: () => setSearchMeetingModalOpen(true),
     },
     {
-      title: t("actions.joinByCode"),
-      icon: Keyboard,
-      href: "/join",
-    },
-    {
       title: t("actions.meetings"),
       icon: VideoCamera,
       href: `/${slug}/rooms`,
-    },
-    {
-      title: t("actions.artifacts"),
-      icon: ClockCounterClockwise,
-      href: `/${slug}/artifacts`,
     },
     {
       title: t("actions.documents"),
       icon: FileText,
       href: `/${slug}/documents`,
     },
-    {
-      title: t("actions.members"),
-      icon: Users,
-      href: `/${slug}/members`,
-    },
+    ...(WORKSPACE_UI_ENABLED
+      ? [{ title: t("actions.members"), icon: Users, href: `/${slug}/members` } satisfies QuickAction]
+      : []),
   ];
 
   if (isOwnerOrAdmin) {
@@ -155,7 +142,7 @@ export default function WorkspaceHomePage() {
       {
         title: t("actions.dashboard"),
         icon: ChartBar,
-        href: `/${slug}/insights`,
+        href: `/${slug}/dashboard`,
       },
       {
         title: t("actions.settings"),

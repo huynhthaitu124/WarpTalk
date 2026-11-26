@@ -22,6 +22,7 @@ import { mergeCaption, pickTranslation, type CaptionLine } from '@v2/lib/caption
 import { session } from '@v2/lib/session';
 import type { JoinGrant } from '@v2/lib/schemas';
 import { CaptionsPanel, StatusStrip, type ConnectionLabel } from './MeetingParts';
+import { CopilotDetail } from './CopilotDetail';
 import {
   AppRow, BrowserFallback, ErrorRow, KeyValue, LevelMeter, PermissionsPanel, StepCard, ago, useNow, type Recovery,
 } from './ExternalParts';
@@ -76,6 +77,8 @@ export function ExternalPage() {
   const [appId, setAppId] = useState('');
   const [dubDevice, setDubDevice] = useState('');
   const parsed = useMemo(() => parseMeetingLink(link), [link]);
+  /** The link is optional: without one the claim starts a desktop session. */
+  const linkOk = !link.trim() || parsed.ok;
   const sameLang = far === listen;
 
   // ---- native
@@ -87,7 +90,7 @@ export function ExternalPage() {
   const [permsBusy, setPermsBusy] = useState(false);
 
   // ---- room / session
-  const [roomId, setRoomId] = useState<string | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(() => params.get('room'));
   const [claimInfo, setClaimInfo] = useState<{ created: boolean; heartbeatIntervalSeconds: number; leaseSeconds: number } | null>(null);
   const room = useRoom(roomId ?? undefined);
   const claim = useClaimBridge();
@@ -155,12 +158,12 @@ export function ExternalPage() {
 
   // ---- claim
   async function doClaim() {
-    if (!parsed.ok || !current) return;
+    if (!linkOk || !current) return;
     setActionError(null);
     try {
       const res = await claim.mutateAsync({
         workspaceId: current.id,
-        link: parsed,
+        link: parsed.ok ? parsed : undefined,
         title: title.trim(),
         displayName: profile.data?.fullName,
         sourceLanguage: far,
@@ -399,11 +402,11 @@ export function ExternalPage() {
   const autoClaimed = useRef(false);
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (!auto || !native || !current || roomId || autoClaimed.current || !parsed.ok || sameLang) return;
+    if (!auto || !native || !current || roomId || autoClaimed.current || !linkOk || sameLang) return;
     autoClaimed.current = true;
     void doClaim();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auto, native, current, roomId, parsed.ok, sameLang]);
+  }, [auto, native, current, roomId, linkOk, sameLang]);
   useEffect(() => {
     if (!auto || !native || !r || autoStarted.current || !canCapture || roomTerminal || running || busy) return;
     const app = pickAppFor(apps, parsed.ok ? parsed.provider : undefined);
@@ -537,14 +540,25 @@ export function ExternalPage() {
     return (
       <>
         {captionsNode}
-        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center" data-testid="copilot-host">
-          <p className="text-body font-medium text-ink">Copilot is running in the floating pill.</p>
-          <p className="max-w-sm text-body-sm text-ink-subtle">Keep this window open while the meeting runs: it carries the capture and the captions.</p>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={openCopilot}>Show copilot</Button>
-            <Button variant="ghost" onClick={() => void endSession().finally(() => window.location.assign('/'))}>End and go back</Button>
-          </div>
-        </div>
+        {r ? (
+          <CopilotDetail
+            room={r}
+            lines={lines}
+            translationLang={listen}
+            connection={connection}
+            captureState={live.status.state}
+            suggestions={suggestionStream.items.map((x) => ({ id: x.suggestionId, content: x.content }))}
+            followUps={followUps.data ?? []}
+            ask={askState}
+            onAsk={(q) => void assistant.ask(q, 'meeting+docs')}
+            onAskStop={() => assistant.stop()}
+            onShowCopilot={openCopilot}
+            onEnd={() => void endSession().finally(() => window.location.assign('/'))}
+            ending={busy === 'stop'}
+          />
+        ) : (
+          <div className="flex min-h-[60vh] items-center justify-center text-body-sm text-ink-subtle" data-testid="copilot-host">Loading meeting…</div>
+        )}
       </>
     );
   }
@@ -567,12 +581,12 @@ export function ExternalPage() {
               <StepCard
                 testId="external-meeting-card"
                 title="1. Meeting"
-                description="Paste the join link of the call you want translated."
+                description="Pick the languages. A meeting link is optional: WarpTalk translates whatever call this Mac plays."
                 actions={claimed ? <Button size="sm" disabled={running} onClick={resetMeeting}>Use a different meeting</Button> : undefined}
               >
                 <Field
-                  label="Meeting link"
-                  hint={parsed.ok ? undefined : 'Google Meet, Zoom or Microsoft Teams join link, or a meeting code.'}
+                  label="Meeting link (optional)"
+                  hint={parsed.ok ? undefined : 'Google Meet, Zoom or Microsoft Teams link. Leave empty to translate any call.'}
                   error={link.trim() && !parsed.ok ? parsed.error : undefined}
                 >
                   <Input value={link} onChange={(e) => setLink(e.target.value)} disabled={claimed} placeholder="https://meet.google.com/abc-defg-hij" autoComplete="off" spellCheck={false} />
@@ -591,7 +605,7 @@ export function ExternalPage() {
                 {claim.isError && <Alert tone="danger" title="Could not claim the meeting">{errMsg(claim.error)}</Alert>}
                 {!claimed && (
                   <div className="flex items-center gap-3">
-                    <Button variant="primary" loading={claim.isPending} disabled={!parsed.ok || sameLang} onClick={() => void doClaim()}>Claim meeting</Button>
+                    <Button variant="primary" loading={claim.isPending} disabled={!linkOk || sameLang} onClick={() => void doClaim()}>Start translation</Button>
                     <span className="text-caption text-ink-subtle">Claiming joins the existing room for this meeting or creates one.</span>
                   </div>
                 )}

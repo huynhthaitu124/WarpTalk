@@ -47,6 +47,8 @@ pub enum BridgeProvider {
     GoogleMeet,
     Zoom,
     Teams,
+    /// No meeting link: the desktop app translates whatever call the Mac plays.
+    Desktop,
 }
 
 impl BridgeProvider {
@@ -55,6 +57,7 @@ impl BridgeProvider {
             Self::GoogleMeet => "google_meet",
             Self::Zoom => "zoom",
             Self::Teams => "teams",
+            Self::Desktop => "desktop",
         }
     }
 
@@ -63,6 +66,7 @@ impl BridgeProvider {
             "google_meet" => Self::GoogleMeet,
             "zoom" => Self::Zoom,
             "teams" => Self::Teams,
+            "desktop" => Self::Desktop,
             _ => return None,
         })
     }
@@ -250,6 +254,17 @@ pub fn normalize_meeting_ref(
             }
             Ok(format!("https://{host}/{}", path.trim_end_matches('/')))
         }
+        BridgeProvider::Desktop => {
+            if no_query.len() <= 64
+                && no_query
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
+                Ok(no_query.to_owned())
+            } else {
+                Err(InvalidMeetingRef("desktop session key is not valid"))
+            }
+        }
     }
 }
 
@@ -258,6 +273,24 @@ pub fn normalize_meeting_ref(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn desktop_provider_round_trips_and_accepts_session_keys() {
+        assert_eq!(
+            BridgeProvider::parse("desktop"),
+            Some(BridgeProvider::Desktop)
+        );
+        assert_eq!(BridgeProvider::Desktop.as_str(), "desktop");
+        let key = "0193a1b2c3d4e5f6a7b8c9d0e1f2a3b4";
+        assert_eq!(
+            normalize_meeting_ref(BridgeProvider::Desktop, key)
+                .ok()
+                .as_deref(),
+            Some(key)
+        );
+        assert!(normalize_meeting_ref(BridgeProvider::Desktop, "Not Valid!").is_err());
+        assert!(normalize_meeting_ref(BridgeProvider::Desktop, "").is_err());
+    }
 
     fn t(s: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(1_800_000_000 + s, 0).unwrap()

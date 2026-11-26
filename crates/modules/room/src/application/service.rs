@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Offset, Utc};
 use warptalk_contracts::events::AudioRoutesSnapshot;
 use warptalk_kernel::{
     AppError, AppResult, Clock, Page, PageRequest, ParticipantId, RoomId, UserId, WorkspaceId,
@@ -19,9 +19,20 @@ use crate::domain::{
     normalize_meeting_ref, valid_language,
 };
 
+/// `now` shifted to the caller's UTC offset; an absent or out-of-range offset (beyond +-14h)
+/// falls back to UTC.
+fn local_time(now: DateTime<Utc>, utc_offset_minutes: Option<i32>) -> DateTime<FixedOffset> {
+    let offset = utc_offset_minutes
+        .filter(|m| m.abs() <= 14 * 60)
+        .and_then(|m| FixedOffset::east_opt(m * 60))
+        .unwrap_or_else(|| Utc.fix());
+    now.with_timezone(&offset)
+}
+
 pub struct ClaimBridge {
     pub workspace_id: WorkspaceId,
-    /// `google_meet | zoom | teams`.
+    /// `google_meet | zoom | teams | desktop`; empty (or `desktop`) without a link starts a
+    /// desktop session that needs no meeting link.
     pub provider: String,
     pub meeting_url: Option<String>,
     pub code: Option<String>,
@@ -35,6 +46,8 @@ pub struct ClaimBridge {
     pub settings: RoomSettingsPatch,
     /// Added (never removed) when the caller is the room's host.
     pub invited_emails: Option<Vec<String>>,
+    /// Caller's UTC offset in minutes (east positive) for the default desktop title.
+    pub utc_offset_minutes: Option<i32>,
 }
 
 pub struct CreateRoom {
@@ -664,19 +677,32 @@ impl RoomService {
     /// room is new or has none.
     pub async fn claim_bridge(&self, user: UserId, req: ClaimBridge) -> AppResult<ClaimOutcome> {
         let invites = Self::check_invites(req.invited_emails.as_ref())?;
-        let provider = BridgeProvider::parse(req.provider.trim()).ok_or_else(|| {
-            validation(
-                "INVALID_PROVIDER",
-                "provider must be google_meet, zoom or teams",
-            )
-        })?;
         let raw = req
             .meeting_url
             .as_deref()
             .or(req.code.as_deref())
-            .unwrap_or("");
-        let meeting_code = normalize_meeting_ref(provider, raw)
-            .map_err(|e| validation("INVALID_MEETING_REF", &e.to_string()))?;
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        let provider_in = req.provider.trim();
+        let desktop = provider_in == "desktop" || (provider_in.is_empty() && raw.is_empty());
+        let provider = if desktop {
+            BridgeProvider::Desktop
+        } else {
+            BridgeProvider::parse(provider_in).ok_or_else(|| {
+                validation(
+                    "INVALID_PROVIDER",
+                    "provider must be google_meet, zoom, teams or desktop",
+                )
+            })?
+        };
+        // A desktop session has no meeting to share: every start is its own room.
+        let meeting_code = if desktop && raw.is_empty() {
+            uuid::Uuid::now_v7().simple().to_string()
+        } else {
+            normalize_meeting_ref(provider, &raw)
+                .map_err(|e| validation("INVALID_MEETING_REF", &e.to_string()))?
+        };
         let join_url = req
             .meeting_url
             .as_deref()
@@ -706,6 +732,10 @@ impl RoomService {
         }
         let title = match req.title.as_deref().map(str::trim) {
             Some(t) if !t.is_empty() => t.to_owned(),
+            _ if desktop => format!(
+                "Meeting {}",
+                local_time(self.clock.now(), req.utc_offset_minutes).format("%d %b %H:%M")
+            ),
             _ => format!("External meeting {meeting_code}"),
         };
         if title.chars().count() > 255 {
@@ -829,5 +859,30 @@ impl RoomService {
         self.repo
             .set_bridge_audio_mode(id, caller, mode, self.clock.now())
             .await
+    }
+}
+
+#[cfg(test)]
+mod local_time_tests {
+    use super::local_time;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn shifts_to_caller_offset_and_falls_back_to_utc() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 26, 11, 30, 0).single();
+        let Some(now) = now else { return };
+        assert_eq!(
+            local_time(now, Some(420)).format("%H:%M").to_string(),
+            "18:30"
+        );
+        assert_eq!(
+            local_time(now, Some(-300)).format("%d %H:%M").to_string(),
+            "26 06:30"
+        );
+        assert_eq!(local_time(now, None).format("%H:%M").to_string(), "11:30");
+        assert_eq!(
+            local_time(now, Some(24 * 60)).format("%H:%M").to_string(),
+            "11:30"
+        );
     }
 }

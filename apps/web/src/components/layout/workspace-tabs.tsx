@@ -16,7 +16,6 @@ import {
   Plus,
   SquaresFour,
   Users,
-  Waveform,
   X,
 } from "@phosphor-icons/react/dist/ssr";
 
@@ -32,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { type WorkspaceTab, useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
+import { WORKSPACE_UI_ENABLED } from "@/lib/feature-flags";
 
 gsap.registerPlugin(Flip);
 
@@ -80,12 +80,6 @@ export function buildTabOptions(slug: string, t?: WorkspaceTabsT): TabOption[] {
       icon: SquaresFour,
     },
     {
-      id: "voice-profiles",
-      ...tabCopy(t, "voiceProfiles"),
-      href: buildWorkspacePath(slug, "voice-profiles"),
-      icon: Waveform,
-    },
-    {
       id: "members",
       ...tabCopy(t, "members"),
       href: buildWorkspacePath(slug, "members"),
@@ -109,14 +103,11 @@ export function buildTabOptions(slug: string, t?: WorkspaceTabsT): TabOption[] {
       href: buildWorkspacePath(slug, "settings"),
       icon: GearSix,
     },
-  ];
+  ].filter((tab) => WORKSPACE_UI_ENABLED || tab.id !== "members");
 }
 
 export function resolveCurrentTab(pathname: string, options: TabOption[]): WorkspaceTab | null {
   const match = options.find((option) => {
-    // Voice Profiles has no sub-pages, so a prefix match here would claim any route that
-    // merely starts with the same text.
-    if (option.id === "voice-profiles") return pathname === option.href;
     return pathname === option.href || pathname.startsWith(`${option.href}/`);
   });
 

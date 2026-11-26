@@ -237,6 +237,8 @@ impl RoomDto {
 #[serde(rename_all = "camelCase")]
 pub struct ClaimBridgeRequest {
     pub workspace_id: WorkspaceId,
+    /// Omitted (with no link) for a desktop session.
+    #[serde(default)]
     pub provider: String,
     pub meeting_url: Option<String>,
     pub code: Option<String>,
@@ -250,6 +252,9 @@ pub struct ClaimBridgeRequest {
     pub settings: Option<SettingsRequest>,
     /// Added when the caller is the room's host.
     pub invited_emails: Option<Vec<String>>,
+    /// Caller's offset from UTC in minutes (east positive), so a default desktop title reads in
+    /// the caller's local time. Omitted = UTC.
+    pub utc_offset_minutes: Option<i32>,
 }
 
 #[derive(Deserialize, Default)]

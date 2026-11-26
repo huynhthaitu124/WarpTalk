@@ -8,7 +8,6 @@ import {
   LinkSimple,
   Copy,
   Repeat,
-  SlidersHorizontal,
   X,
 } from "@phosphor-icons/react/dist/ssr";
 import gsap from "gsap";
@@ -243,7 +242,9 @@ export function CreateRoomDialog() {
   // is claimed from its link rather than created from a time and an invite list. Not offered when
   // editing: a room's type and call are fixed once it exists.
   const isExternalMeeting = !editRoomId && isExternalBridge(meetingTemplate);
-  const parsedExternalLink = isExternalMeeting ? parseExternalMeetingLink(externalLink) : null;
+  // The link is optional: without one the claim starts a desktop session for whatever call this Mac plays.
+  const parsedExternalLink =
+    isExternalMeeting && externalLink.trim() ? parseExternalMeetingLink(externalLink) : null;
 
   // An instant meeting: no start time and no repeat rule, i.e. "now". This is the same
   // distinction the server draws at creation — `ScheduledAt.HasValue ? "SCHEDULED" : "WAITING"` —
@@ -403,13 +404,17 @@ export function CreateRoomDialog() {
               ...(autoShareRecord ? {} : { autoShareRecord: false }),
             };
 
-        if (parsedExternalLink?.ok) {
+        if (isExternalMeeting) {
           const claim = await claimExternalRoomMutation.mutateAsync({
             workspaceId: activeWorkspaceId,
-            provider: parsedExternalLink.provider,
-            ...(parsedExternalLink.url
-              ? { meetingUrl: parsedExternalLink.url }
-              : { code: parsedExternalLink.code }),
+            ...(parsedExternalLink?.ok
+              ? {
+                  provider: parsedExternalLink.provider,
+                  ...(parsedExternalLink.url
+                    ? { meetingUrl: parsedExternalLink.url }
+                    : { code: parsedExternalLink.code }),
+                }
+              : {}),
             title: title.trim(),
             sourceLanguage,
             targetLanguages,
@@ -424,10 +429,10 @@ export function CreateRoomDialog() {
           // macOS app: the copilot pill is the meeting UI, so open it right away (/external auto-starts capture).
           const copilotHref = getNative()
             ? externalMeetingHref({
+                id: claim.room.id,
                 title: claim.room.title,
                 sourceLanguage: claim.room.sourceLanguage ?? sourceLanguage,
                 targetLanguages: claim.room.targetLanguages ?? targetLanguages,
-                bridge: { joinUrl: parsedExternalLink.url ?? externalLink.trim() },
               })
             : null;
           if (copilotHref) {
@@ -883,19 +888,6 @@ export function CreateRoomDialog() {
 
                 {/* Buttons */}
                 <div className="flex items-center gap-3 w-full">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      handleOpenChange(false);
-                      useUIStore.getState().setSetupRoomId(createdRoomId);
-                      useUIStore.getState().setSetupRoomModalOpen(true);
-                    }}
-                    className="flex-1 text-[13px] h-[34px] font-medium gap-2"
-                  >
-                    <SlidersHorizontal weight="bold" size={14} />
-                    {t("success.configure")}
-                  </Button>
                   {/* "Join" — to the room's own page — used to sit here, and for a BOOKING it was
                       the wrong offer twice over. It is not a meeting yet, so there is nothing to
                       join; and the CTA waiting on that page for the host reads "Start meeting",

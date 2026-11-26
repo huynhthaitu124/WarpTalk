@@ -33,6 +33,7 @@ import {
 } from "@/lib/workspace/last-workspace";
 import { CHECKOUT_PLAN_PARAM, readCheckoutIntent } from "@/lib/billing/checkout-intent";
 import type { WorkspaceInvitationDto } from "@/types/workspace";
+import { ADMIN_CONSOLE_ENABLED } from "@/lib/feature-flags";
 
 export default function WorkspaceOnboardingGatePage() {
   const router = useRouter();
@@ -107,7 +108,7 @@ export default function WorkspaceOnboardingGatePage() {
    * where the gap was.
    */
   useEffect(() => {
-    if (isAuthenticated && isSystemAdmin) router.replace("/admin");
+    if (ADMIN_CONSOLE_ENABLED && isAuthenticated && isSystemAdmin) router.replace("/admin");
   }, [isAuthenticated, isSystemAdmin, router]);
 
   /**

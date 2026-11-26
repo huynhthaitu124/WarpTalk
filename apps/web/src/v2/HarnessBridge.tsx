@@ -12,8 +12,6 @@ export function HarnessBridge() {
     if (process.env.NEXT_PUBLIC_E2E_HARNESS !== '1') return;
     (window as unknown as { __wtHarness: unknown }).__wtHarness = {
       captions: () => import('../../e2e/harness/captions'),
-      meeting: () => import('../../e2e/harness/meeting'),
-      audio: () => import('../../e2e/harness/audio'),
       suggestions: () => import('@v2/lib/suggestions'),
     };
   }, []);

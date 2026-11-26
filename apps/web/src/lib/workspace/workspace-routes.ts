@@ -22,7 +22,9 @@ export function liveMeetingPath(
   roomId: string,
 ): string {
   const slug = (workspaceSlug ?? "").trim();
-  return slug ? `/${slug}/rooms/${roomId}/live` : `/room/${roomId}`;
+  // The in-app video room (`/live`) was removed: translation runs in the copilot, so a
+  // "live" room opens its own page, where the desktop copilot is started.
+  return slug ? `/${slug}/rooms/${roomId}` : `/room/${roomId}`;
 }
 
 /** The room's information page — where it is described, edited and read back afterwards. */

@@ -3,6 +3,6 @@ export {};
 declare global {
   interface Window {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    __wtHarness?: Record<'captions' | 'meeting' | 'audio' | 'suggestions', () => Promise<any>>;
+    __wtHarness?: Record<'captions' | 'suggestions', () => Promise<any>>;
   }
 }

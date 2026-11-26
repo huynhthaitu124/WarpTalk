@@ -5,8 +5,8 @@ import { api } from './api';
 import { bridgeStateResponse, claimResponse, room as roomSchema } from './schemas';
 import { session } from './session';
 
-export type BridgeProvider = 'google_meet' | 'zoom' | 'teams';
-export const PROVIDER_LABEL: Record<BridgeProvider, string> = { google_meet: 'Google Meet', zoom: 'Zoom', teams: 'Microsoft Teams' };
+export type BridgeProvider = 'google_meet' | 'zoom' | 'teams' | 'desktop';
+export const PROVIDER_LABEL: Record<BridgeProvider, string> = { google_meet: 'Google Meet', zoom: 'Zoom', teams: 'Microsoft Teams', desktop: 'This Mac' };
 
 export type ParsedLink =
   | { ok: true; provider: BridgeProvider; code: string; url?: string }
@@ -43,7 +43,8 @@ export function parseMeetingLink(input: string): ParsedLink {
 
 export interface ClaimInput {
   workspaceId: string;
-  link: Extract<ParsedLink, { ok: true }>;
+  /** Omitted: a desktop session that translates whatever call this Mac plays (no meeting link needed). */
+  link?: Extract<ParsedLink, { ok: true }>;
   title?: string;
   displayName?: string;
   sourceLanguage: string;
@@ -61,13 +62,14 @@ export function useClaimBridge() {
         schema: claimResponse,
         body: {
           workspaceId: i.workspaceId,
-          provider: i.link.provider,
-          ...(i.link.url ? { meetingUrl: i.link.url } : { code: i.link.code }),
+          ...(i.link ? { provider: i.link.provider, ...(i.link.url ? { meetingUrl: i.link.url } : { code: i.link.code }) } : {}),
           title: i.title || undefined,
           displayName: i.displayName || undefined,
           sourceLanguage: i.sourceLanguage,
           targetLanguages: i.targetLanguages,
           listenLanguage: i.listenLanguage,
+          // Default desktop titles ("Meeting 26 Nov 18:30") are written in the caller's local time.
+          utcOffsetMinutes: -new Date().getTimezoneOffset(),
         },
       }),
     onSuccess: (r) => {
@@ -149,13 +151,15 @@ export function leaseIsStale(bridge: { leaseExpiresAt?: string | null; serverTim
  * Where "Open meeting" goes for an external (Teams / Google Meet) room: back into the copilot flow, which re-claims
  * the same room from its join link. `null` for WarpTalk (LiveKit) rooms or when the link is unknown.
  */
-export function externalMeetingHref(r: { title: string; sourceLanguage: string; targetLanguages: string[]; bridge?: { joinUrl?: string | null } | undefined }): string | null {
-  const link = r.bridge?.joinUrl;
-  if (!link) return null;
+/** Opens the copilot for a room: by its id when known, else by its link, else a new desktop session. */
+export function externalMeetingHref(r: { id?: string; title: string; sourceLanguage: string; targetLanguages: string[]; bridge?: { joinUrl?: string | null } | undefined }): string {
+  const link = r.bridge?.joinUrl ?? '';
   // Rooms may list the source among their targets (["en-US", "vi-VN"]); /external refuses to claim when far == listen.
   const base = (l: string) => l.split('-')[0]!.toLowerCase();
   const listen = r.targetLanguages.find((l) => base(l) !== base(r.sourceLanguage)) ?? r.targetLanguages[0] ?? r.sourceLanguage;
-  const q = new URLSearchParams({ link, far: r.sourceLanguage, listen, auto: '1' });
+  const q = new URLSearchParams({ far: r.sourceLanguage, listen, auto: '1' });
+  if (r.id) q.set('room', r.id);
+  else if (link) q.set('link', link);
   if (r.title) q.set('title', r.title);
   return `/external?${q.toString()}`;
 }

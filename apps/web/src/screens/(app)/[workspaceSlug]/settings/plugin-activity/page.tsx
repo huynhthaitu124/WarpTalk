@@ -276,7 +276,7 @@ export default function WorkspacePluginActivityPage() {
         actions={
           workspaceSlug ? (
             <Link
-              href={`/${workspaceSlug}/insights?tab=tools`}
+              href={`/${workspaceSlug}/dashboard`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-ink-muted hover:bg-surface-2 hover:text-ink"
             >
               <ChartBar size={14} />

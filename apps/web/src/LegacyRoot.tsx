@@ -16,6 +16,7 @@ import type { Messages } from "@/i18n/message-fallback";
 import { Providers } from "@/screens/providers";
 import { routes } from "@/routes.generated";
 import { hasClientSession, landingPathForSession } from "@/lib/auth/client-session";
+import { isHiddenAdminPath } from "@/lib/feature-flags";
 
 const noop = () => () => {};
 
@@ -57,7 +58,7 @@ function IntlRoot({ children }: { children: ReactNode }) {
 }
 
 const PUBLIC_ROUTES = [
-  "/", "/login", "/desktop-login", "/register", "/forgot-password", "/verify-email", "/reset-password", "/join",
+  "/", "/login", "/desktop-login", "/register", "/forgot-password", "/verify-email", "/reset-password",
   "/invitations", "/terms", "/privacy", "/download", "/minutes/shared", "/payment-cancelled",
   "/workspace/payment/plans", "/workspace/payment/success",
 ];
@@ -72,7 +73,7 @@ function RouteGate() {
   const moved =
     (/^\/([^/]+)\/billing\/?$/.exec(pathname)?.[1] ?? "admin") !== "admin" ? pathname.replace(/\/billing\/?$/, "/settings/billing")
     : /^\/[^/]+\/settings\/billing\/payments\/?$/.test(pathname) ? pathname.replace(/\/payments\/?$/, "/invoices")
-    : /^\/[^/]+\/settings\/billing\/usage\/?$/.test(pathname) ? pathname.replace(/\/settings\/billing\/usage\/?$/, "/insights?tab=usage")
+    : /^\/[^/]+\/settings\/billing\/usage\/?$/.test(pathname) ? pathname.replace(/\/settings\/billing\/usage\/?$/, "/settings/billing")
     : /^\/[^/]+\/settings\/audit-log\/?$/.test(pathname) ? pathname.replace(/\/audit-log\/?$/, "")
     : /^\/[^/]+\/tasks\/?$/.test(pathname) ? pathname.replace(/\/tasks\/?$/, "/home")
     : /^\/admin\/(?:meetings|outbox)(?:\/.*)?$/.test(pathname) ? "/admin"
@@ -81,7 +82,7 @@ function RouteGate() {
   if (moved) return <Navigate to={moved} replace />;
 
   const session = hasClientSession();
-  if (session && (under(AUTH_ROUTES, pathname) || pathname === "/" || pathname === "/dashboard")) {
+  if (session && (under(AUTH_ROUTES, pathname) || pathname === "/" || pathname === "/dashboard" || isHiddenAdminPath(pathname))) {
     return <Navigate to={landingPathForSession()} replace />;
   }
   if (!session && !under(PUBLIC_ROUTES, pathname)) {

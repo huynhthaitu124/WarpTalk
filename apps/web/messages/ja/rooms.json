@@ -164,7 +164,7 @@
     "externalLink": {
       "label": "会議リンク",
       "clear": "リンクをクリア",
-      "placeholder": "Google Meet、Zoom、Teams のリンクを貼り付け",
+      "placeholder": "会議リンク（任意）: Google Meet、Zoom、Teams",
       "detected": "{provider} 会議",
       "hint": "WarpTalk は通話の横で翻訳します。通話自体は {provider} で行われます。",
       "errors": {

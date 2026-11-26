@@ -550,7 +550,10 @@ export const translationRoomService = {
    * "member" rather than let two desktops capture the far side.
    */
   async claimBridgeRoom(request: BridgeClaimRequest): Promise<BridgeClaimResult> {
-    const response = await apiClient.post<BackendBridgeClaim>(API.translationRooms.bridgeClaim, request);
+    const response = await apiClient.post<BackendBridgeClaim>(API.translationRooms.bridgeClaim, {
+      ...request,
+      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+    });
     const body = response.data;
     const participant = body.participant ? normalizeParticipant(body.participant) : null;
     return {

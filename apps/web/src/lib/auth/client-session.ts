@@ -5,6 +5,7 @@
  */
 import { ACCESS_TOKEN_COOKIE, SESSION_DEAD_COOKIE, hasRedeemableSession, isLiveAccessToken } from "@/lib/auth/session-cookie";
 import { isPlatformAdminToken } from "@/lib/api/token-lifecycle";
+import { ADMIN_CONSOLE_ENABLED } from "@/lib/feature-flags";
 import { normalizeWorkspaceSlug } from "@/lib/workspace/workspace-slug";
 
 function cookie(name: string): string | null {
@@ -21,6 +22,6 @@ export function hasClientSession(): boolean {
 export function landingPathForSession(): string {
   const slug = normalizeWorkspaceSlug(cookie("active_workspace_slug"));
   if (slug) return `/${slug}/dashboard`;
-  if (isPlatformAdminToken(cookie(ACCESS_TOKEN_COOKIE))) return "/admin";
+  if (ADMIN_CONSOLE_ENABLED && isPlatformAdminToken(cookie(ACCESS_TOKEN_COOKIE))) return "/admin";
   return "/workspace";
 }

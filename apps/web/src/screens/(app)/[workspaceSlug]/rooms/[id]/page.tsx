@@ -1,5 +1,6 @@
 "use client";
 
+import { RECORDING_ENABLED } from "@/lib/feature-flags";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
@@ -472,7 +473,7 @@ export default function RoomInformationPage() {
     endedRecordQuery.data?.artifacts,
   );
   const canSeekToRecording =
-    playableRecordingCount === 1 && canAlignToRecording(seekSources);
+    RECORDING_ENABLED && playableRecordingCount === 1 && canAlignToRecording(seekSources);
 
   /**
    * Why a moment cannot be opened, for the reader — null when it can, or when there is nothing to
@@ -991,12 +992,11 @@ export default function RoomInformationPage() {
   const entryIntent =
     getNative() &&
     isExternalBridge(room.translationRoomType) &&
-    room.externalMeetingUrl &&
     (resolvedEntryIntent.mode === "host_start" || resolvedEntryIntent.mode === "join")
       ? {
           ...resolvedEntryIntent,
           label: "Join & open copilot",
-          helpText: "Opens the WarpTalk pill and captures the Google Meet audio from this Mac.",
+          helpText: "Opens the WarpTalk pill and translates the call playing on this Mac.",
         }
       : resolvedEntryIntent;
 
@@ -1012,10 +1012,10 @@ export default function RoomInformationPage() {
       // The macOS app (warptalkNative) runs the copilot pill from /external; it re-claims this room by its link.
       const copilotHref = getNative()
         ? externalMeetingHref({
+            id: room.id,
             title: room.title,
             sourceLanguage: room.sourceLanguage ?? room.targetLanguages[0] ?? "en",
             targetLanguages: room.targetLanguages,
-            bridge: { joinUrl: room.externalMeetingUrl },
           })
         : null;
       if (copilotHref) {
@@ -1046,8 +1046,7 @@ export default function RoomInformationPage() {
         router.push(`/${workspaceSlug}/rooms/${roomId}/waiting`);
         return;
       case "join":
-        useUIStore.getState().setSetupRoomId(roomId);
-        useUIStore.getState().setSetupRoomModalOpen(true);
+        // No in-app video room any more: joining happens through the desktop copilot.
         return;
       case "external_meeting":
         if (entryIntent.href) window.open(entryIntent.href, "_blank", "noopener,noreferrer");
@@ -1640,7 +1639,7 @@ function MeetingRecordSection({
   const { busyArtifactId, downloadArtifact } =
     useArtifactDownload(onRecordChanged);
   // WT-492: null when the meeting was not recorded, or the file is not ready yet.
-  const recording = findPlayableRecording(endedRecord?.artifacts);
+  const recording = RECORDING_ENABLED ? findPlayableRecording(endedRecord?.artifacts) : null;
   // WT-480: who may read this record. One derivation feeds the badge, the banner and the button.
   const setArtifactAccess = useSetArtifactAccess(roomId);
   const sharing = describeRecordSharing({
@@ -2116,7 +2115,7 @@ function MeetingRecordSection({
           simply never recorded produces no reason at all and so renders nothing — see
           seekUnavailableReason. The player it used to sit beside is gone: Summary and Transcript
           are one tab now, and the rail's pip is the only player on it. */}
-      {activeTab === "recap" && seekUnavailableReason ? (
+      {!RECORDING_ENABLED ? null : activeTab === "recap" && seekUnavailableReason ? (
         <div className="mb-3 rounded-[8px] border border-border bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-muted">
           {seekUnavailableMessages[seekUnavailableReason]}
         </div>
@@ -2128,7 +2127,7 @@ function MeetingRecordSection({
       {/* rec-loss: beside the seek line and styled like it — both are "about the recording, above
           what you are reading". role="status" so a screen reader announces it when the poll turns
           a processing recording into a failed one while the page is open. */}
-      {activeTab === "recap" && recordingFailure ? (
+      {RECORDING_ENABLED && activeTab === "recap" && recordingFailure ? (
         <div
           role="status"
           className="mb-3 rounded-[8px] border border-border bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-muted"
@@ -2172,7 +2171,7 @@ function MeetingRecordSection({
             segments={segments}
             hasTranscript={hasTranscript}
             recording={recording}
-            recordingUnavailableReason={recordingUnavailableReason}
+            recordingUnavailableReason={RECORDING_ENABLED ? recordingUnavailableReason : null}
             seek={seek}
             seekSources={seekSources}
             busyArtifactId={busyArtifactId}

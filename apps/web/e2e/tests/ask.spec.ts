@@ -5,10 +5,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import {
-  FLAGS_DEFAULT, call, createCopilotSession, createRoom, createWorkspace, expect, hist, login, mockAssistant, mockCopilot, ok, rnd, seedSession, test, verifyEmail,
+  FLAGS_DEFAULT, call, createCopilotSession, createWorkspace, expect, hist, login, mockAssistant, mockCopilot, ok, rnd, seedSession, test, verifyEmail,
   type MockHistoryItem, type MockSegment, type MockSession,
 } from '../fixtures';
-import { mountMeeting } from '../harness/helpers';
 
 test.use({ flags: FLAGS_DEFAULT });
 
@@ -262,23 +261,6 @@ test.describe('Ask AI: recap and history', () => {
     await expect(answers(app)).toContainText('Before Friday');
     await app.getByTestId('ask-sources').getByTestId('citation').click();
     await expect(app.locator('[data-testid="transcript-line"][data-line-id="g2"]')).toHaveAttribute('data-highlight', 'true');
-  });
-});
-
-test.describe('Ask AI: meeting side panel', () => {
-  test('ASK-15 the meeting panel has an Ask AI tab; a transcript citation switches to the Transcript tab', async ({ app, tokens, user, workspace }) => {
-    const room = await createRoom(tokens.accessToken, workspace.id, { title: 'Design sync', displayName: 'Host Hana' });
-    await ok(call(`/translation-rooms/${room.id}/start`, { token: tokens.accessToken, method: 'POST' }));
-    const a = await mockAssistant(app, { script: [{ deltas: ['It was Friday [T1].'], citations: [{ kind: 'transcript', ref: 's1', label: 'Ana 0:10', tMs: 10000 }] }] });
-    await mountMeeting(app, 'live', { roomId: room.id, selfUserId: user.userId, selfName: 'Host Hana', participants: [{ identity: user.userId, name: 'Host Hana', isLocal: true }] });
-    await expect(app.getByTestId('meeting-room')).toBeVisible();
-    const tab = app.getByRole('tab', { name: 'Ask AI' });
-    await tab.click();
-    await ask(app, 'When?');
-    await expect(answers(app)).toContainText('It was Friday');
-    expect(a.requests[0]!.body.question).toBe('When?');
-    await app.getByTestId('ask-sources').getByTestId('citation').click();
-    await expect(app.getByRole('tab', { name: 'Transcript' })).toHaveAttribute('aria-selected', 'true');
   });
 });
 

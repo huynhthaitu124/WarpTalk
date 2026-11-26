@@ -50,6 +50,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { getErrorStatus } from "@/lib/api/retry-policy";
 import { billingService } from "@/services/billing.service";
 import type { UserDto } from "@/types/auth";
+import { WORKSPACE_UI_ENABLED } from "@/lib/feature-flags";
 
 function CreditBar({ workspaceId, canTopUp }: { workspaceId: string; canTopUp: boolean }) {
   const t = useTranslations("common.accountMenu");
@@ -214,12 +215,14 @@ export function AccountMenu({
                 label={t("profileSettings")}
                 onNavigate={close}
               />
-              <MenuLink
-                href={`${base}/members`}
-                icon={<UsersThree className="h-4 w-4" />}
-                label={t("members")}
-                onNavigate={close}
-              />
+              {WORKSPACE_UI_ENABLED && (
+                <MenuLink
+                  href={`${base}/members`}
+                  icon={<UsersThree className="h-4 w-4" />}
+                  label={t("members")}
+                  onNavigate={close}
+                />
+              )}
               {isOwnerOrAdmin ? (
                 <>
                   <MenuLink

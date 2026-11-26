@@ -32,6 +32,7 @@ import { useSelectWorkspace, useWorkspaceMembers, useWorkspaces } from "@/hooks/
 import { useWorkspacePlugins } from "@/hooks/use-workspace-plugins";
 import { canManageWorkspacePlugins, pendingRequestBadge } from "@/lib/assistant/plugin-availability";
 import { INVITE_SNOOZE_DAYS, shouldSuggestInvite } from "@/lib/onboarding/invite-suggestion";
+import { WORKSPACE_UI_ENABLED } from "@/lib/feature-flags";
 import { applySelectedWorkspace } from "@/lib/workspace/apply-selected-workspace";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -43,7 +44,6 @@ import {
   Archive,
   ArrowUUpLeft,
   Package,
-  CalendarBlank,
   CaretDown,
   CaretLeft,
   Check,
@@ -59,7 +59,6 @@ import {
   Heartbeat,
   Plugs,
   House,
-  Keyboard,
   MagnifyingGlass,
   PaperPlaneTilt,
   EnvelopeSimple,
@@ -74,12 +73,9 @@ import {
   Toolbox,
   User,
   Users,
-  Waveform,
   X,
-  Brain,
   Buildings,
   ShieldCheck,
-  Files,
   ListChecks,
   Bell,
   LinkSimple,
@@ -292,9 +288,6 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
       href: `/${slug}/rooms`,
       tourId: "nav-meetings",
       actions: [
-        { icon: Keyboard, onClick: () => setIsJoinModalOpen(true), title: t("nav.joinByCode") },
-        // Join by code stays for everyone — an external collaborator is invited INTO meetings, they
-        // just may not open them. WT-371 #2.
         ...(canCreateMeetings
           ? [
               {
@@ -307,35 +300,8 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
           : [])
       ]
     },
-    // "Schedules" read as a list of schedule OBJECTS — recurrence rules — while the page is a
-    // month/week grid of meetings. The route keeps its path: links already sent and the
-    // placeholder contract point at /schedules, and the name a user never types is not worth
-    // breaking those for.
-    { icon: CalendarBlank, label: t("nav.schedules"), href: `/${slug}/schedules` },
-    // No History row: /history was a second, worse answer to the question Artifacts answers —
-    // it listed meetings, which Meetings above already does, and its outputs rail could not show
-    // minutes at all. Past meetings are still browsable on Meetings, which asks for ENDED.
-    // Artifacts, not "Transcripts". This entry used to be absent on purpose — "a meeting's
-    // transcript, summary and files live on that meeting's own page, below its description" —
-    // and that is still true: the record lives on the meeting, and this page links back to it.
-    // What was missing was the INDEX. Every question a record is kept to answer ("which meeting
-    // decided the budget?", "which meetings have a signed biên bản?") is a question about the
-    // documents, and answering it meant opening meetings one at a time.
-    //
-    // Directly under History because the two are one archive read two ways: History lists the
-    // MEETINGS, this lists what they wrote down.
-    { icon: Files, label: t("nav.artifacts"), href: `/${slug}/artifacts` },
-    { icon: Waveform, label: t("nav.voiceProfiles"), href: `/${slug}/voice-profiles`, tourId: "nav-voice-profiles" },
-    // My connections sits with the personal rows (owner, 2026-10-02): a connection is a person's
-    // own, for every member, and it is not workspace-shaped — hence the exact match rather than
-    // NavLink's prefix match. It was in the Settings sidebar, then under Workspace; neither is
-    // where a member looks for something that is theirs.
-    {
-      icon: PlugsConnected,
-      label: t("settingsNav.myConnections"),
-      href: "/settings/plugins",
-      exact: true,
-    },
+    // Calendar, Artifacts, Voice Profiles and My connections are off the nav (owner, 2026-11-26):
+    // the product is translation + WarpBot. Their routes still exist until the backend cleanup.
   ];
 
   const role = useWorkspaceStore((state) => state.role);
@@ -366,6 +332,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
   // the decision a moving target and defeat the point of seeding it by day.
   const [suggestionClock] = useState(() => Date.now());
   const suggestsInvite =
+    WORKSPACE_UI_ENABLED &&
     Boolean(activeWorkspaceId) &&
     shouldSuggestInvite({
       workspaceId: activeWorkspaceId ?? "",
@@ -387,18 +354,23 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
   };
 
 
+  // Workspaces hidden: the menu at the top is the account's, so it shows the person, not
+  // the silent personal workspace behind it.
+  const headerName = WORKSPACE_UI_ENABLED ? activeWorkspaceName : user?.fullName || user?.email || activeWorkspaceName;
   const workspaceInitials = useMemo(() => {
-    if (!activeWorkspaceName) return "WS";
-    const parts = activeWorkspaceName.split(" ").filter(Boolean);
+    if (!headerName) return "WS";
+    const parts = headerName.split(" ").filter(Boolean);
     if (parts.length >= 2) {
       return (parts[0][0] + parts[1][0]).toUpperCase();
     }
-    return activeWorkspaceName.substring(0, 2).toUpperCase();
-  }, [activeWorkspaceName]);
+    return headerName.substring(0, 2).toUpperCase();
+  }, [headerName]);
 
   const workspaceNav: NavItem[] = [];
+  if (WORKSPACE_UI_ENABLED) {
+    workspaceNav.push({ icon: Users, label: t("nav.members"), href: `/${slug}/members`, tourId: "nav-members" });
+  }
   workspaceNav.push(
-    { icon: Users, label: t("nav.members"), href: `/${slug}/members`, tourId: "nav-members" },
     { icon: FileText, label: t("nav.documents"), href: `/${slug}/documents`, tourId: "nav-documents" },
     // Directly under Documents, and visible to every member — the two are constantly mistaken for
     // each other, and sitting them together is what makes the difference legible: Documents is
@@ -414,11 +386,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
   );
 
   if (isOwnerOrAdmin) {
-    // No Invitations entry: invitations and join requests are rows on Members now, because
-    // "who is in this workspace" and "who is on the way in" were never two questions.
-    // What the system has indexed from this workspace's documents and meetings. Owner/Admin
-    // only, because the view crosses per-document access policies.
-    workspaceNav.push({ icon: Brain, label: t("nav.knowledge"), href: `/${slug}/knowledge`, tourId: "nav-knowledge" });
+    // No Knowledge entry (2026-11-26): Documents is where RAG content is managed.
     // No Billing entry: WT-380 moved it inside Workspace Settings, where a plan, an invoice and a
     // credit balance belong. It is reached through Settings now, not from the app's main nav.
     //
@@ -448,8 +416,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
   const isSettingsPage =
     (pathname.includes("/settings") && !pathname.startsWith("/settings/plugins")) ||
     pathname.includes("/payment") ||
-    /^\/(?!admin\/)[^/]+\/insights(\/|$)/.test(pathname) ||
-    /^\/(?!admin\/)[^/]+\/tools(\/|$)/.test(pathname);
+    /^\/(?!admin\/)[^/]+\/dashboard(\/|$)/.test(pathname);
 
   // Workspace → Plugins badge: requests from members waiting on the Owner. Read for Owner/Admin, and
   // only while Settings is on screen — the one place the row is drawn — so no other page pays for the
@@ -785,12 +752,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
       settingsItems.push({
         icon: ChartBar,
         label: t("settingsNav.insights"),
-        href: `/${activeWorkspaceSlug}/insights`,
-      });
-      settingsItems.push({
-        icon: Toolbox,
-        label: t("settingsNav.tools"),
-        href: `/${activeWorkspaceSlug}/tools`,
+        href: `/${activeWorkspaceSlug}/dashboard`,
       });
       // The workspace's plugin list (marketplace, 2026-09-17), with the requests waiting on it.
       settingsItems.push({
@@ -997,28 +959,14 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
                 <div className={cn(
                   "group flex items-center h-[30px] px-2 rounded-[8px] text-[13px] transition-colors relative",
                   navRowTone(
-                    pathname === `/${activeWorkspaceSlug}/insights` ||
-                      pathname.startsWith(`/${activeWorkspaceSlug}/insights/`),
+                    pathname === `/${activeWorkspaceSlug}/dashboard` ||
+                      pathname.startsWith(`/${activeWorkspaceSlug}/dashboard/`),
                   )
                 )}>
-                  <Link href={`/${activeWorkspaceSlug}/insights`} className="flex items-center gap-2.5 flex-1 min-w-0 h-full">
+                  <Link href={`/${activeWorkspaceSlug}/dashboard`} className="flex items-center gap-2.5 flex-1 min-w-0 h-full">
                     <ChartBar size={16} className="shrink-0 text-ink-muted/80 group-hover:text-ink/80 transition-colors" weight="duotone" />
                     <span className="font-medium tracking-tight text-ink/90 group-hover:text-ink transition-colors truncate">
                       {t("settingsNav.insights")}
-                    </span>
-                  </Link>
-                </div>
-                <div className={cn(
-                  "group flex items-center h-[30px] px-2 rounded-[8px] text-[13px] transition-colors relative",
-                  navRowTone(
-                    pathname === `/${activeWorkspaceSlug}/tools` ||
-                      pathname.startsWith(`/${activeWorkspaceSlug}/tools/`),
-                  )
-                )}>
-                  <Link href={`/${activeWorkspaceSlug}/tools`} className="flex items-center gap-2.5 flex-1 min-w-0 h-full">
-                    <Toolbox size={16} className="shrink-0 text-ink-muted/80 group-hover:text-ink/80 transition-colors" weight="duotone" />
-                    <span className="font-medium tracking-tight text-ink/90 group-hover:text-ink transition-colors truncate">
-                      {t("settingsNav.tools")}
                     </span>
                   </Link>
                 </div>
@@ -1184,10 +1132,10 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
         <DropdownMenu>
           <DropdownMenuTrigger
             title={
-              collapsed ? activeWorkspaceName || t("switchWorkspaceLabel") : undefined
+              collapsed ? headerName || t("switchWorkspaceLabel") : undefined
             }
             aria-label={
-              collapsed ? activeWorkspaceName || t("switchWorkspaceLabel") : undefined
+              collapsed ? headerName || t("switchWorkspaceLabel") : undefined
             }
             className={cn(
               "flex min-w-0 cursor-pointer items-center gap-2 rounded-md transition-colors hover:bg-surface-2",
@@ -1209,7 +1157,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
             {!collapsed && (
               <>
                 <span className="text-[14px] font-semibold text-ink truncate tracking-tight">
-                  {activeWorkspaceName || t("workspaceFallback")}
+                  {headerName || t("workspaceFallback")}
                 </span>
                 <CaretDown
                   size={12}
@@ -1234,7 +1182,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
             {/* 2. Invite and manage members (Owner & Admin only).
                 WT-699 TC0705: offered to every Member, whose invite the server then refused. The
                 same audience the Members page gives its Invite button and pending-invite rows. */}
-            {isOwnerOrAdmin && (
+            {WORKSPACE_UI_ENABLED && isOwnerOrAdmin && (
               <DropdownMenuItem
                 onClick={() => setIsInviteModalOpen(true)}
                 className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer hover:bg-surface-2 text-ink text-[13px]"
@@ -1256,6 +1204,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
             <DropdownMenuSeparator className="bg-border/60 my-1" />
 
             {/* 4. Switch workspace (Submenu) */}
+            {WORKSPACE_UI_ENABLED && (<>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer hover:bg-surface-2 text-ink text-[13px]">
                 <span>{t("workspaceMenu.switchWorkspace")}</span>
@@ -1320,6 +1269,7 @@ export function LinearSidebar({ collapsed = false }: { collapsed?: boolean }) {
             </DropdownMenuSub>
 
             <DropdownMenuSeparator className="bg-border/60 my-1" />
+            </>)}
 
             {/* 5. Log out */}
             <DropdownMenuItem
