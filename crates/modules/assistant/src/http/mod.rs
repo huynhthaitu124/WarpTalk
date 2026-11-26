@@ -1,5 +1,6 @@
 //! HTTP surface: axum routes, handlers, DTOs.
 
+pub mod chat;
 mod dto;
 mod handlers;
 pub mod summary;

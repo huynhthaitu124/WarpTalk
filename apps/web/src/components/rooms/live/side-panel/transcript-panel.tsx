@@ -1,0 +1,735 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+import { useRef, useEffect, useMemo, useState } from "react";
+import { ClosedCaptioning, PauseCircle } from "@phosphor-icons/react/dist/ssr";
+import { motion, AnimatePresence } from "motion/react";
+import { getLanguageName } from "@/lib/language/languages";
+import {
+  confidencePercent,
+  distributePauseGapsAcrossBlocks,
+  findSuggestionForUtterance,
+  formatTranscriptClockTime,
+  formatTranscriptPauseGapRun,
+  formatTranscriptTimestamp,
+  groupSegmentsByTranslationSession,
+  groupTranscriptSegments,
+  pauseFilterHasNothingToMatch,
+  resolveSegmentTranslation,
+  resolveTranscriptPauseGaps,
+  splitSegmentsAroundPauseGaps,
+  withLivePauseGap,
+  withoutSegmentsInOpenPauseGaps,
+  mergeTranslations,
+  type GroupedTranscriptSegment,
+  type TranscriptPauseGap,
+  type TranslationSessionBlock,
+} from "@/lib/transcript/transcript-display";
+import { splitIntoSentences } from "@/lib/transcript/sentence-flow";
+import { localizeFarSideSpeakerName } from "@/lib/transcript/speaker-identity";
+import {
+  buildCleanTranscriptView,
+  mergeCleanSentences,
+  transcriptBubbleLines,
+  withAbsorbedSegmentIds,
+  type CleanTranscriptView,
+} from "@/lib/transcript/clean-transcript";
+import {
+  SelfRepairMarker,
+  TranscriptViewModeToggle,
+} from "@/components/rooms/transcript-clean-controls";
+import { AnimatedWords } from "@/components/rooms/live/animated-words";
+import { useTranscriptSpeakerIdentity } from "@/components/rooms/live/meeting-identity-context";
+import { ParticipantAvatar } from "@/components/rooms/live/participant-avatar";
+import {
+  SuggestionBadge,
+  SuggestionDetail,
+} from "@/components/rooms/live/side-panel/suggestion-badge";
+import { ScrollToLatestChip } from "@/components/ui/scroll-to-latest";
+import { useScrollToLatest } from "@/hooks/use-scroll-to-latest";
+import { useTranslationRoomSessions } from "@/hooks/use-translationRooms";
+// WT-605. The pause-window read lives with the other transcript hooks, not with the room
+// ones — #410 wrote its own beside useTranslationRoomSessions before the merged version
+// existed, and two hooks of the same name over the same endpoint is how they drift.
+import {
+  useTranscriptByRoom,
+  useTranscriptCleanSentences,
+  useTranscriptPauseWindows,
+  useTranscriptViewMode,
+} from "@/hooks/use-transcripts";
+import { useAuthStore } from "@/stores/auth-store";
+import { useTranslationRoomStore } from "@/stores/translationRoom-store";
+import { orderedLiveLines } from "@/lib/transcript/live-text";
+import type { AiSuggestionDto, TranscriptSegmentDto } from "@/types/realtime";
+
+/** Within this many pixels of the end counts as "following the live transcript". */
+const STICK_TO_BOTTOM_PX = 48;
+
+/**
+ * Where the reader had scrolled to, per room, for as long as this tab lives.
+ *
+ * Module-level rather than component state on purpose: the whole point is to survive the panel
+ * being unmounted, which is exactly what switching to the Chat tab does. Not persisted to
+ * storage — a scroll offset is meaningless against a transcript that has grown since, and a
+ * stale one would land the reader somewhere arbitrary.
+ */
+const transcriptScrollOffsets = new Map<
+  string,
+  { offset: number; atBottom: boolean }
+>();
+
+/**
+ * How the Clean view folds a LIVE segment into the merged sentence that replaces it. WT-716.
+ *
+ * Module-level rather than inline, so the call inside the component stays one line and the pause
+ * filter keeps sitting immediately above the grouping it must precede (check-transcript-pause-wired
+ * asserts that adjacency). Constant identity also keeps the memo below honest.
+ *
+ * Translations ride on the live segment itself, so a segment a sentence swallows would take its
+ * translations with it. They are folded per language, the way the utterance merge folds a bubble's
+ * — concatenating into one slot would splice a Vietnamese sentence onto an English one.
+ */
+const LIVE_CLEAN_VIEW_OPTIONS = {
+  idOf: (segment: TranscriptSegmentDto) => segment.segmentId,
+  absorb: (head: TranscriptSegmentDto, absorbed: TranscriptSegmentDto) => ({
+    ...head,
+    translations: mergeTranslations(head.translations, absorbed.translations),
+    confidence: Math.min(head.confidence, absorbed.confidence),
+  }),
+};
+
+export function TranscriptPanel({
+  segments,
+  roomId,
+  baseTime,
+  missedCount = 0,
+  readerLanguage,
+  transcriptPause,
+}: {
+  segments: TranscriptSegmentDto[];
+  roomId: string;
+  /**
+   * The viewer's own listen language. Every bubble resolves its translation against this one
+   * value, which is what makes the panel read consistently from a single seat (WT-371 Bug 4).
+   * Changing it re-renders the whole transcript in the new language rather than only new lines.
+   */
+  readerLanguage?: string;
+  /** Lines that were already spoken when this person joined. 0 for anyone who was here. */
+  missedCount?: number;
+  /** Room start time — segments' startTimeMs is elapsed ms from here, used to bucket
+   * them into "Translation N" sessions. Omit to skip session labeling. */
+  baseTime?: string;
+  /**
+   * WT-605: whether the transcript is currently not being written down, and since when.
+   *
+   * Shown to EVERY participant, not only the host who can toggle it — a transcript that quietly
+   * stops growing looks exactly like a room that has gone quiet, and the difference matters to
+   * anyone relying on it. `since` is absent when this client learned the state from the
+   * broadcast, which carries no start time.
+   */
+  transcriptPause?: { paused: boolean; since: string | null };
+}) {
+  const t = useTranslations("meetingLive");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const hasRestoredRef = useRef(false);
+  const currentUserId = useAuthStore((state) => state.user?.id);
+  const suggestions = useTranslationRoomStore((state) => state.suggestions);
+  const dismissSuggestion = useTranslationRoomStore((state) => state.dismissSuggestion);
+  // Segments said during the current pause that never reached this panel's list — the store
+  // routes them to captions only. What the placeholder counts now that the render filter below
+  // rarely has anything left to drop.
+  const withheldWhilePaused = useTranslationRoomStore((state) => state.withheldWhilePaused);
+  // Live text: the words of a turn still being spoken, shown under the record while the transcript
+  // is running and replaced by the speaker's final line. See lib/transcript/live-text.ts.
+  const liveLines = useTranslationRoomStore((state) => state.liveLines);
+  // The panel's own pause answer — the one its "Transcript paused" banner draws from — so the
+  // banner and a live line can never disagree about whether words are being written down.
+  const shownLiveLines = transcriptPause?.paused ? [] : orderedLiveLines(liveLines);
+  const sessionsQuery = useTranslationRoomSessions(roomId);
+  const sessions = sessionsQuery.data;
+  // WT-605. Independent of the translation-session grouping above — pausing the transcript and
+  // pausing translation are different, unrelated actions.
+  const pauseWindowsQuery = useTranscriptPauseWindows(roomId);
+  // ONE gap list, and it has to include the pause this client has only heard about (WT-657).
+  //
+  // The broadcast lands first and the window list follows a round trip later — every participant
+  // refetches it, so it is a lag, not a blind spot. But the lines needing to be withheld arrive
+  // precisely inside that lag. Derived from the fetched windows alone, both consumers below go
+  // quiet for its duration: the filter finds no open window and keeps every line, and the divider
+  // has nothing to draw. The panel would then print, under its own "Transcript paused" banner,
+  // exactly the words the pause exists to withhold.
+  const pauseGaps = useMemo(
+    () =>
+      withLivePauseGap(
+        resolveTranscriptPauseGaps(pauseWindowsQuery.data ?? [], baseTime),
+        transcriptPause,
+        baseTime,
+      ),
+    [pauseWindowsQuery.data, baseTime, transcriptPause],
+  );
+
+  // WT-716: Clean by default, Verbatim on request — this reader's choice only, shared with every
+  // other transcript surface they have open (see useTranscriptViewMode).
+  const [viewMode, setViewMode] = useTranscriptViewMode();
+  // Sentences come from two places, exactly as the segments do: the saved transcript for whatever
+  // was said before this browser connected (a late joiner's catch-up), and the realtime event for
+  // everything since. The by-room read is the one persistent-meeting-session already made, so it
+  // is a cache hit rather than a second request; a room that saves no transcript 404s and has none.
+  const savedTranscriptQuery = useTranscriptByRoom(roomId);
+  const savedCleanSentencesQuery = useTranscriptCleanSentences(savedTranscriptQuery.data?.id);
+  const liveCleanSentences = useTranslationRoomStore((state) => state.cleanSentences);
+  const cleanSentences = useMemo(
+    () => mergeCleanSentences(savedCleanSentencesQuery.data ?? [], liveCleanSentences),
+    [savedCleanSentencesQuery.data, liveCleanSentences],
+  );
+
+  // WT-605, the reported defect: the banner appeared and the words kept flowing under it.
+  //
+  // BEFORE the grouping, not after. groupTranscriptSegments folds consecutive chunks of one
+  // person talking into a single bubble, so a chunk spoken after the host pressed Pause that
+  // lands within MAX_UTTERANCE_GAP_MS of the previous one stops being a segment at all and
+  // becomes part of an earlier line's text — where no filter downstream can reach it. The same
+  // ordering the control-marker drop already relies on, for the same reason.
+  const recorded = useMemo(
+    () => withoutSegmentsInOpenPauseGaps(segments, pauseGaps),
+    [segments, pauseGaps],
+  );
+
+  // WT-716, and it sits HERE rather than further down for a reason that is about reading rather
+  // than about logic: the pause filter and the grouping have to stay next to each other in this
+  // file — check-transcript-pause-wired asserts the one runs immediately before the other, because
+  // anything that got between them historically got between them in the wrong order.
+  //
+  // AFTER the pause filter and BEFORE the grouping is exactly where the clean view belongs, for
+  // the reasons each of those gives: a sentence may only stand in for segments that are actually
+  // being shown (one covering a withheld segment finds it missing and falls back — see
+  // isCleanSentenceStale), and the grouping has to see one segment per sentence or it would fold
+  // the sentence's parts back into a bubble one chunk at a time. Null in Verbatim, where this
+  // panel is exactly what it was.
+  const cleanView = useMemo(
+    () =>
+      viewMode === "clean"
+        ? buildCleanTranscriptView(recorded.segments, cleanSentences, LIVE_CLEAN_VIEW_OPTIONS)
+        : null,
+    [viewMode, recorded.segments, cleanSentences],
+  );
+
+  const blocks = useMemo(() => {
+    const grouped = groupTranscriptSegments(cleanView ? cleanView.segments : recorded.segments);
+    // The absorbed ids go back into each bubble's list, so an AI suggestion anchored to the second
+    // chunk of a merged sentence still finds its bubble.
+    const utterances = cleanView ? withAbsorbedSegmentIds(grouped, cleanView) : grouped;
+    return groupSegmentsByTranslationSession(utterances, sessions ?? [], baseTime);
+  }, [cleanView, recorded.segments, sessions, baseTime]);
+
+  // THE FILTER ABOVE CAN BE A NO-OP, AND NOTHING ELSE ON SCREEN WOULD SAY SO.
+  //
+  // It withholds only what falls inside an OPEN gap, and there are two ordinary ways to be paused
+  // with no open gap in hand: a room with no usable `baseTime`, where resolveTranscriptPauseGaps
+  // can place nothing at all, and the round trip between the broadcast landing and the window list
+  // catching up, during which a broadcast-learned pause has no `since` for withLivePauseGap to
+  // synthesize from. In both, lines keep appearing under the amber banner that has just promised
+  // they are not being written down.
+  //
+  // Asked here rather than left to the module because this is the panel that depends on the
+  // answer. The dev-only half of the complaint lives in pauseFilterHasNothingToMatch; the
+  // user-facing half is the placeholder below, which stays TRUE in this state — the record really
+  // has stopped — and is the only thing telling a reader so while the list is still moving.
+  const pauseFilterInert = pauseFilterHasNothingToMatch(transcriptPause, pauseGaps);
+
+  const { isAway, scrollToLatest } = useScrollToLatest(containerRef, {
+    // The distance this panel itself uses to decide it has stopped following. A chip offering to
+    // jump to a bottom the panel is already gliding towards reads as a broken control.
+    threshold: STICK_TO_BOTTOM_PX,
+    // What is RENDERED, not what arrived. While paused the store keeps growing and the list does
+    // not, so counting arrivals would offer "jump to the newest line" for a line that is not
+    // there — a chip that appears to do nothing.
+    revision: recorded.segments.length,
+  });
+
+  // Each pause belongs to exactly ONE session block. Handing every block the whole list — which
+  // is what both panels used to do — makes the trailing pass in splitSegmentsAroundPauseGaps
+  // redraw every late gap once per session, so one pause read as three.
+  const gapsPerBlock = useMemo(
+    () =>
+      distributePauseGapsAcrossBlocks(
+        blocks.map((block) => block.segments.map(({ startTimeMs, receivedAt }) => ({ startTimeMs, receivedAt }))),
+        pauseGaps,
+      ),
+    [blocks, pauseGaps],
+  );
+
+  // WHERE THE READER WAS, NOT WHERE THE TRANSCRIPT ENDS.
+  //
+  // This forced scrollTop to the bottom on EVERY change to `blocks`, and `blocks` is a useMemo
+  // that yields a fresh array whenever segments, sessions or baseTime change. Two consequences,
+  // and the report is both:
+  //
+  //   • Switching Chat → Transcript remounts this panel, so the effect ran with the container
+  //     freshly at zero and drove it to the bottom of an 18-minute transcript — with
+  //     `scroll-smooth` on the container, an animation the whole length of the list. "nó scroll
+  //     lâu".
+  //   • Reading something further up was impossible during an active meeting: every new line
+  //     yanked the view back down.
+  //
+  // Now it behaves the way every chat log does. The reader's offset is remembered per room for
+  // as long as the tab lives, new lines only follow when the reader is already at the bottom,
+  // and the restore is a jump rather than a gliding animation.
+  function rememberScroll() {
+    const element = containerRef.current;
+    if (!element) return;
+    const distanceFromBottom =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    stickToBottomRef.current = distanceFromBottom <= STICK_TO_BOTTOM_PX;
+    transcriptScrollOffsets.set(roomId, {
+      offset: element.scrollTop,
+      atBottom: stickToBottomRef.current,
+    });
+  }
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    /** Move without animating — `scroll-smooth` is for following live lines, not for restoring. */
+    function jumpTo(top: number) {
+      const previous = element!.style.scrollBehavior;
+      element!.style.scrollBehavior = "auto";
+      element!.scrollTop = top;
+      element!.style.scrollBehavior = previous;
+    }
+
+    if (!hasRestoredRef.current) {
+      hasRestoredRef.current = true;
+      const remembered = transcriptScrollOffsets.get(roomId);
+      // Anyone who was at the bottom stays at the bottom, including a first visit: the newest
+      // line is what a live transcript is for.
+      jumpTo(remembered && !remembered.atBottom ? remembered.offset : element.scrollHeight);
+      stickToBottomRef.current = remembered ? remembered.atBottom : true;
+      return;
+    }
+
+    if (stickToBottomRef.current) element.scrollTop = element.scrollHeight;
+  }, [blocks, roomId]);
+
+  // Above the empty-transcript case on purpose: a host can pause before anyone has spoken, and
+  // "Start WarpTalk to see live translation here" would then be the only thing the panel says —
+  // which is not merely unhelpful, it is the opposite of what is happening.
+  const pausedNotice = transcriptPause?.paused ? (
+    <TranscriptPausedNotice since={transcriptPause.since} />
+  ) : null;
+
+  // Its own slim row rather than a slot in the tab header: that row is already Transcript, Chat,
+  // People and the host's Pause control, and it scrolls sideways at the narrow widths this panel
+  // is dragged to. Right-aligned, so it reads as a setting of the list below it.
+  const viewModeBar = (
+    <div className="flex shrink-0 justify-end px-3 pt-2">
+      <TranscriptViewModeToggle value={viewMode} onChange={setViewMode} />
+    </div>
+  );
+
+  if (!segments.length) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {pausedNotice}
+        <EmptyPanel text={t("transcriptPanel.empty")} />
+      </div>
+    );
+  }
+
+  const showSessionLabels = blocks.length > 1;
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Pinned above the scroll area rather than dropped into the list. This is a LIVE state,
+          not a marker in the record: a reader parked at the bottom of an hour-long transcript
+          would never scroll up to find it, and by the time they did it could be over. */}
+      {pausedNotice}
+      {viewModeBar}
+    <div
+      ref={containerRef}
+      onScroll={rememberScroll}
+      className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3 custom-scrollbar scroll-smooth"
+    >
+      {/* Said once, at the top, rather than as a divider inside the list: consecutive lines
+          from one speaker are merged into a single utterance, so there is no reliable seam to
+          put a marker on. Someone who was here from the start sees nothing. */}
+      {missedCount > 0 ? (
+        <div className="mb-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-ink-muted">
+          You joined after{" "}
+          <span className="font-medium text-ink">
+            {missedCount} {missedCount === 1 ? "line" : "lines"}
+          </span>{" "}
+          had already been said. They are shown above the live transcript.
+        </div>
+      ) : null}
+      <AnimatePresence initial={false}>
+        {blocks.map((block, blockIndex) => (
+          <div key={block.sessionNumber} className="space-y-2">
+            {showSessionLabels ? <SessionDivider block={block} /> : null}
+            {splitSegmentsAroundPauseGaps(block.segments, gapsPerBlock[blockIndex] ?? []).map((sub, subIndex) => (
+              <div
+                key={sub.gapsBefore.map((gap) => gap.window.id).join("+") || `${block.sessionNumber}-${subIndex}`}
+                className="space-y-2"
+              >
+                {sub.gapsBefore.length ? <TranscriptPauseDivider gaps={sub.gapsBefore} /> : null}
+                {/* Every bubble here is one the record kept. Nothing spoken into an open pause
+                    reaches this map — it was dropped upstream, before the grouping. A branch that
+                    rendered such a line dimmed instead would put words on screen that the saved
+                    transcript does not have, which is the disagreement this panel must not
+                    produce; see withoutSegmentsInOpenPauseGaps for the ruling behind that. */}
+                {sub.segments.map((segment) => (
+                  <TranscriptBubble
+                    key={segment.segmentId}
+                    segment={segment}
+                    readerLanguage={readerLanguage}
+                    cleanView={cleanView}
+                    isSelf={Boolean(currentUserId) && segment.speakerId === currentUserId}
+                    suggestion={findSuggestionForUtterance(segment, suggestions)}
+                    onDismissSuggestion={dismissSuggestion}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        ))}
+      </AnimatePresence>
+      {shownLiveLines.map((live) => (
+        <LiveTextLine key={`live-${live.speakerId}`} speakerName={live.speakerName} text={live.text} />
+      ))}
+      {/* Once something has actually been dropped — or once the filter is known to be unable to
+          drop anything while the transcript is paused. The banner above already says the
+          transcript is paused; this says the different, sharper thing — that the list you are
+          reading is no longer the record. Without it the panel simply stops moving while people
+          are visibly talking, which is indistinguishable from a transcript that has broken, and
+          that is the report this whole ticket started as; and in the inert case (see
+          pauseFilterInert) it is the only mark of a hole the divider cannot yet be drawn for. */}
+      {recorded.hiddenCount > 0 || withheldWhilePaused > 0 || pauseFilterInert ? <PausedLinesPlaceholder /> : null}
+    </div>
+      {/* The panel stops following the moment the reader scrolls up — which is right, and left
+          them stranded in the middle of an hour of talking with the newest line somewhere below
+          and nothing saying so. */}
+      <ScrollToLatestChip visible={isAway} onClick={scrollToLatest} />
+    </div>
+  );
+}
+
+/**
+ * The words of a turn still being spoken — drawn muted, without a timestamp, because it is not a
+ * line of the record yet. The speaker's final line replaces it.
+ */
+function LiveTextLine({ speakerName, text }: { speakerName: string; text: string }) {
+  return (
+    <div aria-live="polite" className="px-1 py-1.5">
+      <p className="text-[11px] font-medium text-ink-subtle">{speakerName}</p>
+      <p className="text-[13px] leading-snug text-ink-muted">{text}</p>
+    </div>
+  );
+}
+
+/**
+ * What a paused transcript says to the room.
+ *
+ * The second sentence is the whole point and must not be dropped: WT-605 exists precisely because
+ * this is NOT the meeting stopping. Translation, dubbing and subtitles run exactly as before, and
+ * a notice that let someone believe otherwise would send them out of a working meeting.
+ */
+function TranscriptPausedNotice({ since }: { since: string | null }) {
+  const startedAt = since
+    ? new Date(since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  return (
+    <div
+      role="status"
+      className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-ink"
+    >
+      <PauseCircle weight="fill" className="mt-[2px] h-4 w-4 shrink-0 text-amber-500" />
+      <div>
+        <span className="font-medium">
+          Transcript paused{startedAt ? ` at ${startedAt}` : ""}
+        </span>
+        <p className="mt-0.5 text-ink-muted">
+          Nothing said from now on is written down. Live translation, dubbing and subtitles are
+          still running.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SessionDivider({ block }: { block: TranslationSessionBlock<GroupedTranscriptSegment> }) {
+  return (
+    <div className="flex items-center gap-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">
+      <div className="h-px flex-1 bg-border" />
+      <span>
+        Translation {block.sessionNumber}
+        {formatSessionWindow(block.session)}
+      </span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+/**
+ * WT-605. The gap left by a Pause Transcript window — no line was recorded here, only
+ * translation/dubbing/subtitles were still running. Same visual language as SessionDivider
+ * above, deliberately distinct wording so the two are never mistaken for one another.
+ *
+ * Takes a RUN of windows, not one: two pauses with nobody speaking between them are one hole in
+ * the record and are named as one. `meetingEnded` is not passed here because this panel only ever
+ * renders a meeting that is happening — an unclosed window here is one that has genuinely not been
+ * resumed yet, and the lie that becomes on a finished meeting lives on the saved panel, which
+ * passes it.
+ *
+ * The whole sentence comes out of formatTranscriptPauseGapRun, prefix included. It used to be
+ * "Transcript paused ·" written here and a range written there, which is two files that have to
+ * agree on grammar for the four cases the label has — and only one of them can see which case it
+ * is in.
+ *
+ * NOT UPPERCASED, unlike the SessionDivider it sits among. That divider is a two-word label
+ * ("Translation 1"); this is now a sentence with two clock times in it, and a sentence set in
+ * 10px all-caps is read letter by letter or not at all.
+ *
+ * AMBER, not muted: the same colour as the paused banner, so the mark left in the flow after a
+ * Resume reads as that pause. It appears once per pause, where the pause happened, and scrolls away
+ * with the lines after it — the saved transcript draws it the same way.
+ */
+function TranscriptPauseDivider({ gaps }: { gaps: readonly TranscriptPauseGap[] }) {
+  return (
+    <div role="separator" className="flex items-center gap-2 py-2 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+      <div className="h-[1.5px] flex-1 bg-amber-500/60" />
+      <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-center leading-snug">
+        {formatTranscriptPauseGapRun(gaps)}
+      </span>
+      <div className="h-[1.5px] flex-1 bg-amber-500/60" />
+    </div>
+  );
+}
+
+/**
+ * Where the lines would have been, had the transcript been running.
+ *
+ * Shape approved by the product owner in the WT-605 design artifact. It is deliberately not a
+ * second banner: it sits at the foot of the list, in the flow, muted, so the reader's eye lands
+ * on it exactly where it expected the next line — the one place the absence needs explaining.
+ */
+function PausedLinesPlaceholder() {
+  return (
+    <p className="px-1 py-3 text-center text-[11px] italic leading-relaxed text-ink-subtle">
+      Paused — new lines are not being recorded.
+    </p>
+  );
+}
+
+function formatSessionWindow(session: TranslationSessionBlock<unknown>["session"]) {
+  if (!session?.startedAt) return "";
+  const started = new Date(session.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const ended = session.endedAt
+    ? new Date(session.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "now";
+  return ` · ${started}–${ended}`;
+}
+
+/*
+ * The lines one bubble renders come from transcriptBubbleLines (lib/transcript/clean-transcript),
+ * which this file used to hold a private copy of — and the Meet widget a second one.
+ *
+ * TWO SIGNALS, AND THE SECOND ONE IS FREE (Verbatim)
+ *   `paragraphs` are the turn split where the SPEAKER stopped for more than a second — measured
+ *   by VAD, carried in the timestamps, and previously thrown away. `splitIntoSentences` then
+ *   splits each of those on punctuation the recogniser actually produced. Punctuation alone leaves
+ *   a Vietnamese turn as one line, because the recogniser rarely emits a terminal stop; the pause
+ *   alone would run two written sentences together. Together they cover both.
+ *
+ * AND IN CLEAN (WT-716)
+ *   Every merged sentence is a line of its own, and whatever no sentence covers is laid out the
+ *   Verbatim way from its cleaned text.
+ */
+
+function TranscriptBubble({
+  segment,
+  isSelf,
+  readerLanguage,
+  cleanView,
+  suggestion,
+  onDismissSuggestion,
+}: {
+  // The GROUPED segment, not a raw one: `paragraphs` is what the merge worked out about where
+  // the speaker stopped, and the bubble is the only thing that renders it.
+  segment: GroupedTranscriptSegment;
+  isSelf: boolean;
+  /** The language THIS viewer reads in. Every bubble in the panel resolves against it. */
+  readerLanguage?: string;
+  /** WT-716: the Clean view this bubble was grouped from, or null for Verbatim. */
+  cleanView: CleanTranscriptView<TranscriptSegmentDto> | null;
+  suggestion?: AiSuggestionDto;
+  onDismissSuggestion: (segmentId: string) => void;
+}) {
+  const t = useTranslations("meetingTranscript");
+  // A Google Meet line keeps its Meet person's name; only the gateway's "nobody identified"
+  // fallback is swapped for the reader's own label (speaker-identity.ts).
+  const speakerName = localizeFarSideSpeakerName(
+    segment.speakerId,
+    segment.speakerName || "Speaker",
+    t("speaker.googleMeetParticipants"),
+  );
+  // The face and the language, from the one map the whole meeting resolves against. The NAME
+  // still comes from the segment: resolveTranscriptSpeakerName already guarded it against a
+  // roster that hands back a UUID as somebody's display name, and that guard must not be lost
+  // by preferring the roster copy here. The transcript variant draws the Google Meet stand-in as
+  // the person on the line, not as its shared "External Meeting" seat.
+  const person = useTranscriptSpeakerIdentity(segment.speakerId, speakerName);
+  const translation = resolveSegmentTranslation(segment, readerLanguage);
+  // Closed by default. The hint was not asked for, so it announces itself with a badge and
+  // waits to be opened rather than pushing the line somebody actually said out of the way.
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
+
+  return (
+    <motion.article
+      layout="position"
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      // Every segment this bubble stands for, the ones a merged sentence swallowed included, so a
+      // lookup by backend segment id finds the bubble whichever chunk it was aimed at.
+      data-segment-ids={segment.mergedSegmentIds.join(" ")}
+      className={`flex gap-2 ${isSelf ? "flex-row-reverse" : "flex-row"}`}
+    >
+      {/* Who said it, as a face — the panel used to identify every line by a name in 10px grey,
+          which is the smallest type on the screen carrying the one fact you need to follow a
+          multilingual conversation. The flag on the avatar says which language they said it in. */}
+      <ParticipantAvatar identity={person} size="sm" className="mt-4" />
+      <div className={`flex max-w-[85%] flex-col gap-1 ${isSelf ? "items-end" : "items-start"}`}>
+        <div className={`flex min-w-0 items-center gap-1.5 px-1 text-[10px] text-ink-subtle ${isSelf ? "flex-row-reverse" : ""}`}>
+          <span className="min-w-0 truncate text-[11px] font-semibold text-ink-muted">
+            {isSelf ? "You" : speakerName}
+          </span>
+          {/* The clock when we have one, the old offset only as a fallback.
+              `startTimeMs` is an offset into the audio INGRESS TRACK, and that track resets on
+              reconnect — so a line spoken 18 minutes in rendered as 6:00, under a label that
+              claimed to be "Meeting time". `receivedAt` is stamped once, on arrival, and has no
+              origin to get wrong. */}
+          <span
+            className="shrink-0 font-mono tabular-nums"
+            aria-label={
+              segment.receivedAt
+                ? `Spoken at ${formatTranscriptClockTime(segment.receivedAt)}`
+                : `Meeting time ${formatTranscriptTimestamp(segment.startTimeMs)}`
+            }
+          >
+            {segment.receivedAt
+              ? formatTranscriptClockTime(segment.receivedAt)
+              : formatTranscriptTimestamp(segment.startTimeMs)}
+          </span>
+          {suggestion ? (
+            <SuggestionBadge
+              suggestion={suggestion}
+              open={suggestionOpen}
+              onToggle={() => setSuggestionOpen((current) => !current)}
+            />
+          ) : null}
+        </div>
+
+        <div
+          className={`rounded-2xl px-3 py-2 shadow-sm ${
+            isSelf
+              ? "rounded-tr-sm bg-primary"
+              : "rounded-tl-sm border border-border bg-surface-2/60"
+          }`}
+        >
+          {/* One line per SENTENCE, not one paragraph per turn.
+              A bubble is a speaking turn — three sentences used to arrive as one wall of text
+              with the sentence ends buried inside it. Splitting into bubbles instead would undo
+              the merge that puts a turn together in the first place, so the turn stays whole and
+              its sentences are laid out inside it. A turn with no terminal punctuation, which
+              Vietnamese STT produces constantly, comes back as a single line and renders exactly
+              as it did before. */}
+          {transcriptBubbleLines(segment, cleanView, segment.segmentId).map((line, at) => (
+            <p
+              key={`${segment.segmentId}-o-${line.key}`}
+              data-clean-sentence-id={line.sentence?.sentenceId}
+              className={`text-[13px] leading-relaxed ${at > 0 ? "mt-1" : ""} ${isSelf ? "text-white" : "text-ink-muted"}`}
+            >
+              <AnimatedWords text={line.text} />
+              {/* The speaker changed their mind mid-sentence and the clean line states what they
+                  landed on. The marker is how that judgement stays checkable without leaving
+                  Clean: its hover is the words they actually said. */}
+              {line.sentence?.selfRepair ? (
+                <SelfRepairMarker rawText={line.sentence.rawText} inverted={isSelf} />
+              ) : null}
+            </p>
+          ))}
+          {translation
+            ? splitIntoSentences(translation).map((sentence, at) => (
+                <p
+                  key={`${segment.segmentId}-t-${at}`}
+                  className={`text-[13px] font-medium leading-relaxed ${at === 0 ? "mt-1.5" : "mt-1"} ${isSelf ? "text-white" : "text-ink"}`}
+                >
+                  <AnimatedWords text={sentence} />
+                </p>
+              ))
+            : null}
+          <p className={`mt-2 flex items-center gap-1.5 text-[10px] font-medium ${isSelf ? "text-white/70" : "text-ink-subtle"}`}>
+            {/* WT-371 Bug 4: the arrow points at the READER's language, not at whichever
+                translation happened to arrive last. Every line in the panel therefore ends the
+                same way, and a line already spoken in the reader's language shows one language
+                and no arrow — because nothing was translated for them, not because something
+                is missing. */}
+            <span>
+              {getLanguageName(segment.originalLanguage)}
+              {translation && readerLanguage ? ` → ${getLanguageName(readerLanguage)}` : ""}
+            </span>
+            {/* How sure the recogniser was, as a real percentage.
+                WT-371 Bug 3: this printed `confidence * 100` on a value that is not a
+                probability — stt_worker publishes an average token LOG-probability, at most 0
+                and usually negative, so the badge read "-23%". confidencePercent applies the
+                actual inverse (exp), turning -0.23 into 79%. Rounded, because a decimal place
+                on a confidence score implies a precision that is not there, and hidden when the
+                producer reported nothing rather than shown as a confident 0% or 100%. */}
+            {confidencePercent(segment.confidence) !== null ? (
+              <span
+                title="How confident the speech recogniser was in this line"
+                className={
+                  isSelf
+                    ? "rounded-full bg-white/15 px-1.5 py-px tabular-nums"
+                    : "rounded-full bg-surface-2 px-1.5 py-px tabular-nums"
+                }
+              >
+                {confidencePercent(segment.confidence)}%
+              </span>
+            ) : null}
+          </p>
+
+          <AnimatePresence initial={false}>
+            {suggestion && suggestionOpen ? (
+              <SuggestionDetail
+                key={suggestion.segmentId}
+                suggestion={suggestion}
+                isSelf={isSelf}
+                onDismiss={() => {
+                  setSuggestionOpen(false);
+                  onDismissSuggestion(suggestion.segmentId);
+                }}
+              />
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </div>
+    </motion.article>
+  );
+}
+
+function EmptyPanel({ text }: { text: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex h-full flex-col items-center justify-center gap-3 text-center"
+    >
+      <ClosedCaptioning className="h-8 w-8 text-ink-tertiary" weight="light" />
+      <p className="text-[13px] text-ink-subtle max-w-[200px]">{text}</p>
+    </motion.div>
+  );
+}

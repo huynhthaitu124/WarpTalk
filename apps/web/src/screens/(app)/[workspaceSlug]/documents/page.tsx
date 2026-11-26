@@ -1,0 +1,1326 @@
+"use client";
+
+import {
+  IMAGE_EXTENSIONS,
+  WORKSPACE_DOCUMENT_CONFIDENTIALITY_LEVEL,
+  WORKSPACE_DOCUMENT_INGESTION_STATUS,
+  WORKSPACE_DOCUMENT_SOURCE_TYPE,
+  WORKSPACE_DOCUMENT_STATUS,
+} from "@/constants/workspace-document";
+import { FilterChip, FilterChipGroup } from "@/components/ui/filter-chip";
+import { useRegisterAssistantContext } from "@/hooks/use-assistant-page-context";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  Archive,
+  ArrowCounterClockwise,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  Brain,
+  CaretDown,
+  Eye,
+  FileCode,
+  FileCsv,
+  FileDoc,
+  FileImage,
+  FilePdf,
+  FileText,
+  Funnel,
+  Info,
+  List,
+  Lock,
+  LockSimple,
+  ShieldWarning,
+  SlidersHorizontal,
+  Sparkle,
+  Spinner,
+  SquaresFour,
+  Trash,
+  Upload,
+  Warning,
+} from "@phosphor-icons/react";
+import { useParams, useRouter } from "@/lib/next-shim/navigation";
+import { useMemo, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
+import { toast } from "sonner";
+import { z } from "zod";
+import { useLocale, useTranslations } from "next-intl";
+
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ExpandingSearchDock } from "@/components/ui/expanding-search-dock";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import {
+  useApproveWorkspaceDocument,
+  useArchiveWorkspaceDocument,
+  useDeleteWorkspaceDocument,
+  useRestoreWorkspaceDocument,
+  useUploadWorkspaceDocument,
+  useWorkspace,
+  useWorkspaceDocuments,
+  useWorkspaceMembers,
+} from "@/hooks/use-workspace";
+import { useAuthStore } from "@/stores/auth-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { DocumentActor } from "@/components/documents/document-actor";
+import { UserChip } from "@/components/user/user-chip";
+import { findDocumentActor } from "@/lib/documents/document-actor";
+import { DocumentDeleteDialog } from "@/components/documents/document-delete-dialog";
+import { PagePlaceholder } from "@/components/workspace/page-placeholder";
+import { DocumentDuplicateDialog } from "@/components/documents/document-duplicate-dialog";
+import {
+  DOCUMENT_TAB,
+  DUPLICATE_STRATEGY,
+  documentMatchesTab,
+  hasPendingRevision,
+  parseDuplicateConflict,
+  type DocumentTab,
+  type DuplicateConflict,
+  type DuplicateStrategy,
+} from "@/lib/documents/document-review";
+import {
+  DEFAULT_DOCUMENT_DISPLAY,
+  DOCUMENT_FILE_KINDS,
+  DOCUMENT_SORT_FIELDS,
+  EMPTY_DOCUMENT_FILTERS,
+  activeDocumentFilterCount,
+  isDefaultDocumentDisplay,
+  matchesDocumentFilters,
+  sortDocuments,
+  toggleDocumentFileKind,
+  type DocumentDisplayOptions,
+  type DocumentListFilters,
+  type DocumentSortField,
+} from "@/lib/documents/document-list-options";
+
+/**
+ * WT-666: the name is trimmed before it is measured, and 255 is the column width.
+ *
+ * The server enforces both — this schema is here so the person typing finds out before the upload
+ * rather than after it. It used to check a 2-character minimum and nothing else, so a 300-character
+ * name reached Postgres verbatim and came back as a 500.
+ */
+const MAX_DOCUMENT_NAME_LENGTH = 255;
+
+function getUploadSchema(t: ReturnType<typeof useTranslations>) {
+  return z.object({
+    name: z
+      .string()
+      .trim()
+      .min(2, t("validation.nameMin"))
+      .max(MAX_DOCUMENT_NAME_LENGTH, t("validation.nameMax", { max: MAX_DOCUMENT_NAME_LENGTH })),
+    isAiAllowed: z.boolean(),
+  });
+}
+
+const ACCEPTED_UPLOAD_EXTENSIONS =
+  ".pdf,.docx,.xlsx,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif";
+
+type UploadFormData = z.infer<ReturnType<typeof getUploadSchema>>;
+/**
+ * The status tabs WT-633 asks for, and the three content filters that were already here.
+ *
+ * They share one control because they answer the same question — "show me this slice" — and
+ * because a document can only be in one status at a time, so a second row of chips would have
+ * been a second way to say the same thing.
+ */
+type FilterCategory = DocumentTab | "ai" | "admin" | "sensitive";
+type ViewMode = "list" | "grid";
+
+const STATUS_TABS: DocumentTab[] = [
+  DOCUMENT_TAB.PUBLISHED,
+  DOCUMENT_TAB.PENDING,
+  DOCUMENT_TAB.REJECTED,
+  DOCUMENT_TAB.PRIVATE,
+];
+
+function isStatusTab(category: FilterCategory): category is DocumentTab {
+  return (STATUS_TABS as string[]).includes(category);
+}
+
+export default function WorkspaceDocumentsPage() {
+  const t = useTranslations("documents");
+  const locale = useLocale();
+  const router = useRouter();
+  const params = useParams<{ workspaceSlug: string }>();
+  const workspaceSlug = params.workspaceSlug;
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const currentUser = useAuthStore((s) => s.user);
+
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [activeCategory, setActiveCategory] = useState<FilterCategory>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  // WT-895: what the Filter and Display buttons open. Both were icon buttons with no handler.
+  const [listFilters, setListFilters] = useState<DocumentListFilters>(EMPTY_DOCUMENT_FILTERS);
+  const [display, setDisplay] = useState<DocumentDisplayOptions>(DEFAULT_DOCUMENT_DISPLAY);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFileIsImage, setSelectedFileIsImage] = useState(false);
+  const [docToDelete, setDocToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  // WT-666. Set when the API answered 409 DOCUMENT_DUPLICATE_CONTENT — the file is already here
+  // and nothing has been stored, so the dialog can ask what to do and retry with the answer.
+  const [duplicateConflict, setDuplicateConflict] =
+    useState<DuplicateConflict | null>(null);
+
+  // TanStack Query list
+  const documentsQuery = useWorkspaceDocuments(
+    activeWorkspaceId || "",
+    page,
+    20,
+    query,
+  );
+  const workspaceQuery = useWorkspace(activeWorkspaceId || "");
+  const membersQuery = useWorkspaceMembers(activeWorkspaceId || "", 1, 100);
+  const workspaceMembers = membersQuery.data?.items ?? [];
+
+  // Mutations
+  const uploadMutation = useUploadWorkspaceDocument(activeWorkspaceId || "");
+  const deleteMutation = useDeleteWorkspaceDocument(activeWorkspaceId || "");
+  const archiveMutation = useArchiveWorkspaceDocument(activeWorkspaceId || "");
+  const restoreMutation = useRestoreWorkspaceDocument(activeWorkspaceId || "");
+
+  const uploadSchema = useMemo(() => getUploadSchema(t), [t]);
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    control,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<UploadFormData>({
+    resolver: zodResolver(uploadSchema),
+    defaultValues: {
+      name: "",
+      isAiAllowed: true,
+    },
+  });
+  const isAiAllowed = useWatch({ control, name: "isAiAllowed" });
+
+  useRegisterAssistantContext(
+    activeWorkspaceId
+      ? {
+          pageType: "documents",
+          workspaceId: activeWorkspaceId,
+          snapshot: {
+            query,
+            count: String(documentsQuery.data?.items?.length ?? 0),
+          },
+        }
+      : null,
+  );
+
+  if (!activeWorkspaceId) return null;
+
+  const canApproveDocuments = Boolean(workspaceQuery.data?.canApproveDocuments);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(t("toasts.fileTooLarge"));
+        e.target.value = "";
+        setSelectedFile(null);
+        setSelectedFileIsImage(false);
+        return;
+      }
+      setSelectedFile(file);
+      const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+      const isImg = IMAGE_EXTENSIONS.includes(ext);
+      setSelectedFileIsImage(isImg);
+
+      const nameWithoutExt =
+        file.name.substring(0, file.name.lastIndexOf(".")) || file.name;
+      setValue("name", nameWithoutExt);
+      setValue("isAiAllowed", !isImg);
+
+      if (isImg) {
+        toast.info(t("toasts.imageIndexingDisabled"));
+      }
+    }
+  };
+
+  /**
+   * @param duplicateStrategy Omitted on the first attempt, so a collision comes back as a 409 and
+   * the dialog can ask. Supplied on the retry, carrying the person's answer.
+   */
+  const runUpload = async (
+    formData: UploadFormData,
+    duplicateStrategy?: DuplicateStrategy,
+  ) => {
+    if (!selectedFile) {
+      toast.error(t("toasts.selectFile"));
+      return;
+    }
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      toast.error(t("toasts.fileTooLarge"));
+      return;
+    }
+
+    try {
+      const uploadedDocument = await uploadMutation.mutateAsync({
+        name: formData.name.trim(),
+        sourceType: WORKSPACE_DOCUMENT_SOURCE_TYPE.UPLOAD,
+        sourceId: null,
+        confidentialityLevel: WORKSPACE_DOCUMENT_CONFIDENTIALITY_LEVEL.GENERAL,
+        isAiAllowed: formData.isAiAllowed,
+        file: selectedFile,
+        duplicateStrategy,
+      });
+
+      toast.success(
+        uploadedDocument.status?.toLowerCase() ===
+          WORKSPACE_DOCUMENT_STATUS.PENDING_APPROVAL
+          ? t("toasts.uploadedPending")
+          : canApproveDocuments
+            ? t("toasts.uploadedPublished")
+            : t("toasts.uploadedSuccess"),
+      );
+      setSelectedFile(null);
+      setSelectedFileIsImage(false);
+      setDuplicateConflict(null);
+      reset({ name: "", isAiAllowed: true });
+      setIsUploadModalOpen(false);
+      const fileInput = document.getElementById(
+        "file-upload-input",
+      ) as HTMLInputElement;
+      if (fileInput) fileInput.value = "";
+    } catch (err: unknown) {
+      // The one failure that is a question rather than an error. Matched on the API's own code,
+      // never on the sentence — the sentence names the colliding document and changes with it.
+      const conflict = parseDuplicateConflict(err);
+      if (conflict) {
+        setDuplicateConflict(conflict);
+        return;
+      }
+
+      const response = (
+        err as { response?: { status?: number; data?: { error?: string } } }
+      )?.response;
+      const errorMsg =
+        response?.status === 401
+          ? t("toasts.sessionExpired")
+          : response?.status === 403
+            ? t("toasts.noPermission")
+            : response?.data?.error || t("toasts.uploadFailed");
+      toast.error(errorMsg);
+    }
+  };
+
+  const handleUploadSubmit = (formData: UploadFormData) => runUpload(formData);
+
+  const handleDuplicateChoice = async (strategy: DuplicateStrategy) => {
+    const existingId = duplicateConflict?.duplicate?.documentId;
+    setDuplicateConflict(null);
+
+    if (strategy === DUPLICATE_STRATEGY.SKIP) {
+      // Nothing was stored, so there is nothing to undo — just take them to the document that is
+      // already here, which is what they said they wanted to keep.
+      setIsUploadModalOpen(false);
+      setSelectedFile(null);
+      setSelectedFileIsImage(false);
+      reset({ name: "", isAiAllowed: true });
+      if (existingId) {
+        router.push(`/${workspaceSlug}/documents/${existingId}`);
+      }
+      return;
+    }
+
+    await handleSubmit((formData) => runUpload(formData, strategy))();
+  };
+
+  const handleArchive = async (docId: string) => {
+    try {
+      await archiveMutation.mutateAsync(docId);
+      toast.success(t("toasts.archived"));
+    } catch (err: unknown) {
+      const errorMsg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || t("toasts.archiveFailed");
+      toast.error(errorMsg);
+    }
+  };
+
+  const handleRestore = async (docId: string) => {
+    try {
+      await restoreMutation.mutateAsync(docId);
+      toast.success(t("toasts.restored"));
+    } catch (err: unknown) {
+      const errorMsg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || t("toasts.restoreFailed");
+      toast.error(errorMsg);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!docToDelete) return;
+    try {
+      await deleteMutation.mutateAsync(docToDelete.id);
+      toast.success(t("toasts.deleted"));
+      setDocToDelete(null);
+    } catch (err: unknown) {
+      const errorMsg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || t("toasts.deleteFailed");
+      toast.error(errorMsg);
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (!bytes || bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
+  const dateTimeFormat = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    day: "numeric",
+    month: "short",
+  });
+  const formatDate = (dateString: string) => {
+    if (!dateString) return "";
+    return dateTimeFormat.format(new Date(dateString));
+  };
+
+  const getFileIcon = (ext?: string) => {
+    const cleanExt = ext?.toLowerCase().replace(".", "");
+    if (cleanExt === "pdf")
+      return <FilePdf className="h-6 w-6 text-red-500 shrink-0" />;
+    if (cleanExt === "csv")
+      return <FileCsv className="h-6 w-6 text-emerald-500 shrink-0" />;
+    if (cleanExt === "txt" || cleanExt === "json" || cleanExt === "md")
+      return <FileCode className="h-6 w-6 text-blue-500 shrink-0" />;
+    if (["png", "jpg", "jpeg", "webp", "bmp"].includes(cleanExt || ""))
+      return <FileImage className="h-6 w-6 text-purple-500 shrink-0" />;
+    return <FileDoc className="h-6 w-6 text-primary shrink-0" />;
+  };
+
+  // Filter raw documents list based on Category Pills
+  const rawDocsList = documentsQuery.data?.items || [];
+  const countIn = (tab: DocumentTab) =>
+    rawDocsList.filter((doc) => documentMatchesTab(doc, tab)).length;
+
+  const pendingCount = countIn(DOCUMENT_TAB.PENDING);
+  // WT-633. A rejected document is already restricted to its uploader and the approvers by the
+  // API's own evaluator — `IsApprovalRestrictedStatus` covers `rejected` the same way it covers
+  // `pending_approval` — so this count is only ever above zero for someone entitled to see it.
+  // The chip is hidden at zero rather than shown empty: for most people it always will be.
+  const rejectedCount = countIn(DOCUMENT_TAB.REJECTED);
+  const archivedCount = countIn(DOCUMENT_TAB.ARCHIVED);
+  // A document taken back from the workspace. Only people who can still open one ever see a
+  // count here — the API filters the list per caller — so the chip hides at zero like Rejected.
+  const privateCount = countIn(DOCUMENT_TAB.PRIVATE);
+
+  const categoryDocs = rawDocsList.filter((doc) => {
+    if (isStatusTab(activeCategory)) {
+      return documentMatchesTab(doc, activeCategory);
+    }
+
+    // The content filters are orthogonal to status, but they still exclude archived documents —
+    // an archived document is retired, and "AI Context" listing one would overstate the shelf.
+    if (!documentMatchesTab(doc, DOCUMENT_TAB.ALL)) return false;
+
+    if (activeCategory === "ai") {
+      return doc.isAiAllowed;
+    }
+    if (activeCategory === "admin") {
+      return !doc.isAiAllowed;
+    }
+    if (activeCategory === "sensitive") {
+      return (
+        doc.confidentialityLevel ===
+        WORKSPACE_DOCUMENT_CONFIDENTIALITY_LEVEL.RESTRICTED
+      );
+    }
+    return true; // "all"
+  });
+  // WT-895: the Filter popover narrows within the chip's slice, and Display orders what is left.
+  const filteredDocs = sortDocuments(
+    categoryDocs.filter((doc) => matchesDocumentFilters(doc, listFilters, currentUser?.id)),
+    display,
+    locale,
+  );
+  const filterCount = activeDocumentFilterCount(listFilters);
+  const sortLabels: Record<DocumentSortField, string> = {
+    modified: t("listOptions.sort.modified"),
+    name: t("listOptions.sort.name"),
+    size: t("listOptions.sort.size"),
+  };
+  const menuItemClass =
+    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none";
+
+  return (
+    <div className="flex h-full flex-col bg-panel px-4 pb-12 text-ink">
+      {/* ─── Top Header Section: Title, Search Bar & Upload Button ─── */}
+      {/* ─── Pill Category Filters & View Toggle Bar ─── */}
+      <div className="flex shrink-0 items-center justify-between gap-4 py-3">
+        {/* Left Side: Category Pills.
+            One FilterChip per category, same control Meetings and Knowledge render. The leading
+            icons are gone on purpose: they were only on five of the six chips, in five different
+            colours, so a row of filters read as a row of unrelated actions. A count is the one
+            thing worth carrying beside a label, and FilterChip has a slot for it. */}
+        <FilterChipGroup label={t("filters.ariaLabel")}>
+          <FilterChip selected={activeCategory === "all"} onClick={() => setActiveCategory("all")}>
+            {t("filters.all")}
+          </FilterChip>
+          {/* WT-633 asks for Published / Pending / Rejected as first-class tabs.
+              Pending is no longer gated on `canApproveDocuments`: a member who uploaded a
+              document waiting on review could not see their own queue, and the count they see is
+              already only what the API returned to them. */}
+          <FilterChip
+            selected={activeCategory === DOCUMENT_TAB.PUBLISHED}
+            onClick={() => setActiveCategory(DOCUMENT_TAB.PUBLISHED)}
+          >
+            {t("filters.published")}
+          </FilterChip>
+          <FilterChip
+            selected={activeCategory === DOCUMENT_TAB.PENDING}
+            onClick={() => setActiveCategory(DOCUMENT_TAB.PENDING)}
+            badge={pendingCount > 0 ? pendingCount : undefined}
+          >
+            {t("filters.pendingApproval")}
+          </FilterChip>
+          {rejectedCount > 0 && (
+            <FilterChip
+              selected={activeCategory === DOCUMENT_TAB.REJECTED}
+              onClick={() => setActiveCategory(DOCUMENT_TAB.REJECTED)}
+              badge={rejectedCount}
+            >
+              {t("filters.rejected")}
+            </FilterChip>
+          )}
+          {privateCount > 0 && (
+            <FilterChip
+              selected={activeCategory === DOCUMENT_TAB.PRIVATE}
+              onClick={() => setActiveCategory(DOCUMENT_TAB.PRIVATE)}
+              badge={privateCount}
+            >
+              {t("filters.private")}
+            </FilterChip>
+          )}
+          <FilterChip selected={activeCategory === "ai"} onClick={() => setActiveCategory("ai")}>
+            {t("filters.aiContext")}
+          </FilterChip>
+          <FilterChip
+            selected={activeCategory === "admin"}
+            onClick={() => setActiveCategory("admin")}
+          >
+            {t("filters.administrative")}
+          </FilterChip>
+          <FilterChip
+            selected={activeCategory === "sensitive"}
+            onClick={() => setActiveCategory("sensitive")}
+          >
+            {t("filters.restricted")}
+          </FilterChip>
+          {archivedCount > 0 && (
+            <FilterChip
+              selected={activeCategory === DOCUMENT_TAB.ARCHIVED}
+              onClick={() => setActiveCategory(DOCUMENT_TAB.ARCHIVED)}
+              badge={archivedCount}
+            >
+              {t("filters.archived")}
+            </FilterChip>
+          )}
+        </FilterChipGroup>
+
+        {/* Right Side: Action Icons (Filter & Grid/List Toggle) */}
+        <div className="flex items-center gap-2 shrink-0">
+          <ExpandingSearchDock
+            value={query}
+            onValueChange={(value) => {
+              setQuery(value);
+              setPage(1);
+            }}
+            placeholder={t("searchPlaceholder")}
+            ariaLabel={t("searchAriaLabel")}
+            collapsedWidth={28}
+            expandedWidth={220}
+            className="h-[28px] border-border/60 bg-surface-2 text-ink shadow-sm backdrop-blur-md focus-within:bg-surface-1"
+            iconButtonClassName="ml-0 size-[26px] hover:bg-surface-3"
+            clearButtonClassName="mr-0.5 size-5 hover:bg-surface-3"
+            inputClassName="h-[26px] text-[12px]"
+          />
+          <Popover>
+            <PopoverTrigger
+              className="relative inline-flex h-[28px] w-[28px] items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:bg-surface-2 hover:text-foreground data-popup-open:bg-surface-2 data-popup-open:text-foreground"
+              title={t("filterOptions")}
+              aria-label={t("filterOptions")}
+            >
+              <Funnel className="h-3.5 w-3.5" />
+              {activeCategory !== "all" || filterCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary" />
+              ) : null}
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 gap-1 p-1.5">
+              <p className="px-2 pb-0.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+                {t("listOptions.fileType")}
+              </p>
+              {DOCUMENT_FILE_KINDS.map((kind) => {
+                const checked = listFilters.fileKinds.includes(kind);
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={checked}
+                    onClick={() => setListFilters((current) => toggleDocumentFileKind(current, kind))}
+                    className={menuItemClass}
+                  >
+                    <span className="grid size-4 place-items-center">
+                      {checked ? <Check className="size-3.5 text-primary" /> : null}
+                    </span>
+                    {t(`listOptions.kinds.${kind}`)}
+                  </button>
+                );
+              })}
+              <div className="my-1 h-px bg-hairline/60" />
+              <label className="flex items-center justify-between gap-3 px-2 py-1.5 text-[13px] text-ink">
+                {t("listOptions.mineOnly")}
+                <Switch
+                  checked={listFilters.mineOnly}
+                  onCheckedChange={(mineOnly) =>
+                    setListFilters((current) => ({ ...current, mineOnly: Boolean(mineOnly) }))
+                  }
+                />
+              </label>
+              {filterCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setListFilters(EMPTY_DOCUMENT_FILTERS)}
+                  className={`${menuItemClass} justify-center text-ink-muted`}
+                >
+                  {t("listOptions.clearFilters")}
+                </button>
+              ) : null}
+            </PopoverContent>
+          </Popover>
+
+          <Popover>
+            <PopoverTrigger
+              className="relative inline-flex h-[28px] w-[28px] items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:bg-surface-2 hover:text-foreground data-popup-open:bg-surface-2 data-popup-open:text-foreground"
+              title={t("displayOptions")}
+              aria-label={t("displayOptions")}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              {isDefaultDocumentDisplay(display) ? null : (
+                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary" />
+              )}
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 gap-1 p-1.5">
+              <p className="px-2 pb-0.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+                {t("listOptions.layout")}
+              </p>
+              <div className="grid grid-cols-2 gap-1 px-1" role="radiogroup" aria-label={t("listOptions.layout")}>
+                {(["list", "grid"] as const).map((mode) => {
+                  const Icon = mode === "list" ? List : SquaresFour;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={viewMode === mode}
+                      onClick={() => setViewMode(mode)}
+                      className={`flex items-center justify-center gap-1.5 rounded-md border py-1.5 text-[12px] transition-colors ${
+                        viewMode === mode
+                          ? "border-border bg-surface-2 font-medium text-ink"
+                          : "border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {mode === "list" ? t("listView") : t("gridView")}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="my-1 h-px bg-hairline/60" />
+              <p className="px-2 pb-0.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+                {t("listOptions.orderBy")}
+              </p>
+              {DOCUMENT_SORT_FIELDS.map((field) => {
+                const selected = display.sortField === field;
+                return (
+                  <button
+                    key={field}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    onClick={() =>
+                      setDisplay((current) =>
+                        current.sortField === field
+                          ? current
+                          : // Names read A→Z; dates and sizes read biggest/newest first.
+                            { sortField: field, sortDirection: field === "name" ? "asc" : "desc" },
+                      )
+                    }
+                    className={menuItemClass}
+                  >
+                    <span className="grid size-4 place-items-center">
+                      {selected ? <Check className="size-3.5 text-primary" /> : null}
+                    </span>
+                    {sortLabels[field]}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  setDisplay((current) => ({
+                    ...current,
+                    sortDirection: current.sortDirection === "asc" ? "desc" : "asc",
+                  }))
+                }
+                className={menuItemClass}
+              >
+                <span className="grid size-4 place-items-center">
+                  {display.sortDirection === "asc" ? (
+                    <ArrowUp className="size-3.5" />
+                  ) : (
+                    <ArrowDown className="size-3.5" />
+                  )}
+                </span>
+                {display.sortDirection === "asc"
+                  ? t("listOptions.ascending")
+                  : t("listOptions.descending")}
+              </button>
+              {isDefaultDocumentDisplay(display) ? null : (
+                <button
+                  type="button"
+                  onClick={() => setDisplay(DEFAULT_DOCUMENT_DISPLAY)}
+                  className={`${menuItemClass} justify-center text-ink-muted`}
+                >
+                  {t("listOptions.resetDisplay")}
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
+
+          <div className="h-4 w-px bg-hairline/50 mx-1" />
+
+          <button
+            onClick={() => setIsUploadModalOpen(true)}
+            className="inline-flex h-[28px] items-center gap-1.5 rounded-full bg-foreground px-3.5 text-[13px] font-medium text-background shadow-sm transition hover:opacity-90"
+          >
+            <span>{t("new")}</span>
+            <CaretDown className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            onClick={() => setViewMode("grid")}
+            className={`inline-flex h-[28px] w-[28px] items-center justify-center rounded-full border border-border/60 transition-colors ${
+              viewMode === "grid"
+                ? "bg-surface-3 text-ink shadow-sm"
+                : "text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+            }`}
+            title={t("gridView")}
+          >
+            <SquaresFour className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => setViewMode("list")}
+            className={`inline-flex h-[28px] w-[28px] items-center justify-center rounded-full border border-border/60 transition-colors ${
+              viewMode === "list"
+                ? "bg-surface-3 text-ink shadow-sm"
+                : "text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+            }`}
+            title={t("listView")}
+          >
+            <List className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ─── Document Content: List View vs Grid View ─── */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      {documentsQuery.isLoading ? (
+        <div className="flex h-64 items-center justify-center">
+          <Spinner className="h-7 w-7 animate-spin text-primary" />
+        </div>
+      ) : filteredDocs.length === 0 ? (
+        <PagePlaceholder
+          kind="documents"
+          title={t("empty.title")}
+          description={
+            canApproveDocuments
+              ? t("empty.descriptionCanUpload")
+              : t("empty.descriptionCannotUpload")
+          }
+        />
+      ) : viewMode === "list" ? (
+        /* List Table View — flat, with no card around it. The border, radius, tinted fill and
+           shadow drew a box whose only content was the table, so the page read as a card on a
+           page rather than a list of documents. Meetings lists nothing in a card either. */
+        <div className="w-full overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              {/* One column per fact. There used to be a "People" column here as well, rendering
+                  the same uploader and the same approver a second time under their own labels —
+                  three columns carrying two facts, and the widest thing in the row was the
+                  repetition. */}
+              <tr className="border-b border-hairline/40 text-[11px] font-medium tracking-wide text-ink-muted uppercase">
+                <th className="px-4 py-2.5 font-medium">{t("table.name")}</th>
+                <th className="px-4 py-2.5 font-medium">{t("table.uploadedBy")}</th>
+                <th className="px-4 py-2.5 font-medium">{t("table.approvedBy")}</th>
+                <th className="px-4 py-2.5 font-medium">{t("table.status")}</th>
+                <th className="px-4 py-2.5 font-medium">{t("table.modified")}</th>
+                <th className="px-4 py-2.5 font-medium">{t("table.size")}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{t("table.actions")}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-hairline/20">
+              {filteredDocs.map((doc) => {
+                const isDocOwner =
+                  doc.uploadedBy === currentUser?.id ||
+                  doc.ownerId === currentUser?.id;
+                const canManageDoc = canApproveDocuments || isDocOwner;
+                const uploader = findDocumentActor(workspaceMembers, doc.uploadedBy);
+                const approver = findDocumentActor(workspaceMembers, doc.approvedBy);
+
+                return (
+                  <tr
+                    key={doc.id}
+                    className="hover:bg-surface-2/40 transition-colors group cursor-pointer"
+                    onClick={() =>
+                      router.push(`/${workspaceSlug}/documents/${doc.id}`)
+                    }
+                  >
+                    {/* Name column with thumbnail icon */}
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-3">
+                        {getFileIcon(doc.fileExtension)}
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-semibold text-ink group-hover:text-primary transition-colors line-clamp-1">
+                            {doc.name}
+                          </span>
+                          <span className="text-[10px] text-ink-muted font-mono truncate">
+                            {doc.fileName}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Uploaded By */}
+                    <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                      {uploader ? (
+                        <UserChip
+                          user={{
+                            userId: uploader.userId,
+                            name: uploader.fullName || uploader.email,
+                            email: uploader.email,
+                            avatarUrl: uploader.avatarUrl,
+                            role: uploader.roleName,
+                          }}
+                          variant="text"
+                          size="sm"
+                          className="max-w-[140px] text-[11px] text-ink"
+                        />
+                      ) : (
+                        <span className="text-ink-muted text-[11px]">—</span>
+                      )}
+                    </td>
+
+                    {/* Approved By */}
+                    <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                      {approver ? (
+                        <UserChip
+                          user={{
+                            userId: approver.userId,
+                            name: approver.fullName || approver.email,
+                            email: approver.email,
+                            avatarUrl: approver.avatarUrl,
+                            role: approver.roleName,
+                          }}
+                          variant="text"
+                          size="sm"
+                          className="max-w-[140px] text-[11px] text-emerald-600"
+                        />
+                      ) : (
+                        <span className="text-ink-muted text-[11px]">—</span>
+                      )}
+                    </td>
+
+                    {/* Classification / Status Badge */}
+                    <td
+                      className="py-3.5 px-4"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* REJECTED HAS TO COME FIRST. Rejecting leaves `isAiAllowed` alone and
+                          sets ingestion to `skipped`, which matched none of the branches below —
+                          so a rejected document fell all the way through and was labelled
+                          "AI Context", the one thing it certainly is not. */}
+                      {documentMatchesTab(doc, DOCUMENT_TAB.REJECTED) ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-destructive bg-destructive/10 border border-destructive/20 px-2 py-0.5 rounded-full">
+                          <Warning className="h-3 w-3" />
+                          <span>{t("status.rejected")}</span>
+                        </span>
+                      ) : documentMatchesTab(doc, DOCUMENT_TAB.PRIVATE) ? (
+                        // Before any AI branch: a private document's ingestion is `skipped` with
+                        // AI still allowed, which fell through to "AI Context" — the one thing
+                        // it no longer is.
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-ink-muted bg-surface-3 border border-hairline px-2 py-0.5 rounded-full">
+                          <LockSimple className="h-3 w-3" />
+                          <span>{t("status.private")}</span>
+                        </span>
+                      ) : doc.status?.toLowerCase() ===
+                        WORKSPACE_DOCUMENT_STATUS.PENDING_APPROVAL ||
+                      doc.status?.toLowerCase().includes("pending") ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                          <Info className="h-3 w-3 text-amber-500" />
+                          <span>{t("status.pendingApproval")}</span>
+                        </span>
+                      ) : hasPendingRevision(doc) ? (
+                        // WT-854 — still published (readers keep the approved file), but a
+                        // corrected version is waiting for a reviewer.
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                          <Info className="h-3 w-3 text-amber-500" />
+                          <span>{t("status.revisionPending")}</span>
+                        </span>
+                      ) : !doc.isAiAllowed ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-ink-muted bg-surface-3 border border-hairline px-2 py-0.5 rounded-full">
+                          <FileText className="h-3 w-3" />
+                          <span>{t("status.administrative")}</span>
+                        </span>
+                      ) : doc.ingestionStatus?.toLowerCase() ===
+                        WORKSPACE_DOCUMENT_INGESTION_STATUS.COMPLETED ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                          <Sparkle className="h-3 w-3 text-emerald-500" />
+                          <span>{t("status.aiReady")}</span>
+                        </span>
+                      ) : doc.ingestionStatus?.toLowerCase() ===
+                        WORKSPACE_DOCUMENT_INGESTION_STATUS.FAILED ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-destructive bg-destructive/10 border border-destructive/20 px-2 py-0.5 rounded-full">
+                          <ShieldWarning className="h-3 w-3" />
+                          <span>{t("status.aiFailed")}</span>
+                        </span>
+                      ) : doc.ingestionStatus?.toLowerCase() ===
+                          WORKSPACE_DOCUMENT_INGESTION_STATUS.PENDING ||
+                        doc.ingestionStatus?.toLowerCase() ===
+                          WORKSPACE_DOCUMENT_INGESTION_STATUS.PROCESSING ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full animate-pulse">
+                          <span>{t("status.processingAi")}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-full">
+                          <Brain className="h-3 w-3" />
+                          <span>{t("status.aiContext")}</span>
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Last Modified Date */}
+                    <td className="py-3.5 px-4 text-ink-muted text-xs">
+                      {formatDate(doc.updatedAt || doc.createdAt)}
+                    </td>
+
+                    {/* File Size */}
+                    <td className="py-3.5 px-4 text-ink-muted text-xs font-mono">
+                      {formatBytes(doc.sizeBytes)}
+                    </td>
+
+                    {/* Actions */}
+                    <td
+                      className="py-3.5 px-4 text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() =>
+                            router.push(`/${workspaceSlug}/documents/${doc.id}`)
+                          }
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted hover:bg-surface-3 hover:text-ink transition-colors cursor-pointer"
+                          title={t("actions.viewDetails")}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+
+                        {canManageDoc &&
+                          (doc.status?.toLowerCase() === "archived" ? (
+                            <button
+                              onClick={() => handleRestore(doc.id)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                              title={t("actions.restoreDocument")}
+                            >
+                              <ArrowCounterClockwise className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleArchive(doc.id)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted hover:bg-amber-500/10 hover:text-amber-500 transition-colors cursor-pointer"
+                              title={t("actions.archiveDocument")}
+                            >
+                              <Archive className="h-4 w-4" />
+                            </button>
+                          ))}
+
+                        {canManageDoc && (
+                          <button
+                            onClick={() =>
+                              setDocToDelete({ id: doc.id, name: doc.name })
+                            }
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
+                            title={t("actions.deletePermanently")}
+                          >
+                            <Trash className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* Grid Card View */
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {filteredDocs.map((doc) => (
+            <Card
+              key={doc.id}
+              onClick={() =>
+                router.push(`/${workspaceSlug}/documents/${doc.id}`)
+              }
+              className="border-hairline/30 bg-surface-1/50 hover:bg-surface-2/40 transition-all cursor-pointer rounded-xl group shadow-sm flex flex-col justify-between"
+            >
+              <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between space-y-0">
+                <div className="p-2 rounded-lg bg-surface-2 group-hover:bg-surface-3 transition-colors">
+                  {getFileIcon(doc.fileExtension)}
+                </div>
+                {documentMatchesTab(doc, DOCUMENT_TAB.REJECTED) ? (
+                  <span
+                    className="p-1 text-destructive bg-destructive/10 rounded-full"
+                    title={t("status.rejected")}
+                  >
+                    <Warning className="h-3.5 w-3.5" />
+                  </span>
+                ) : documentMatchesTab(doc, DOCUMENT_TAB.PRIVATE) ? (
+                  <span
+                    className="p-1 text-ink-muted bg-surface-3 rounded-full"
+                    title={t("status.private")}
+                  >
+                    <LockSimple className="h-3.5 w-3.5" />
+                  </span>
+                ) : !doc.isAiAllowed ? (
+                  <span
+                    className="p-1 text-ink-muted bg-surface-3 rounded-full"
+                    title={t("status.administrative")}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                  </span>
+                ) : doc.ingestionStatus?.toLowerCase() ===
+                  WORKSPACE_DOCUMENT_INGESTION_STATUS.COMPLETED ? (
+                  <span
+                    className="p-1 text-emerald-500 bg-emerald-500/10 rounded-full"
+                    title={t("status.aiReady")}
+                  >
+                    <Sparkle className="h-3.5 w-3.5 text-emerald-500" />
+                  </span>
+                ) : doc.ingestionStatus?.toLowerCase() ===
+                  WORKSPACE_DOCUMENT_INGESTION_STATUS.FAILED ? (
+                  <span
+                    className="p-1 text-destructive bg-destructive/10 rounded-full"
+                    title={t("status.aiIngestionFailed")}
+                  >
+                    <ShieldWarning className="h-3.5 w-3.5" />
+                  </span>
+                ) : doc.ingestionStatus?.toLowerCase() ===
+                    WORKSPACE_DOCUMENT_INGESTION_STATUS.PENDING ||
+                  doc.ingestionStatus?.toLowerCase() ===
+                    WORKSPACE_DOCUMENT_INGESTION_STATUS.PROCESSING ? (
+                  <span
+                    className="p-1 text-amber-500 bg-amber-500/10 rounded-full"
+                    title={t("status.processingAi")}
+                  >
+                    <Spinner className="h-3.5 w-3.5 animate-spin" />
+                  </span>
+                ) : (
+                  <span
+                    className="p-1 text-primary bg-primary/10 rounded-full"
+                    title={t("status.aiContext")}
+                  >
+                    <Brain className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </CardHeader>
+
+              <CardContent className="p-4 pt-1 flex flex-col gap-2">
+                <div className="flex flex-col gap-0.5">
+                  <h3 className="font-semibold text-xs text-ink group-hover:text-primary transition-colors line-clamp-2">
+                    {doc.name}
+                  </h3>
+                  <span className="text-[10px] text-ink-muted truncate font-mono">
+                    {doc.fileName}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-ink-muted pt-2 border-t border-hairline/20 mt-1">
+                  <span>{formatDate(doc.updatedAt || doc.createdAt)}</span>
+                  <span>{formatBytes(doc.sizeBytes)}</span>
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <DocumentActor
+                    kind="uploader"
+                    member={findDocumentActor(workspaceMembers, doc.uploadedBy)}
+                  />
+                  <DocumentActor
+                    kind="approver"
+                    member={findDocumentActor(workspaceMembers, doc.approvedBy)}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+      </div>
+
+      {/* ─── Pagination ─── */}
+      {documentsQuery.data && documentsQuery.data.total > 20 && (
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button
+            onClick={() => setPage((p) => Math.max(p - 1, 1))}
+            disabled={page === 1}
+            className="px-3 py-1.5 text-xs border border-hairline rounded-lg hover:bg-surface-2 disabled:opacity-45 font-medium"
+          >
+            {t("pagination.previous")}
+          </button>
+          <span className="text-xs text-ink-muted font-medium">
+            {t("pagination.page", { page })}
+          </span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={filteredDocs.length < 20}
+            className="px-3 py-1.5 text-xs border border-hairline rounded-lg hover:bg-surface-2 disabled:opacity-45 font-medium"
+          >
+            {t("pagination.next")}
+          </button>
+        </div>
+      )}
+
+      {/* ─── Upload Modal ("New" Document Upload Modal) ─── */}
+      <Dialog open={isUploadModalOpen} onOpenChange={setIsUploadModalOpen}>
+        <DialogContent className="border-hairline bg-surface-1 sm:max-w-3xl w-full rounded-2xl shadow-2xl p-6 sm:p-8 flex flex-col max-h-[92vh]">
+          <DialogHeader className="pb-4 border-b border-hairline/40 shrink-0">
+            <DialogTitle className="text-xl font-bold text-ink flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Upload className="h-5 w-5" />
+              </div>
+              <span>{t("uploadDialog.title")}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-ink-muted mt-1">
+              {t("uploadDialog.description")}
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            onSubmit={handleSubmit(handleUploadSubmit)}
+            className="flex flex-col gap-6 overflow-y-auto pr-1.5 pt-5 flex-1"
+          >
+            {/* Step 1: File Selection & Document Name */}
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-ink flex items-center justify-between">
+                  <span>{t("uploadDialog.step1Label")}</span>
+                  <span className="text-[11px] font-normal text-ink-muted">
+                    {t("uploadDialog.supportedFormats")}
+                  </span>
+                </label>
+
+                {!selectedFile ? (
+                  <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-hairline hover:border-primary/60 rounded-2xl cursor-pointer bg-surface-2/40 hover:bg-surface-2/80 transition-all p-4 text-center group">
+                    <div className="flex flex-col items-center justify-center gap-1.5">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary group-hover:scale-110 transition-transform">
+                        <Upload className="h-5 w-5" />
+                      </div>
+                      <p className="text-xs text-ink font-semibold mt-1">
+                        {t("uploadDialog.dropzoneTitle")}
+                      </p>
+                      <p className="text-[11px] text-ink-muted">
+                        {t("uploadDialog.dropzoneHint")}
+                      </p>
+                    </div>
+                    <input
+                      id="file-upload-input"
+                      type="file"
+                      accept={ACCEPTED_UPLOAD_EXTENSIONS}
+                      className="hidden"
+                      onChange={handleFileChange}
+                      disabled={isSubmitting}
+                    />
+                  </label>
+                ) : (
+                  <div className="flex items-center justify-between p-3.5 rounded-2xl border border-emerald-500/40 bg-emerald-500/5 transition-all">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+                        {getFileIcon(
+                          selectedFile.name.substring(
+                            selectedFile.name.lastIndexOf("."),
+                          ),
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-ink truncate">
+                          {selectedFile.name}
+                        </span>
+                        <span className="text-[11px] text-ink-muted font-mono">
+                          {formatBytes(selectedFile.size)}
+                        </span>
+                        {selectedFileIsImage && (
+                          <Badge
+                            variant="outline"
+                            className="mt-2 w-fit border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-700"
+                          >
+                            <Info className="mr-1 h-3 w-3" />
+                            {t("uploadDialog.imageAdminNotice")}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <label className="h-8 px-3 rounded-lg border border-hairline bg-surface-1 text-xs font-semibold text-ink hover:bg-surface-2 transition cursor-pointer flex items-center shrink-0">
+                      {t("uploadDialog.changeFile")}
+                      <input
+                        id="file-upload-input"
+                        type="file"
+                        accept={ACCEPTED_UPLOAD_EXTENSIONS}
+                        className="hidden"
+                        onChange={handleFileChange}
+                        disabled={isSubmitting}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Document Display Name */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-ink">
+                  {t("uploadDialog.nameLabel")}
+                </label>
+                <Input
+                  type="text"
+                  placeholder={t("uploadDialog.namePlaceholder")}
+                  maxLength={MAX_DOCUMENT_NAME_LENGTH}
+                  className="h-10 border-hairline focus:ring-1 focus:ring-primary text-xs rounded-xl px-3"
+                  {...register("name")}
+                  disabled={isSubmitting}
+                />
+                {errors.name && (
+                  <p className="text-[11px] text-destructive mt-0.5">
+                    {errors.name.message}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Step 2: Options & AI Permission Toggle */}
+            <div className="flex flex-col gap-3 pt-3 border-t border-hairline/40">
+              <div className="flex items-center justify-between p-3.5 rounded-xl border border-hairline bg-surface-2/40">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-emerald-500" />
+                    <span className="text-xs font-bold text-ink">
+                      {canApproveDocuments
+                        ? t("uploadDialog.aiAllowLabelApprover")
+                        : t("uploadDialog.aiAllowLabelMember")}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-ink-muted leading-relaxed">
+                    {canApproveDocuments
+                      ? t("uploadDialog.aiAllowDescApprover")
+                      : t("uploadDialog.aiAllowDescMember")}
+                  </span>
+                </div>
+                <Switch
+                  checked={isAiAllowed}
+                  disabled={selectedFileIsImage}
+                  onCheckedChange={(checked: boolean) =>
+                    setValue("isAiAllowed", checked, { shouldValidate: true })
+                  }
+                />
+              </div>
+
+              {selectedFileIsImage && (
+                <Badge
+                  variant="outline"
+                  className="w-fit border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[11px] font-semibold text-sky-700"
+                >
+                  <Info className="mr-1 h-3.5 w-3.5" />
+                  {t("uploadDialog.imageSkipNotice")}
+                </Badge>
+              )}
+
+              {/* Approval Policy Banner */}
+              <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+                <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-relaxed">
+                  {canApproveDocuments
+                    ? t("uploadDialog.policyApprover")
+                    : t("uploadDialog.policyMember")}
+                </p>
+              </div>
+            </div>
+
+            <DialogFooter className="mt-4 pt-4 border-t border-hairline/40 flex justify-end gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsUploadModalOpen(false)}
+                className="h-10 px-5 rounded-xl border border-hairline bg-surface-1 text-xs font-semibold text-ink hover:bg-surface-2 transition"
+              >
+                {t("uploadDialog.cancel")}
+              </button>
+              <button
+                type="submit"
+                className="h-10 px-6 rounded-xl bg-primary text-xs font-semibold text-white hover:bg-primary-hover transition flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
+                disabled={isSubmitting || !selectedFile}
+              >
+                {isSubmitting ? (
+                  <Spinner className="h-4 w-4 animate-spin text-white" />
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4" />
+                    <span>{t("uploadDialog.upload")}</span>
+                  </>
+                )}
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* WT-666 — the same file, again. Nothing has been stored at this point; the dialog asks
+          and the answer is sent back as `duplicateStrategy` on a retry. */}
+      <DocumentDuplicateDialog
+        conflict={duplicateConflict}
+        isSubmitting={uploadMutation.isPending}
+        onClose={() => setDuplicateConflict(null)}
+        onChoose={handleDuplicateChoice}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DocumentDeleteDialog
+        docToDelete={docToDelete}
+        onClose={() => setDocToDelete(null)}
+        onConfirm={handleDeleteConfirm}
+      />
+    </div>
+  );
+}

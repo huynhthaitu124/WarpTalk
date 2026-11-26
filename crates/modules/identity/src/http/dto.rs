@@ -249,3 +249,30 @@ pub struct EnrollResponse {
     pub duration_seconds: f32,
     pub language: String,
 }
+
+/// One signed-in session. `id` is the session (refresh-token family) id.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSessionDto {
+    pub id: uuid::Uuid,
+    pub device_info: Option<String>,
+    pub ip_address: Option<String>,
+    pub signed_in_at: DateTime<Utc>,
+    pub last_active_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub is_current: bool,
+}
+
+impl UserSessionDto {
+    pub fn new(s: crate::application::ports::SessionRecord, current: uuid::Uuid) -> Self {
+        Self {
+            id: s.family_id,
+            is_current: s.family_id == current,
+            device_info: s.device_info,
+            ip_address: s.ip_address,
+            signed_in_at: s.signed_in_at,
+            last_active_at: s.last_active_at,
+            expires_at: s.expires_at,
+        }
+    }
+}

@@ -9,6 +9,10 @@
 //!   only that language's copy.
 //! - `GET /meetings/{room_id}/followups`: follow-ups of the room from `assistant:followups`
 //!   (05a has no action-item table, so they are read from the stream, newest 5000 entries).
+//! - Dev test mode only (`SUGGESTION_TEST_SCRIPT`, refused in production): `GET /dev/test-mode`
+//!   tells clients whether to show the script box, and `POST /meetings/{room_id}/dev/transcript`
+//!   `{text, language?, speaker?}` publishes one final segment on `stt:results` (and the per-room
+//!   copy) so the real suggestion pipeline runs on typed lines. Without test mode both are 404.
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -17,13 +21,16 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::{FromRef, State};
 use axum::http::HeaderMap;
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures::Stream;
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use warptalk_assistant::suggestion::{AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUpEvent};
+use warptalk_contracts::events::SttResult;
+use warptalk_contracts::streams::{self, STT_RESULTS};
 use warptalk_kernel::{AppError, AppResult, RoomId, UserId, WorkspaceRole};
 use warptalk_room::RoomQueries;
 use warptalk_web::extract::{Json, Path, Query};
@@ -36,6 +43,8 @@ const POLL: Duration = Duration::from_millis(400);
 /// Re-check room access every this many polls (about 10 s).
 const ACCESS_RECHECK_POLLS: u32 = 25;
 const FOLLOWUP_SCAN: usize = 5000;
+const STT_STREAM_MAXLEN: usize = 100_000;
+const MAX_TEST_LINE_CHARS: usize = 1000;
 
 #[derive(Clone)]
 pub struct SuggestionsState {
@@ -43,6 +52,8 @@ pub struct SuggestionsState {
     pub jwt: JwtKeys,
     pub rooms: RoomQueries,
     pub workspaces: WorkspaceQueries,
+    /// Dev suggestion test mode: mounts the `/dev/...` routes.
+    pub test_mode: bool,
 }
 
 impl FromRef<SuggestionsState> for JwtKeys {
@@ -59,7 +70,120 @@ pub fn router(state: SuggestionsState) -> Router {
             get(suggestions_stream),
         )
         .route("/meetings/{room_id}/followups", get(followups))
+        .route("/dev/test-mode", get(test_mode))
+        .route(
+            "/meetings/{room_id}/dev/transcript",
+            post(inject_transcript),
+        )
         .with_state(state)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TestModeDto {
+    suggestion_script: bool,
+}
+
+/// Whether the dev suggestion test mode is on (clients show the script box only then).
+async fn test_mode(State(s): State<SuggestionsState>, _user: AuthUser) -> Json<TestModeDto> {
+    Json(TestModeDto {
+        suggestion_script: s.test_mode,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct InjectBody {
+    text: String,
+    language: Option<String>,
+    /// Display name for the line (simulates several speakers); default: the caller.
+    speaker: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InjectedDto {
+    segment_id: String,
+    speaker_id: String,
+    speaker_name: Option<String>,
+    text: String,
+    language: String,
+    timestamp_ms: i64,
+}
+
+/// Dev test mode: publish a typed line as a final STT segment of the room.
+async fn inject_transcript(
+    State(s): State<SuggestionsState>,
+    user: AuthUser,
+    Path(room_id): Path<RoomId>,
+    Json(body): Json<InjectBody>,
+) -> AppResult<(StatusCode, Json<InjectedDto>)> {
+    if !s.test_mode {
+        return Err(AppError::not_found("not found"));
+    }
+    ensure_can_view(&s, room_id, user.user_id()).await?;
+    let text: String = body
+        .text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_TEST_LINE_CHARS)
+        .collect();
+    if text.is_empty() {
+        return Err(AppError::validation("TEXT_REQUIRED", "text is required"));
+    }
+    let language = body
+        .language
+        .map(|l| l.trim().to_ascii_lowercase())
+        .filter(|l| !l.is_empty() && l.len() <= 8)
+        .unwrap_or_else(|| "en".to_owned());
+    let speaker_name = body
+        .speaker
+        .map(|n| n.trim().chars().take(60).collect::<String>())
+        .filter(|n| !n.is_empty());
+    let speaker_id = match &speaker_name {
+        Some(n) => format!("test:{n}"),
+        None => user.user_id().to_string(),
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let seg = SttResult {
+        segment_id: uuid::Uuid::now_v7().to_string(),
+        meeting_id: room_id,
+        speaker_id: speaker_id.clone(),
+        text: text.clone(),
+        language: language.clone(),
+        start_ms: now_ms,
+        end_ms: now_ms,
+        anchor_ms: None,
+        confidence: None,
+        chunk_index: Some(0),
+        is_final_chunk: true,
+        timestamp_ms: Some(now_ms),
+        clean_flags: None,
+        far_speaker_name: speaker_name.clone(),
+        far_speaker_source: speaker_name.as_ref().map(|_| "participant".to_owned()),
+        far_speaker_confidence: speaker_name.as_ref().map(|_| 1.0),
+        channel: None,
+    };
+    let mut conn = s.redis.clone();
+    let copy = streams::per_meeting(STT_RESULTS, room_id);
+    for stream in [STT_RESULTS, copy.as_str()] {
+        warptalk_bus::xadd_json(&mut conn, stream, &seg, STT_STREAM_MAXLEN)
+            .await
+            .map_err(redis_err)?;
+    }
+    tracing::info!(room = %room_id, "test mode: transcript line injected");
+    Ok((
+        StatusCode::CREATED,
+        Json(InjectedDto {
+            segment_id: seg.segment_id,
+            speaker_id,
+            speaker_name,
+            text,
+            language,
+            timestamp_ms: now_ms,
+        }),
+    ))
 }
 
 /// Host, workspace owner/admin, or a participant who is (or was) in the room. Waiting, kicked

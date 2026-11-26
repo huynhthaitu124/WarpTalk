@@ -14,6 +14,7 @@ pub mod model;
 pub mod ports;
 pub mod prompt;
 pub mod redis_ports;
+pub mod scripted;
 pub mod slot;
 pub mod stage0;
 pub mod store;
@@ -33,6 +34,7 @@ pub use ports::{
     RoomDirectory, RoomInfo, RoomSignals,
 };
 pub use redis_ports::{RedisConsentPolicy, RedisRoomSignals};
+pub use scripted::ScriptedResolver;
 pub use slot::SuggestionState;
 pub use store::{PgSuggestionStore, SuggestionRecord, SuggestionStore};
 pub use worker::SuggestionWorker;

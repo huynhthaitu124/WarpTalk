@@ -14,7 +14,7 @@ use warptalk_kernel::{
 
 use crate::domain::{
     AudioMode, BridgeConfig, BridgeProvider, BridgeState, ParticipantStatus, RoomAction,
-    RoomStatus, RoomType,
+    RoomSettings, RoomSettingsPatch, RoomStatus, RoomType,
 };
 
 // ---------------------------------------------------------------- outbound ports
@@ -152,6 +152,56 @@ impl RoomEventPublisher for RecordingRoomEventPublisher {
     }
 }
 
+// ---------------------------------------------------------------- invitations port
+
+/// Emails newly invited to a room (outbound notification, e.g. mail).
+#[derive(Debug, Clone)]
+pub struct RoomInvite {
+    pub room_id: RoomId,
+    pub workspace_id: WorkspaceId,
+    pub room_title: String,
+    pub room_code: String,
+    pub inviter: UserId,
+    pub emails: Vec<String>,
+}
+
+#[async_trait]
+pub trait RoomInviteNotifier: Send + Sync {
+    async fn notify(&self, invite: RoomInvite) -> AppResult<()>;
+}
+
+/// Default: logs the room and the number of invitees (never the addresses).
+pub struct LogInviteNotifier;
+
+#[async_trait]
+impl RoomInviteNotifier for LogInviteNotifier {
+    async fn notify(&self, invite: RoomInvite) -> AppResult<()> {
+        tracing::info!(
+            room_id = %invite.room_id,
+            invitees = invite.emails.len(),
+            "room invitations created"
+        );
+        Ok(())
+    }
+}
+
+/// Test double that records every notification.
+#[derive(Default)]
+pub struct RecordingInviteNotifier {
+    pub sent: Mutex<Vec<RoomInvite>>,
+}
+
+#[async_trait]
+impl RoomInviteNotifier for RecordingInviteNotifier {
+    async fn notify(&self, invite: RoomInvite) -> AppResult<()> {
+        self.sent
+            .lock()
+            .map_err(|_| AppError::internal("invite notifier poisoned"))?
+            .push(invite);
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- persistence port
 
 #[derive(Debug, Clone)]
@@ -161,11 +211,12 @@ pub struct RoomRecord {
     pub host_id: UserId,
     pub active_host_id: Option<UserId>,
     pub title: String,
+    pub description: Option<String>,
     pub code: String,
     pub status: RoomStatus,
     pub source_language: String,
     pub target_languages: Vec<String>,
-    pub requires_approval: bool,
+    pub settings: RoomSettings,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -203,11 +254,12 @@ pub struct NewRoom {
     pub host: UserId,
     pub host_display_name: String,
     pub title: String,
+    pub description: Option<String>,
     pub code: String,
     pub status: RoomStatus,
     pub source_language: String,
     pub target_languages: Vec<String>,
-    pub requires_approval: bool,
+    pub settings: RoomSettings,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub now: DateTime<Utc>,
 }
@@ -244,6 +296,8 @@ pub struct NewBridgeRoom {
     pub display_name: Option<String>,
     /// Caller's caption language; `None`: keep the existing one, else the first target language.
     pub listen_language: Option<String>,
+    /// Options applied only when this claim creates the room.
+    pub settings: RoomSettings,
     pub now: DateTime<Utc>,
 }
 
@@ -300,6 +354,19 @@ pub struct UpdateLanguagesInput {
     pub now: DateTime<Utc>,
 }
 
+/// Host edit of room properties. `None`: keep; `Some(None)`: clear (nullable fields).
+pub struct UpdateRoomInput {
+    pub room: RoomId,
+    pub caller: Caller,
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub scheduled_at: Option<Option<DateTime<Utc>>>,
+    pub source_language: Option<String>,
+    pub target_languages: Option<Vec<String>>,
+    pub settings: RoomSettingsPatch,
+    pub now: DateTime<Utc>,
+}
+
 /// Result of a locked mutation; the service publishes `commands` and `snapshot` after commit.
 #[derive(Debug, Clone)]
 pub struct Mutation {
@@ -314,6 +381,17 @@ pub struct Mutation {
 #[async_trait]
 pub trait RoomRepo: Send + Sync {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord>;
+    /// Pending invitation emails of a room, oldest first.
+    async fn invitations(&self, room: RoomId) -> AppResult<Vec<String>>;
+    /// Make the room's PENDING invitations exactly `emails` (`replace`) or add `emails` to them;
+    /// returns the emails newly invited by this call.
+    async fn set_invitations(
+        &self,
+        room: RoomId,
+        emails: &[String],
+        replace: bool,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<String>>;
     /// Insert an `IN_PROGRESS` copilot room and its host participant; returns the room and the
     /// host's participant id. `Conflict DUPLICATE` when the room code is taken.
     async fn create_copilot(&self, new: NewCopilotRoom) -> AppResult<(RoomRecord, ParticipantId)>;
@@ -375,6 +453,9 @@ pub trait RoomRepo: Send + Sync {
     async fn leave(&self, room: RoomId, user: UserId, now: DateTime<Utc>) -> AppResult<Mutation>;
     /// Change the caller's own speak/listen language; reconciles routes when the room is live.
     async fn update_languages(&self, input: UpdateLanguagesInput) -> AppResult<Mutation>;
+    /// Host edits title/description/schedule/languages/lobby. Participants whose languages left
+    /// the room fall back to the source language; routes reconcile when live.
+    async fn update_room(&self, input: UpdateRoomInput) -> AppResult<Mutation>;
     async fn generate_routes(
         &self,
         room: RoomId,

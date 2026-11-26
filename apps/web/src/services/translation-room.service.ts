@@ -1,0 +1,926 @@
+import apiClient from "@/lib/api/client";
+import { API } from "@/lib/api/endpoints";
+import type { ArtifactAccessLevel } from "@/lib/meeting/record-sharing";
+import {
+  parseBridgeClaimLease,
+  type BridgeClaimLease,
+  type BridgeClaimRequest,
+  type BridgeRole,
+} from "@/lib/meeting/bridge-capturer";
+import {
+  parseBridgeAudioMode,
+  resolveBridgeAudioMode,
+  type BridgeAudioMode,
+} from "@/lib/meeting/bridge-audio-mode";
+import type {
+  SummaryRenderingDto,
+  SummaryRenderingSummaryDto,
+} from "@/types/meetingSummary";
+import {
+  normalizeNoiseReductionMode,
+  type NoiseReductionMode,
+} from "@/lib/meeting/noise-reduction";
+import type {
+  CancelSeriesResult,
+  CreateRecurringRoomResponse,
+  CreateTranslationRoomRequest,
+  JoinTranslationRoomByCodeRequest,
+  JoinTranslationRoomRequest,
+  JoinTranslationRoomResultDto,
+  SubmitTranslationRoomFeedbackRequest,
+  TranslationRoomArtifactDto,
+  TranslationRoomDto,
+  TranslationRoomFeedbackDto,
+  TranslationRoomFeedbackStateDto,
+  TranslationRoomHistoryResponse,
+  TranslationRoomListResponse,
+  TranslationRoomParticipantDto,
+  TranslationRoomInvitationDto,
+  TranslationRoomPreflightDto,
+  TranslationRoomSessionDto,
+  TranslationRoomStatus,
+  UpdateRoomSettingsRequest,
+  RoomPreflightResponse,
+  RecurrenceRequest,
+  RecurrenceSummaryResponse,
+  SeriesDetail,
+  UpdateSeriesRequest,
+  UpdateSeriesResult,
+} from "@/types/translationRoom";
+
+type BackendRoom = Omit<TranslationRoomDto, "status" | "translationRoomType" | "targetLanguages"> & {
+  status: string;
+  translationRoomType: string;
+  targetLanguages?: string[] | string;
+};
+
+type BackendParticipant = Omit<TranslationRoomParticipantDto, "role" | "status"> & {
+  role: string;
+  status: string;
+};
+
+/** WT-327: the recurring shape of the same POST, before status/language normalisation. */
+type BackendRecurringCreate = {
+  series: RecurrenceSummaryResponse;
+  firstOccurrence: BackendRoom;
+  materializedOccurrenceCount: number;
+  totalOccurrenceCount: number;
+};
+
+/** W4b — POST /translation-rooms/bridge/claim, before normalisation. */
+type BackendBridgeClaim = {
+  room: BackendRoom;
+  participant?: BackendParticipant | null;
+  bridgeRole?: string;
+  created?: boolean;
+  capturerHeartbeatIntervalSeconds?: number;
+  capturerLeaseSeconds?: number;
+  /** Text-only bridge (backend #509): the caller's mode in force after the claim. */
+  audioMode?: string;
+};
+
+export type BridgeClaimResult = BridgeClaimLease & {
+  room: TranslationRoomDto;
+  participant: TranslationRoomParticipantDto | null;
+  /**
+   * The caller's bridge audio mode in force (lib/meeting/bridge-audio-mode). From `audioMode`, else
+   * the participant row's `isBridgeTextOnly`, else voice — what a server before #509 means.
+   */
+  audioMode: BridgeAudioMode;
+};
+
+/** Text-only bridge — PUT /translation-rooms/{id}/bridge/audio-mode (BridgeAudioModeDto). */
+export type BridgeAudioModeResult = {
+  roomId: string;
+  userId: string;
+  mode: BridgeAudioMode;
+  /** A translation session is running, i.e. text → voice is currently locked. */
+  translationActive: boolean;
+};
+
+/** WT-933 — one Meet-side person's voice-clone consent, as the host recorded it (the PUT's echo). */
+export type BridgeVoiceCloneConsent = {
+  displayName: string;
+  consented: boolean;
+};
+
+/** WT-933 — the submitted names that have a consent on record, each exactly as submitted. */
+export type BridgeVoiceCloneConsentStatus = {
+  consented: string[];
+};
+
+/** W4b — heartbeat / takeover answer (BridgeCapturerStatusDto). */
+export type BridgeCapturerStatus = {
+  roomId: string;
+  bridgeRole: BridgeRole;
+  capturerUserId: string | null;
+  capturerHeartbeatAt: string | null;
+  capturerLeaseSeconds: number;
+};
+
+type BackendJoinResponse = {
+  room: BackendRoom;
+  participant: BackendParticipant;
+};
+
+const statusMap: Record<string, TranslationRoomStatus> = {
+  SCHEDULED: "scheduled",
+  WAITING: "waiting",
+  OPEN: "open",
+  IN_PROGRESS: "in_progress",
+  PAUSED: "paused",
+  ENDED: "ended",
+  CANCELLED: "cancelled",
+  EXPIRED: "expired",
+  FAILED: "failed",
+};
+
+function normalizeStatus(status: string): TranslationRoomStatus {
+  const key = status.toUpperCase();
+  return statusMap[key] ?? (status.toLowerCase() as TranslationRoomStatus);
+}
+
+function normalizeTargetLanguages(value: string[] | string | undefined): string[] {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return value
+      .split(",")
+      .map((language) => language.trim())
+      .filter(Boolean);
+  }
+}
+
+function normalizeRole(role: string): TranslationRoomParticipantDto["role"] {
+  return role.toLowerCase() as TranslationRoomParticipantDto["role"];
+}
+
+function normalizeParticipantStatus(status: string): TranslationRoomParticipantDto["status"] {
+  const normalized = status.toLowerCase();
+  return (normalized === "kicked" ? "removed" : normalized) as TranslationRoomParticipantDto["status"];
+}
+
+function normalizeRoom(room: BackendRoom): TranslationRoomDto {
+  return {
+    ...room,
+    status: normalizeStatus(room.status || "scheduled"),
+    translationRoomType: room.translationRoomType?.toLowerCase() || "scheduled",
+    targetLanguages: normalizeTargetLanguages(room.targetLanguages),
+  };
+}
+
+function normalizeParticipant(participant: BackendParticipant): TranslationRoomParticipantDto {
+  return {
+    ...participant,
+    role: normalizeRole(participant.role),
+    status: normalizeParticipantStatus(participant.status),
+  };
+}
+
+function toBackendCreateRequest(data: CreateTranslationRoomRequest) {
+  return {
+    ...data,
+    translationRoomType: data.translationRoomType.toUpperCase(),
+    targetLanguages: data.targetLanguages,
+  };
+}
+
+function toPreflight(room: TranslationRoomDto, participantCount = 0): TranslationRoomPreflightDto {
+  const defaultTargetLanguage = room.targetLanguages[0] ?? room.sourceLanguage ?? "en";
+
+  return {
+    id: room.id,
+    title: room.title,
+    translationRoomCode: room.translationRoomCode,
+    status: room.status,
+    maxParticipants: room.maxParticipants,
+    currentParticipants: participantCount,
+    topics: [],
+    keyTerms: [],
+    sourceLanguage: room.sourceLanguage ?? "en",
+    targetLanguages: room.targetLanguages,
+    defaultTargetLanguage,
+    translationMode: room.targetLanguages.length > 1 ? "multi" : "single",
+    desktopAppRequired: true,
+  };
+}
+
+/**
+ * What flash mode is actually doing for a room, and why.
+ *
+ * `enabled` used to be the whole answer, and it meant "a per-room override exists and says on".
+ * That is a different question from the one the switch asks — whether the room is streaming —
+ * and the two diverged the moment the deployment default became on: an untouched room read
+ * "off" while streaming, and turning the switch on and off again wrote a real override that
+ * took away the speed it had been wrong about.
+ *
+ * `source` is what lets the panel say WHICH of those it is looking at.
+ */
+export type FlashModeState = {
+  enabled: boolean;
+  /** "room" = a host chose it · "deployment" = following the default · "unknown" = neither is known. */
+  source: "room" | "deployment" | "unknown";
+};
+
+/**
+ * The body of a voice-clone consent answer (WT-933). This service's endpoints answer with the DTO
+ * itself; the same DTO under a `data` key is read too, so the popup does not show an empty list
+ * of ticks should the gateway ever wrap it.
+ */
+function bridgeVoiceCloneBody<T extends object>(body: unknown): Partial<T> | null {
+  if (!body || typeof body !== "object") return null;
+  const inner = (body as { data?: unknown }).data;
+  return (inner && typeof inner === "object" ? inner : body) as Partial<T>;
+}
+
+export const translationRoomService = {
+  async create(data: CreateTranslationRoomRequest) {
+    const response = await apiClient.post<BackendRoom>(API.translationRooms.create, toBackendCreateRequest(data));
+    return { ...response, data: normalizeRoom(response.data) };
+  },
+
+  /**
+   * WT-327: create a repeating booking.
+   *
+   * A separate method rather than a union return from `create`, so no caller has to type-guard
+   * a response shape at runtime — the dialog already knows which one it asked for. The server
+   * hands back the first materialised occurrence, which is an ordinary room, so the success
+   * screen that follows is exactly the one a single meeting produces.
+   */
+  async createRecurring(data: CreateTranslationRoomRequest & { recurrence: RecurrenceRequest }) {
+    const response = await apiClient.post<BackendRecurringCreate>(
+      API.translationRooms.create,
+      toBackendCreateRequest(data),
+    );
+    const normalized: CreateRecurringRoomResponse = {
+      ...response.data,
+      firstOccurrence: normalizeRoom(response.data.firstOccurrence),
+    };
+    return { ...response, data: normalized };
+  },
+
+  /**
+   * WT-327: the booking, its rule, and every occurrence the caller may see.
+   *
+   * Occurrences come back as ordinary rooms and are normalised as such — the series view renders
+   * each one with the same status vocabulary the meetings list uses, so a skipped Tuesday reads
+   * as "Cancelled" there exactly as it does anywhere else.
+   */
+  async getSeries(seriesId: string) {
+    const response = await apiClient.get<SeriesDetail & { occurrences: BackendRoom[] }>(
+      API.translationRoomSeries.get(seriesId),
+    );
+
+    const normalized: SeriesDetail = {
+      ...response.data,
+      occurrences: response.data.occurrences.map((room) => normalizeRoom(room)),
+    };
+    return normalized;
+  },
+
+  /**
+   * WT-327: edit the BOOKING. The server applies it to the template and to every occurrence still
+   * ahead — meetings that already started keep what they ran with.
+   */
+  async updateSeries(seriesId: string, data: UpdateSeriesRequest) {
+    const response = await apiClient.patch<UpdateSeriesResult>(
+      API.translationRoomSeries.update(seriesId),
+      data,
+    );
+    return response.data;
+  },
+
+  /**
+   * WT-327: stop the whole series. Future occurrences are cancelled with it; meetings that
+   * already ran are left alone. Cancelling a SINGLE occurrence is the ordinary
+   * `translationRoomService.cancel(roomId)` and does not touch the series.
+   */
+  async cancelSeries(seriesId: string, keepOccurrenceId?: string) {
+    const response = await apiClient.post<CancelSeriesResult>(
+      API.translationRoomSeries.cancel(seriesId, keepOccurrenceId),
+    );
+    return response.data;
+  },
+
+  async list(params?: {
+    status?: string;
+    search?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+    /**
+     * Scopes the list to one workspace. Send it from any workspace-scoped screen: the server can
+     * only widen the list to a workspace Owner/Admin when it knows which workspace is being asked
+     * about, so omitting it is what left an Admin looking at "No active meetings found." for a
+     * workspace full of rooms. It also keeps a workspace-scoped page from listing another
+     * workspace's meetings.
+     */
+    workspaceId?: string;
+    /**
+     * WT-327: collapse a repeating booking's occurrences into the ONE meeting the user booked.
+     *
+     * Send it from the meetings list, where a daily standup is one answer to "what meetings do I
+     * have?", not fourteen. Do NOT send it from the home day panel, where the occurrence IS the
+     * meeting and collapsing would empty every day but one.
+     */
+    groupBySeries?: boolean;
+  }) {
+    const response = await apiClient.get<TranslationRoomListResponse>(API.translationRooms.list, { params });
+    return {
+      ...response,
+      data: {
+        ...response.data,
+        rooms: response.data.rooms.map((room) => normalizeRoom(room as BackendRoom)),
+      },
+    };
+  },
+
+  async get(id: string) {
+    const response = await apiClient.get<BackendRoom>(API.translationRooms.get(id));
+    return { ...response, data: normalizeRoom(response.data) };
+  },
+
+  async participants(id: string) {
+    const response = await apiClient.get<BackendParticipant[]>(API.translationRooms.participants(id));
+    return { ...response, data: response.data.map(normalizeParticipant) };
+  },
+
+  async updateParticipantAudio(id: string, participantId: string, isTranslationAudioEnabled: boolean) {
+    return apiClient.put<void>(API.translationRooms.participantAudio(id, participantId), {
+      isTranslationAudioEnabled,
+    });
+  },
+
+  async admitParticipant(id: string, participantId: string) {
+    return apiClient.put<void>(API.translationRooms.admitParticipant(id, participantId));
+  },
+
+  async kickParticipant(id: string, participantId: string) {
+    return apiClient.put<void>(API.translationRooms.kickParticipant(id, participantId));
+  },
+
+  async leave(id: string) {
+    return apiClient.put<void>(API.translationRooms.leave(id));
+  },
+
+  /**
+   * WT-433 (Linear): join by room ID — what a shared LINK produces. Server-gated on membership
+   * of the room's workspace; a requires-approval room lands the caller in the waiting room, so
+   * this is how an uninvited teammate asks to join instead of dead-ending on the detail page.
+   */
+  async joinById(roomId: string, data: JoinTranslationRoomRequest) {
+    // WT-555: no `translationRoomCode` key at all. It used to send "" to satisfy a shared request
+    // type, and the server's by-code validator — which also ran on this route — answered every
+    // shared meeting link with 400 "The TranslationRoomCode field is required." The route names
+    // the room; the server reads the code off it.
+    return apiClient.post<BackendJoinResponse>(`/translation-rooms/${roomId}/join`, {
+      displayName: data.displayName.trim(),
+      speakLanguage: data.speakLanguage,
+      listenLanguage: data.listenLanguage,
+    });
+  },
+
+  /**
+   * WT-468 — the language whitelist of the workspace that OWNS the room behind this code.
+   *
+   * Always resolves. The server answers 200 with an empty list for an unknown or half-typed
+   * code, and empty means unrestricted, so a caller may poll this as the user types without
+   * painting an error over an incomplete code or momentarily emptying a picker.
+   */
+  /**
+   * WT-480: share this meeting's record with everyone who took part, or take it back.
+   *
+   * One call covers the transcript, the AI summary and the recording — they are governed by a
+   * single room setting, which is why the button that calls this names all three.
+   *
+   * Its own route rather than the settings PUT: that endpoint refuses any room past WAITING, and
+   * a record can only be shared once the meeting has ended and the artifacts exist.
+   */
+  async setArtifactAccess(roomId: string, level: ArtifactAccessLevel) {
+    await apiClient.put<void>(API.translationRooms.artifactAccess(roomId), { level });
+  },
+
+  async getJoinLanguagePolicy(code: string) {
+    // WT-490: `roomLanguages` is the set the ROOM declares (source + targets). Both lists arrive
+    // separately and are intersected client-side by meetingLanguagesForRoom, because an empty list
+    // means "unrestricted from this source" and pre-intersecting would make either empty read as
+    // "offer nothing". Optional in the type so a web build in front of an older backend degrades to
+    // the previous behaviour instead of offering an empty picker.
+    //
+    // WT-866: `roomEnded` is true when the code belongs to a meeting that is over (ended,
+    // cancelled or expired). Optional for the same reason: an older backend never sends it, and
+    // absent reads as "not known to be over", which is the previous behaviour.
+    const response = await apiClient.get<{
+      allowedTargetLanguages: string[];
+      roomLanguages?: string[];
+      roomEnded?: boolean;
+    }>(API.translationRooms.joinLanguagePolicy(code));
+    return response.data;
+  },
+
+  async joinByCode(data: JoinTranslationRoomByCodeRequest) {
+    const response = await apiClient.post<BackendJoinResponse>(API.translationRooms.join, {
+      translationRoomCode: data.translationRoomCode.trim(),
+      displayName: data.displayName.trim(),
+      speakLanguage: data.speakLanguage,
+      listenLanguage: data.listenLanguage,
+    });
+    const room = normalizeRoom(response.data.room);
+    const participant = normalizeParticipant(response.data.participant);
+
+    return {
+      ...response,
+      data: {
+        status: "success",
+        message: participant.status === "waiting" ? "Waiting for host approval." : "Joining meeting.",
+        room: toPreflight(room, participant.status === "waiting" ? 0 : 1),
+        participant,
+      } satisfies JoinTranslationRoomResultDto,
+    };
+  },
+
+  async generateAudioRoutes(id: string) {
+    return apiClient.post<void>(API.translationRooms.generateAudioRoutes(id));
+  },
+
+  /** Consent (or withdraw consent) to have MY OWN voice cloned for every listener I
+   * currently speak to in this room — see TranslationRoomAudioRouteController.
+   * SetVoiceCloneConsent. Biometric data: only ever called from an explicit user action. */
+  async setVoiceCloneConsent(id: string, enabled: boolean) {
+    return apiClient.post<void>(API.translationRooms.voiceCloneConsent(id), { enabled });
+  },
+
+  /**
+   * Tell this room to re-read every speaker's chosen dub voice from AuthService and republish
+   * its routes.
+   *
+   * Called AFTER VoiceProfileService.setDubVoice, never instead of it. The setting itself lives
+   * in AuthService, which knows nothing about rooms — so without this the change is correct
+   * everywhere except the meeting the person is currently in, until somebody joins or
+   * translation is restarted and a publish happens for some other reason.
+   */
+  async refreshDubVoice(id: string) {
+    return apiClient.post<void>(API.translationRooms.refreshDubVoice(id));
+  },
+
+  /**
+   * WT-B "flash mode" — whether this ROOM streams audio to STT while a speaker is still talking.
+   *
+   * Readable by any participant, so a guest can render the switch where the host left it rather
+   * than guessing. Writing is host-only and answers 403 to anybody else, which the caller must
+   * surface rather than swallow: a switch that silently springs back is worse than one that says
+   * it is not yours to move.
+   */
+  async getFlashMode(id: string): Promise<FlashModeState> {
+    const { data } = await apiClient.get<FlashModeState>(API.translationRooms.flashMode(id));
+    // An older gateway sends only `enabled`. Reading that as "unknown" rather than inventing a
+    // source keeps the copy hedged during a rolling deploy instead of confidently wrong.
+    return { enabled: Boolean(data?.enabled), source: data?.source ?? "unknown" };
+  },
+
+  async setFlashMode(id: string, enabled: boolean): Promise<FlashModeState> {
+    const { data } = await apiClient.put<FlashModeState>(
+      API.translationRooms.flashMode(id),
+      { enabled },
+    );
+    // Always "room" once this succeeds: setting it IS the act of creating an override.
+    return { enabled: Boolean(data?.enabled), source: data?.source ?? "room" };
+  },
+
+  /**
+   * How much the STT provider denoises THIS caller's own microphone in this meeting.
+   *
+   * NOT the noise-suppression toggle in the same menu. That one is Krisp/the browser filtering the
+   * raw microphone, which changes what other people HEAR. This one changes how accurately what you
+   * say is RECOGNISED, and touches nobody else's audio — which is also why, unlike flash mode
+   * above, any participant may set it for themselves without the host.
+   *
+   * Self-service, so there is no 403 branch to think about: the only failure worth surfacing is a
+   * write that did not happen.
+   */
+  async getNoiseReduction(id: string) {
+    const { data } = await apiClient.get<{ mode: NoiseReductionMode }>(
+      API.translationRooms.noiseReduction(id),
+    );
+    return normalizeNoiseReductionMode(data?.mode);
+  },
+
+  async setNoiseReduction(id: string, mode: NoiseReductionMode) {
+    const { data } = await apiClient.put<{ mode: NoiseReductionMode }>(
+      API.translationRooms.noiseReduction(id),
+      { mode },
+    );
+    return normalizeNoiseReductionMode(data?.mode);
+  },
+
+  /**
+   * Tell the server what this browser's own noise suppression ended up doing.
+   *
+   * Diagnostics, never a gate: the audio is already published and already being processed one way
+   * or the other by the time this is called, so a failure here must not reach the participant.
+   * The caller is not expected to await it for anything but ordering.
+   */
+  async reportNoiseSuppression(
+    id: string,
+    report: { enabled: boolean; processor: "krisp" | "browser"; reason?: string },
+  ) {
+    try {
+      await apiClient.post<{ recorded: boolean; enabled: boolean }>(
+        API.translationRooms.noiseSuppressionReport(id),
+        report,
+      );
+    } catch {
+      // Swallowed deliberately. Reporting that the diagnostics endpoint is down, in a toast, to a
+      // person whose microphone is working, would be the feature reporting itself as broken.
+    }
+  },
+
+  async start(id: string) {
+    const response = await apiClient.post<BackendRoom>(API.translationRooms.start(id));
+    return { ...response, data: normalizeRoom(response.data) };
+  },
+
+  /**
+   * W4b — bridge claim. The room and the participant are normalized like every other read; the
+   * lease half (role, intervals) goes through parseBridgeClaimLease, which reads an unknown role as
+   * "member" rather than let two desktops capture the far side.
+   */
+  async claimBridgeRoom(request: BridgeClaimRequest): Promise<BridgeClaimResult> {
+    const response = await apiClient.post<BackendBridgeClaim>(API.translationRooms.bridgeClaim, request);
+    const body = response.data;
+    const participant = body.participant ? normalizeParticipant(body.participant) : null;
+    return {
+      room: normalizeRoom(body.room),
+      participant,
+      ...parseBridgeClaimLease(body),
+      audioMode: resolveBridgeAudioMode({
+        known: parseBridgeAudioMode(body.audioMode),
+        isBridgeTextOnly: participant?.isBridgeTextOnly,
+      }),
+    };
+  },
+
+  /**
+   * Text-only bridge (backend #509): set the CALLER's own audio mode in a bridge room. Voice → text
+   * is always allowed; text → voice rejects with 409 BRIDGE_AUDIO_MODE_LOCKED while translation
+   * runs (see bridgeAudioModeFailure). The same mode is a 200 no-op.
+   */
+  async setBridgeAudioMode(id: string, mode: BridgeAudioMode): Promise<BridgeAudioModeResult> {
+    const response = await apiClient.put<{
+      roomId: string;
+      userId: string;
+      mode: string;
+      translationActive?: boolean;
+    }>(API.translationRooms.bridgeAudioMode(id), { mode });
+    const body = response.data;
+    return {
+      roomId: body.roomId,
+      userId: body.userId,
+      // What we asked for when the server's answer is unreadable: a 200 means it was applied.
+      mode: parseBridgeAudioMode(body.mode) ?? mode,
+      translationActive: body.translationActive === true,
+    };
+  },
+
+  /**
+   * WT-933 — the host records that a Meet-side person agreed to have their voice cloned for this
+   * meeting (`consented: true`), or withdraws it (`false`, which also removes the voice copy).
+   * Idempotent both ways. Host-only; 400 for an empty name or one over 100 characters.
+   */
+  async setBridgeVoiceCloneConsent(
+    id: string,
+    displayName: string,
+    consented: boolean,
+  ): Promise<BridgeVoiceCloneConsent> {
+    const response = await apiClient.put<BridgeVoiceCloneConsent>(
+      API.translationRooms.bridgeVoiceCloneConsents(id),
+      { displayName, consented },
+    );
+    const data = bridgeVoiceCloneBody<BridgeVoiceCloneConsent>(response.data);
+    // What we asked for when the echo is unreadable: a 200 means it was applied.
+    return {
+      displayName: typeof data?.displayName === "string" ? data.displayName : displayName,
+      consented: typeof data?.consented === "boolean" ? data.consented : consented,
+    };
+  },
+
+  /**
+   * WT-933 — which of these Meet-side names have a consent on record. The answer is the subset of
+   * `displayNames`, each exactly as submitted. In the body, not the URL: these are people's names.
+   */
+  async getBridgeVoiceCloneConsentStatus(
+    id: string,
+    displayNames: string[],
+  ): Promise<BridgeVoiceCloneConsentStatus> {
+    const response = await apiClient.post<BridgeVoiceCloneConsentStatus>(
+      API.translationRooms.bridgeVoiceCloneConsentsStatus(id),
+      { displayNames },
+    );
+    const data = bridgeVoiceCloneBody<BridgeVoiceCloneConsentStatus>(response.data);
+    // Not read as "nobody": an answer with no list in it would untick people who agreed.
+    if (!Array.isArray(data?.consented)) {
+      throw new Error("The voice-clone consent status answer could not be read.");
+    }
+    return { consented: data.consented.filter((name): name is string => typeof name === "string") };
+  },
+
+  /** W4b — renew this desktop's capturer lease. Rejects (409 CONFLICT) once it is not the capturer. */
+  heartbeatBridgeCapturer(id: string) {
+    return apiClient.post<BridgeCapturerStatus>(API.translationRooms.bridgeCapturerHeartbeat(id));
+  },
+
+  /** W4b — take the far side's capture over. Rejects (409 CONFLICT) while a live capturer holds it. */
+  takeOverBridgeCapturer(id: string) {
+    return apiClient.post<BridgeCapturerStatus>(API.translationRooms.bridgeCapturerTakeover(id));
+  },
+
+  pause(id: string) {
+    return apiClient.post<void>(API.translationRooms.pause(id));
+  },
+
+  resume(id: string) {
+    return apiClient.post<void>(API.translationRooms.resume(id));
+  },
+  /**
+   * Ends the room's translation session and leaves the room IN_PROGRESS, so transcription
+   * carries on. `pause` moves the room to PAUSED, which the AI workers read as "ignore this
+   * room's microphone" — that stops the transcript too, and is a different thing to ask for.
+   */
+  stopTranslation(id: string) {
+    return apiClient.post<void>(API.translationRooms.stopTranslation(id));
+  },
+
+  end(id: string) {
+    return apiClient.post<void>(API.translationRooms.end(id));
+  },
+
+  async cancel(id: string) {
+    const response = await apiClient.post<BackendRoom>(API.translationRooms.cancel(id));
+    return { ...response, data: normalizeRoom(response.data) };
+  },
+
+  async history(params?: {
+    workspaceId?: string;
+    status?: string;
+    search?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+    /**
+     * "mine": the caller's own meetings (hosted, joined or invited), even for a workspace
+     * Owner/Admin. The Artifacts library asks for it — the widening adds nothing the caller can
+     * read. Omitted keeps the archive's workspace reading.
+     */
+    scope?: "mine";
+  }) {
+    const response = await apiClient.get<TranslationRoomHistoryResponse>(API.translationRooms.history, { params });
+    return {
+      ...response,
+      data: {
+        ...response.data,
+        rooms: response.data.rooms.map((item) => ({
+          ...item,
+          room: normalizeRoom(item.room as BackendRoom),
+          participants: item.participants.map((participant) => normalizeParticipant(participant as BackendParticipant)),
+        })),
+      },
+    };
+  },
+
+  /**
+   * WT-333 — the caller's own meetings in one workspace, past and upcoming together (UC 25).
+   *
+   * Same response shape as `history`, and normalised the same way, so the two stay interchangeable
+   * for anything that consumes a room + roster + artifacts. What differs is on the server: this
+   * route pins the scope to the caller, carries no status filter, and orders by the booked slot.
+   *
+   * `workspaceId` is required by the server; sending nothing gets a 400 rather than every
+   * workspace, which is the intended answer.
+   */
+  async myMeetings(params: {
+    workspaceId: string;
+    from?: string;
+    to?: string;
+    search?: string;
+    status?: string;
+    pageSize?: number;
+  }) {
+    const response = await apiClient.get<TranslationRoomHistoryResponse>(API.translationRooms.myMeetings, { params });
+    return {
+      ...response,
+      data: {
+        ...response.data,
+        rooms: response.data.rooms.map((item) => ({
+          ...item,
+          room: normalizeRoom(item.room as BackendRoom),
+          participants: item.participants.map((participant) => normalizeParticipant(participant as BackendParticipant)),
+        })),
+      },
+    };
+  },
+
+  async artifacts(id: string) {
+    return apiClient.get<TranslationRoomArtifactDto[]>(API.translationRooms.artifacts(id));
+  },
+
+  /**
+   * A link to one artifact's bytes.
+   *
+   * `disposition` decides what the presigned link DOES when it is opened, and the default is
+   * deliberate: the in-page <video> reads its source from this very endpoint, and a link carrying
+   * `Content-Disposition: attachment` would make the browser save the recording instead of playing
+   * it. Only a caller that means "put this on the reader's disk" asks for `attachment`, which is
+   * also what makes the server attach the file's proper name.
+   */
+  artifactDownload(id: string, disposition?: "attachment") {
+    return apiClient.get<{
+      url?: string | null;
+      content?: string | null;
+      fileName: string;
+      contentType: string;
+    }>(API.roomArtifacts.download(id), {
+      params: disposition ? { disposition } : undefined,
+    });
+  },
+
+  approveArtifactConsent(id: string) {
+    return apiClient.post<void>(API.roomArtifacts.consent(id));
+  },
+
+  /**
+   * Ask for this meeting's summary to be written again — in a different shape, a different
+   * language, or both.
+   *
+   * Answers 202, not 200 — the summary is not rewritten when this resolves. It arrives on
+   * the artifact, so the caller has to refetch rather than trust the response body.
+   *
+   * Omitting `language` means "leave the language alone", which the AI side reads as "follow
+   * the transcript". The field is left off the body entirely rather than sent empty, so the
+   * request looks exactly like one from before the choice existed.
+   */
+  regenerateSummary(roomId: string, templateKey: string, language?: string) {
+    // `requestId` is how the caller finds out what happened. Everything past the 202 is
+    // asynchronous, and without it the only signal a rewrite ever gave was the summary quietly
+    // changing — or, for every way it can fail, nothing at all. Empty when the server redirected
+    // the request to finalization, which is a different pipeline with nothing to poll.
+    return apiClient.post<{ message: string; requestId: string }>(
+      API.roomArtifacts.regenerateSummary(roomId),
+      language ? { templateKey, language } : { templateKey },
+    );
+  },
+
+  /**
+   * What became of one queued rewrite: `pending`, `completed`, or `failed` with the reason the
+   * worker wrote.
+   *
+   * `pending` covers both "still running" and "the answer expired before anyone asked", because
+   * nothing can tell those apart and guessing would be worse than waiting — the caller keeps its
+   * own deadline for that.
+   */
+  getSummaryRewriteStatus(roomId: string, requestId: string) {
+    return apiClient.get<{ status: string; error?: string | null }>(
+      API.roomArtifacts.summaryRewriteStatus(roomId, requestId),
+    );
+  },
+
+  /**
+   * This meeting's summary in a shape and language, generating that rendering if nobody has
+   * asked for the pair yet.
+   *
+   * Reading, not rewriting. This never changes what another reader sees, which is the whole
+   * reason it is a different call from regenerateSummary — asking for a language through THAT
+   * one replaced the room's summary for everybody.
+   *
+   * Resolves with `status: "generating"` and no content the first time a pair is asked for. That
+   * is neither an error nor an empty summary: the caller polls this same method until `ready`.
+   */
+  getSummaryRendering(roomId: string, templateKey: string, language?: string) {
+    return apiClient.get<SummaryRenderingDto>(
+      API.roomArtifacts.summary(roomId, templateKey, language),
+    );
+  },
+
+  /** Which renderings the room already holds, so a picker can say which choices are instant. */
+  getSummaryRenderings(roomId: string) {
+    return apiClient.get<SummaryRenderingSummaryDto[]>(
+      API.roomArtifacts.summaryRenderings(roomId),
+    );
+  },
+
+  async invitations(id: string) {
+    return apiClient.get<TranslationRoomInvitationDto[]>(API.translationRooms.invitations(id));
+  },
+
+  /**
+   * WT-552: add somebody to a meeting that is already running.
+   *
+   * POST to the same path the invitation list is read from. Not `updateSettings` — that endpoint
+   * freezes at IN_PROGRESS on purpose, because languages and approval policy must not change
+   * under people already in the room.
+   *
+   * Returns the number actually invited, which can be LOWER than the list submitted: the server
+   * treats re-inviting somebody as a no-op. That count is the truth for the toast — this client
+   * may not have refetched the invitation list.
+   */
+  async inviteParticipants(id: string, emails: string[]) {
+    const { data } = await apiClient.post<{ invited: number }>(
+      API.translationRooms.invitations(id),
+      { emails },
+    );
+    return data;
+  },
+
+  /**
+   * WT-709: the host adds a language to a meeting that is already open, so a participant who
+   * needs it can pick it. Host-only (the room's EFFECTIVE host — 403 otherwise), bounded by the
+   * workspace whitelist and the plan's language quota (400), and only while the meeting is open
+   * (409). A language already declared answers 200 with the set unchanged.
+   *
+   * Answers the meeting's languages afterwards — the same `{ sourceLanguage, targetLanguages }`
+   * the RoomLanguagesChanged broadcast carries — so the caller can repaint without a refetch.
+   */
+  async addRoomLanguage(id: string, language: string) {
+    const { data } = await apiClient.post<{ sourceLanguage: string; targetLanguages: string[] }>(
+      API.translationRooms.languages(id),
+      { language },
+    );
+    return data;
+  },
+
+  /**
+   * Accept the invitation addressed to the signed-in account's email.
+   *
+   * Takes no body: the server matches the row from the caller's own email claim, because
+   * invitations are keyed by address and an invitee may have no participant row to name. Sending
+   * an invitation id from the client would let one be accepted on somebody else's behalf.
+   *
+   * Idempotent server-side, so the same notification may be accepted from the popup and again
+   * from the bell without the second click failing.
+   */
+  async acceptInvitation(id: string) {
+    const { data } = await apiClient.post<TranslationRoomInvitationDto>(
+      API.translationRooms.acceptInvitation(id),
+    );
+    return data;
+  },
+
+  async updateSettings(id: string, data: UpdateRoomSettingsRequest) {
+    await apiClient.put<void>(API.translationRooms.settings(id), data);
+  },
+
+  getFeedbackState(id: string) {
+    return apiClient.get<TranslationRoomFeedbackStateDto>(API.translationRooms.feedbackState(id));
+  },
+
+  submitFeedback(id: string, data: SubmitTranslationRoomFeedbackRequest) {
+    return apiClient.post<TranslationRoomFeedbackDto>(API.translationRooms.feedback(id), data);
+  },
+
+  async preflight(roomCode: string): Promise<RoomPreflightResponse> {
+    const { data } = await apiClient.get<RoomPreflightResponse>(API.translationRooms.preflight(roomCode));
+    return data;
+  },
+
+  downloadCalendarIcs(id: string) {
+    return apiClient.get<Blob>(API.translationRooms.calendarIcs(id), {
+      responseType: "blob",
+    });
+  },
+
+  /** Every Start/Resume→Pause/End window for this room, newest first — see
+   * TranslationRoomSessionsController.GetSessions. */
+  sessions(id: string) {
+    return apiClient.get<TranslationRoomSessionDto[]>(API.translationRooms.sessions(id));
+  },
+};
+
+/** WT-14: "Add to Google Calendar" quick-add link — pure URL template, no backend call. */
+export function buildGoogleCalendarUrl(params: {
+  title: string;
+  scheduledAt: string;
+  joinLink: string;
+  description?: string;
+  durationMinutes?: number;
+}): string {
+  const start = new Date(params.scheduledAt);
+  const end = new Date(start.getTime() + (params.durationMinutes ?? 60) * 60_000);
+  const toGoogleDate = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+
+  const details = params.description
+    ? `${params.description}\n\nJoin link: ${params.joinLink}`
+    : `Join link: ${params.joinLink}`;
+
+  const search = new URLSearchParams({
+    action: "TEMPLATE",
+    text: params.title,
+    dates: `${toGoogleDate(start)}/${toGoogleDate(end)}`,
+    details,
+  });
+
+  return `https://calendar.google.com/calendar/render?${search.toString()}`;
+}

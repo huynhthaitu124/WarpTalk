@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::assistant_chat::{AiAssistantLlm, KnowledgeSearch, PolicyConsent};
 use crate::features_http::{self, FeaturesState};
 use crate::room_effects::{
     RoomAiPolicyRefresher, RoomEffectsHandles, RoomEffectsPublisher, init_copilot_room_keys,
@@ -24,15 +25,17 @@ use warptalk_ai_plane::{
     BaseUrlPolicy, ByoDeps, LlmKeyValidator, PgExternalLlmPolicy, RedisConfigNotifier,
     vault_from_env,
 };
+use warptalk_assistant::application::chat_ports::ChatEventBus;
 use warptalk_assistant::application::ports::{
     ConfigNotifier, KeyValidator, NoopNotifier, SecretVault, WorkspaceAccess,
 };
+use warptalk_assistant::infrastructure::{InMemoryChatEventBus, RedisChatEventBus};
 use warptalk_assistant::summary::{
     ComposedRoomAccess, FollowUpSource, NoBus, NoFollowUps, PgSummaryRepository,
     PgTranscriptSource, RedisFollowUpSource, RedisSummaryBus, SummaryBus, SummaryDeps,
     SummaryService,
 };
-use warptalk_assistant::{AssistantDeps, AssistantModule, SummaryHttpDeps};
+use warptalk_assistant::{AssistantDeps, AssistantModule, ChatDeps, SummaryHttpDeps};
 use warptalk_billing::{BillingDeps, BillingModule};
 use warptalk_bus::publish_json;
 use warptalk_config::JwtConfig;
@@ -513,6 +516,9 @@ pub struct ApiOptions {
     /// Overrides the voice cloner / provider admin (tests); default is Cartesia when keyed.
     pub voice_cloner: Option<Arc<dyn warptalk_identity::VoiceCloner>>,
     pub voice_admin: Option<Arc<dyn warptalk_identity::VoiceProviderAdmin>>,
+    /// Dev suggestion test mode (`warptalk_config::TestModeConfig`): mounts the transcript
+    /// injection route. Never set in production (the config refuses it there).
+    pub test_mode: bool,
     /// Overrides the ephemeral STT token issuer (tests); default is OpenAI when `OPENAI_API_KEY`
     /// is set, else `POST /copilot/sessions/{id}/stt-token` answers 503 `STT_NOT_CONFIGURED`.
     pub stt_token_issuer: Option<Arc<dyn SttTokenIssuer>>,
@@ -628,6 +634,12 @@ pub async fn build(
         },
         crate::auth_wiring::identity_extras(redis.as_ref()),
     );
+    let notification =
+        warptalk_notification::NotificationModule::new(warptalk_notification::NotificationDeps {
+            pool: pool.clone(),
+            jwt: jwt.clone(),
+            clock: clock.clone(),
+        });
     let invitation_mailer = opts
         .invitation_mailer
         .unwrap_or_else(|| Arc::new(LogInvitationMailer));
@@ -689,6 +701,7 @@ pub async fn build(
     };
     let transcript_redis = redis.clone();
     let suggestions_redis = redis.clone();
+    let chat_redis = redis.clone();
     let copilot_redis = redis.clone();
     let summary_redis = redis.clone();
     let billing_redis = redis.clone();
@@ -933,14 +946,16 @@ pub async fn build(
             Arc::new(warptalk_qdrant::InMemoryVectorStore::new())
         })
     });
+    let knowledge_access: Arc<dyn DocumentAccess> =
+        Arc::new(KnowledgeAccessAdapter(workspace.queries()));
     let chat_llm = ai.clone();
     let knowledge = build_knowledge_module(KnowledgeParts {
         pool: pool.clone(),
         jwt: jwt.clone(),
         settings: settings.clone(),
         vectors,
-        ai,
-        access: Arc::new(KnowledgeAccessAdapter(workspace.queries())),
+        ai: ai.clone(),
+        access: knowledge_access.clone(),
         results,
         documents: None,
     })
@@ -964,7 +979,7 @@ pub async fn build(
         Some(c) => Arc::new(warptalk_assistant::usage::RedisUsageSink::new(c.clone())),
         None => Arc::new(warptalk_assistant::usage::NoUsageSink),
     };
-    let assistant = assistant.with_chat(warptalk_assistant::chat::ChatApi {
+    let mut assistant = assistant.with_chat(warptalk_assistant::chat::ChatApi {
         service: Arc::new(warptalk_assistant::chat::ChatService::new(
             warptalk_assistant::chat::ChatDeps {
                 repo: warptalk_assistant::chat::PgChatRepository::new(pool.clone()),
@@ -998,12 +1013,31 @@ pub async fn build(
             Arc::new(AssistantWorkspaceAccess(workspace.queries())),
         )),
     });
+    // WarpBot chat. Redis carries the live stream across replicas; without it, events stay in
+    // this process (single replica only).
+    let chat_bus: Arc<dyn ChatEventBus> = match chat_redis {
+        Some(conn) => Arc::new(RedisChatEventBus::new(conn)),
+        None => Arc::new(InMemoryChatEventBus::new()),
+    };
+    assistant.enable_chat(ChatDeps {
+        bus: chat_bus,
+        llm: Arc::new(AiAssistantLlm(ai)),
+        consent: Arc::new(PolicyConsent(Arc::new(PgExternalLlmPolicy::new(
+            pool.clone(),
+        )))),
+        knowledge: Some(Arc::new(KnowledgeSearch {
+            service: knowledge.service(),
+            access: knowledge_access,
+        })),
+        default_model: None,
+    });
     let suggestions_router = suggestions_redis.map(|redis| {
         suggestions_http::router(SuggestionsState {
             redis,
             jwt: jwt.clone(),
             rooms: room.queries(),
             workspaces: workspace.queries(),
+            test_mode: opts.test_mode,
         })
     });
     let features_router = features_http::router(FeaturesState {
@@ -1028,7 +1062,8 @@ pub async fn build(
         .merge(settings_router)
         .merge(features_router)
         .merge(assistant.router())
-        .merge(knowledge.router());
+        .merge(knowledge.router())
+        .merge(notification.router());
     let api = match suggestions_router {
         Some(r) => api.merge(r),
         None => api,

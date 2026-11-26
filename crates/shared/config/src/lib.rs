@@ -297,6 +297,49 @@ impl TelemetryConfig {
     }
 }
 
+/// Local review mode for live suggestions without an AI key (dev only).
+///
+/// `SUGGESTION_TEST_SCRIPT=<path to JSON script>` swaps the suggestion LLM for a scripted one and
+/// lets room members type transcript lines. It is refused in release builds and when
+/// `WARPTALK_ENV` is `production`/`prod`, so a production deploy can never turn it on.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TestModeConfig {
+    /// Script file read by the scripted suggestion provider. `None` = test mode off.
+    pub suggestion_script: Option<std::path::PathBuf>,
+}
+
+impl TestModeConfig {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        Self::from_lookup(env_lookup, cfg!(debug_assertions))
+    }
+
+    /// `debug_build` is `cfg!(debug_assertions)` of the calling binary.
+    pub fn from_lookup<F>(lookup: F, debug_build: bool) -> Result<Self, ConfigError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let Some(script) = optional_from(&lookup, "SUGGESTION_TEST_SCRIPT") else {
+            return Ok(Self::default());
+        };
+        let env = optional_from(&lookup, "WARPTALK_ENV")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !debug_build || env == "production" || env == "prod" {
+            return Err(ConfigError::Invalid {
+                key: "SUGGESTION_TEST_SCRIPT".to_owned(),
+                reason: "test mode is only allowed in local debug builds".to_owned(),
+            });
+        }
+        Ok(Self {
+            suggestion_script: Some(std::path::PathBuf::from(script)),
+        })
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.suggestion_script.is_some()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -494,5 +537,22 @@ mod tests {
             .to_string(),
             "invalid config key X: bad"
         );
+    }
+
+    #[test]
+    fn test_mode_off_by_default_and_refused_outside_debug() {
+        assert!(
+            !TestModeConfig::from_lookup(env(&[]), true)
+                .unwrap()
+                .enabled()
+        );
+        let on = env(&[("SUGGESTION_TEST_SCRIPT", "s.json")]);
+        assert!(TestModeConfig::from_lookup(&on, true).unwrap().enabled());
+        assert!(TestModeConfig::from_lookup(&on, false).is_err());
+        let prod = env(&[
+            ("SUGGESTION_TEST_SCRIPT", "s.json"),
+            ("WARPTALK_ENV", "Production"),
+        ]);
+        assert!(TestModeConfig::from_lookup(prod, true).is_err());
     }
 }

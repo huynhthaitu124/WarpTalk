@@ -43,7 +43,7 @@ async fn segments(
         return StatusCode::from_u16(if c == 0 { 422 } else { c }).unwrap();
     }
     if s.fail_next
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
         .is_ok()
     {
         return StatusCode::INTERNAL_SERVER_ERROR;

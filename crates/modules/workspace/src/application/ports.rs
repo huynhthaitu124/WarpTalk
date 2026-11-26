@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use warptalk_kernel::{AppResult, Page, PageRequest, UserId, WorkspaceId, WorkspaceRole};
 
+use crate::domain::entitlements::EntitlementSnapshot;
 use crate::domain::{AiPolicy, WorkspaceSettings};
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,8 @@ pub struct MemberRecord {
     pub user_id: UserId,
     pub role: WorkspaceRole,
     pub joined_at: DateTime<Utc>,
+    /// `internal` or `external` (05a `workspace_members.membership_type`).
+    pub membership_type: String,
 }
 
 pub struct NewWorkspace {
@@ -114,6 +117,19 @@ pub trait WorkspaceRepo: Send + Sync {
     async fn is_active(&self, ws: WorkspaceId) -> AppResult<bool>;
     /// Effective AI policy flags; defaults when the workspace is missing or deleted.
     async fn ai_policy(&self, ws: WorkspaceId) -> AppResult<AiPolicy>;
+    /// Billing's latest resolved entitlements; `None` until the first snapshot is projected.
+    async fn entitlement_snapshot(&self, ws: WorkspaceId)
+    -> AppResult<Option<EntitlementSnapshot>>;
+    /// Projects a snapshot published by billing (event `event_id`). Out-of-order deliveries are
+    /// ignored: a snapshot replaces the stored one only when its `resolved_at` is not older, and a
+    /// redelivered event is a no-op. True when the row changed.
+    async fn apply_entitlement_snapshot(
+        &self,
+        ws: WorkspaceId,
+        snapshot: &EntitlementSnapshot,
+        event_id: uuid::Uuid,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool>;
 }
 
 /// Told after a workspace's settings were written (api wires cache/Redis refreshers).

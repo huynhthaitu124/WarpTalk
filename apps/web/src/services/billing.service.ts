@@ -1,0 +1,561 @@
+import apiClient from "@/lib/api/client";
+import { API } from "@/lib/api/endpoints";
+import type {
+  RecurringBillingStatusDto,
+  CreditBalanceDto,
+  BillingReportDto,
+  CreditHistoryFilters,
+  CreditHistoryQueryParams,
+  CreditTransactionDto,
+  FrozenCreditsDto,
+  GlobalInvoiceFilters,
+  PagedResult,
+  SubscriptionDto,
+  InvoiceDto,
+  PaymentTransactionDto,
+  UsageAlertDto,
+  TopWorkspaceDto,
+  UsageChartDto,
+  PlanMutationDto,
+  CheckoutSessionDto,
+  CreateCheckoutSessionRequest,
+  WorkspaceUsageByMemberDto,
+} from "@/types/billing";
+
+export const billingService = {
+  /**
+   * Get the current credit balance for a workspace.
+   */
+  getWorkspaceCredits: async (
+    workspaceId: string,
+  ): Promise<CreditBalanceDto> => {
+    const { data } = await apiClient.get<CreditBalanceDto>(
+      `/credits/workspace/${workspaceId}`,
+    );
+    return data;
+  },
+
+  /**
+   * Credits the workspace kept from a subscription that ended ("X credits kept — renew to use
+   * them"). 200 with zero when nothing is frozen, including for a workspace with no plan at all.
+   */
+  getFrozenCredits: async (workspaceId: string): Promise<FrozenCreditsDto> => {
+    const { data } = await apiClient.get<FrozenCreditsDto>(
+      `/credits/workspace/${workspaceId}/frozen`,
+    );
+    return data;
+  },
+
+  /**
+   * Who in this workspace has spent what (WT-413).
+   *
+   * Owner/Admin only — the endpoint carries the same RequireWorkspaceRole gate as the balance
+   * and history endpoints, so a member calling this gets a 403 rather than a redacted list.
+   */
+  getUsageByMember: async (
+    workspaceId: string,
+    params?: { from?: string; to?: string },
+  ): Promise<WorkspaceUsageByMemberDto> => {
+    const { data } = await apiClient.get<WorkspaceUsageByMemberDto>(
+      `/credits/workspace/${workspaceId}/usage-by-member`,
+      { params },
+    );
+    return data;
+  },
+
+  /**
+   * Generate a billing report for a workspace for a specific month and year.
+   */
+  getBillingReport: async (
+    workspaceId: string,
+    month: number,
+    year: number,
+  ): Promise<BillingReportDto> => {
+    const { data } = await apiClient.get<BillingReportDto>(
+      `/usages/workspace/${workspaceId}/report`,
+      {
+        params: { month, year },
+      },
+    );
+    return data;
+  },
+
+  /**
+   * Paginated credit transaction history for a workspace.
+   */
+  getCreditHistory: async (
+    workspaceId: string,
+    pageNumber = 1,
+    pageSize = 20,
+    filters?: CreditHistoryFilters,
+  ): Promise<PagedResult<CreditTransactionDto>> => {
+    const params: CreditHistoryQueryParams = { pageNumber, pageSize };
+
+    if (filters) {
+      if (filters.type && filters.type !== "ALL") params.type = filters.type;
+      if (filters.fromDate) params.fromDate = filters.fromDate;
+      if (filters.toDate) params.toDate = filters.toDate;
+      if (filters.minAmount !== undefined) params.minAmount = filters.minAmount;
+      if (filters.maxAmount !== undefined) params.maxAmount = filters.maxAmount;
+    }
+
+    const { data } = await apiClient.get<PagedResult<CreditTransactionDto>>(
+      `/credits/workspace/${workspaceId}/history`,
+      {
+        params,
+      },
+    );
+    return data;
+  },
+
+  /**
+   * WT-430 (Linear): every transaction the filter matches, paged until the server's own
+   * totalCount is satisfied.
+   *
+   * The repository clamps pageSize to 200, so a single "give me 1000" call silently returned
+   * the newest 200 rows — the export preview summed a fifth of the cycle (-252 credits) while
+   * the server-aggregated service breakdown beside it said 1,615, and the XLSX shipped the
+   * same truncated fifth. The clamp is right (it protects the DB); the export just has to
+   * keep asking. Capped at 50 pages (10,000 rows) so a pathological cycle cannot loop forever
+   * — if that cap is ever hit, totalCount still tells the caller the export is partial.
+   */
+  getAllCreditHistory: async (
+    workspaceId: string,
+    filters?: CreditHistoryFilters,
+  ): Promise<PagedResult<CreditTransactionDto>> => {
+    const pageSize = 200;
+    const first = await billingService.getCreditHistory(workspaceId, 1, pageSize, filters);
+    const items = [...first.items];
+    const totalCount = first.totalCount ?? items.length;
+
+    let page = 2;
+    while (items.length < totalCount && page <= 50) {
+      const next = await billingService.getCreditHistory(workspaceId, page, pageSize, filters);
+      if (next.items.length === 0) break;
+      items.push(...next.items);
+      page += 1;
+    }
+
+    return { items, totalCount };
+  },
+
+  /**
+   * Paginated global credit transaction history for admins.
+   */
+  getGlobalCreditHistory: async (
+    pageNumber = 1,
+    pageSize = 20,
+    filters?: CreditHistoryFilters,
+  ): Promise<PagedResult<CreditTransactionDto>> => {
+    const params: CreditHistoryQueryParams = { pageNumber, pageSize };
+
+    if (filters) {
+      if (filters.workspaceId) params.workspaceId = filters.workspaceId;
+      if (filters.type && filters.type !== "ALL") params.type = filters.type;
+      if (filters.fromDate) params.fromDate = filters.fromDate;
+      if (filters.toDate) params.toDate = filters.toDate;
+      if (filters.minAmount !== undefined) params.minAmount = filters.minAmount;
+      if (filters.maxAmount !== undefined) params.maxAmount = filters.maxAmount;
+      if (filters.search?.trim()) params.search = filters.search.trim();
+      if (filters.sort) params.sort = filters.sort;
+    }
+
+    const { data } = await apiClient.get<PagedResult<CreditTransactionDto>>(
+      `/credits/history/global`,
+      { params },
+    );
+    return data;
+  },
+
+  /**
+   * Get global billing metrics for admins.
+   */
+  getGlobalMetrics: async (): Promise<
+    import("@/types/billing").GlobalBillingMetricsDto
+  > => {
+    const { data } = await apiClient.get<
+      import("@/types/billing").GlobalBillingMetricsDto
+    >(`/usages/metrics/global`);
+    return data;
+  },
+
+  /**
+   * Get workspace usage chart data.
+   */
+  getWorkspaceUsageChart: async (
+    workspaceId: string,
+    year: number,
+  ): Promise<UsageChartDto> => {
+    const { data } = await apiClient.get<UsageChartDto>(
+      `/usages/workspace/${workspaceId}/chart`,
+      { params: { year } },
+    );
+    return data;
+  },
+
+  /**
+   * Get global usage chart data.
+   */
+  getGlobalUsageChart: async (year: number): Promise<UsageChartDto> => {
+    const { data } = await apiClient.get<UsageChartDto>(
+      `/usages/metrics/global/chart`,
+      { params: { year } },
+    );
+    return data;
+  },
+
+  /**
+   * Get workspace usage breakdown.
+   *
+   * `FeatureAdoptionDto`, not `UsageSummaryDto`: the per-workspace endpoint returns
+   * `IEnumerable<FeatureAdoptionDto>`, which carries `usageCount` on top of the credits. The
+   * declared return type said otherwise while the request generic below already said the truth,
+   * so a caller reading `usageCount` was told the field did not exist on data that always has it.
+   */
+  getWorkspaceUsageBreakdown: async (
+    workspaceId: string,
+    days = 30,
+  ): Promise<import("@/types/billing").FeatureAdoptionDto[]> => {
+    const { data } = await apiClient.get<
+      import("@/types/billing").FeatureAdoptionDto[]
+    >(`/usages/workspace/${workspaceId}/breakdown`, { params: { days } });
+    return data;
+  },
+
+  /**
+   * Get global usage breakdown (Donut).
+   */
+  getGlobalUsageBreakdown: async (
+    days = 30,
+  ): Promise<import("@/types/billing").UsageSummaryDto[]> => {
+    const { data } = await apiClient.get<
+      import("@/types/billing").UsageSummaryDto[]
+    >(`/usages/metrics/global/breakdown`, { params: { days } });
+    return data;
+  },
+
+  /**
+   * Get top workspaces by consumption.
+   */
+  getTopWorkspaces: async (
+    days = 30,
+    limit = 5,
+  ): Promise<TopWorkspaceDto[]> => {
+    const { data } = await apiClient.get<TopWorkspaceDto[]>(
+      `/usages/metrics/global/top-workspaces`,
+      { params: { days, limit } },
+    );
+    return data;
+  },
+
+  /**
+   * Manually adjust credits for a workspace (admin only).
+   */
+  adjustCredits: async (
+    workspaceId: string,
+    amount: number,
+    reason: string,
+  ): Promise<void> => {
+    // The audited admin route. The old `/credits/workspace/{id}/adjust` authorized off a role string
+    // and wrote nothing to the platform audit log; it is gone.
+    await apiClient.post(API.adminWorkspaceBilling.adjustCredits(workspaceId), { amount, reason });
+  },
+
+  /**
+   * Get the active subscription for a workspace.
+   */
+  getActiveSubscription: async (
+    workspaceId: string,
+  ): Promise<SubscriptionDto> => {
+    const { data } = await apiClient.get<SubscriptionDto>(
+      `/subscriptions/workspace/${workspaceId}`,
+    );
+    return data;
+  },
+
+  /** Whether this workspace runs past zero credits, and how far its plan lets it. */
+  getOverageSetting: async (
+    workspaceId: string,
+  ): Promise<import("@/types/billing").WorkspaceOverageSettingDto> => {
+    const { data } = await apiClient.get<
+      import("@/types/billing").WorkspaceOverageSettingDto
+    >(`/subscriptions/workspace/${workspaceId}/overage`);
+    return data;
+  },
+
+  /**
+   * Turn it on or off. The server refuses `true` on a plan with no allowance rather than
+   * accepting it as a no-op, so the error is worth showing verbatim.
+   */
+  setOverage: async (
+    workspaceId: string,
+    enabled: boolean,
+  ): Promise<import("@/types/billing").WorkspaceOverageSettingDto> => {
+    const { data } = await apiClient.put<
+      import("@/types/billing").WorkspaceOverageSettingDto
+    >(`/subscriptions/workspace/${workspaceId}/overage`, { enabled });
+    return data;
+  },
+
+  /**
+   * Get paginated invoices for a workspace.
+   */
+  getWorkspaceInvoices: async (
+    workspaceId: string,
+    pageNumber = 1,
+    pageSize = 20,
+  ): Promise<PagedResult<InvoiceDto>> => {
+    const { data } = await apiClient.get<PagedResult<InvoiceDto>>(
+      `/invoices/workspace/${workspaceId}`,
+      {
+        params: { pageNumber, pageSize },
+      },
+    );
+    return data;
+  },
+
+  /**
+   * Every payment recorded against this workspace — card checkouts, invoice-rail payments, failed
+   * and refunded ones included — newest first as the server orders them. Owner/Admin only.
+   */
+  getWorkspacePaymentHistory: async (
+    workspaceId: string,
+    pageNumber = 1,
+    pageSize = 20,
+  ): Promise<PagedResult<PaymentTransactionDto>> => {
+    const { data } = await apiClient.get<PagedResult<PaymentTransactionDto>>(
+      API.workspaceBilling.paymentHistory(workspaceId),
+      { params: { pageNumber, pageSize } },
+    );
+    return data;
+  },
+
+  /**
+   * A Stripe checkout URL for one open invoice. The caller becomes the buyer; the server checks
+   * that they own the invoice's workspace and refuses a paid or void invoice.
+   */
+  createInvoiceCheckout: async (invoiceId: string): Promise<string> => {
+    const { data } = await apiClient.post<{ url: string }>(
+      API.workspaceBilling.invoiceCheckout(invoiceId),
+    );
+    return data.url;
+  },
+
+  /**
+   * Get all active subscription plans from the backend.
+   */
+  /**
+   * The customer catalogue: active plans only (BR-74).
+   *
+   * The server filters now. It did not, so a plan an administrator had deactivated stayed
+   * selectable on the landing page and in every checkout flow — right up to the point where
+   * SubscriptionService refused to create the subscription.
+   */
+  getPlans: async (): Promise<import("@/types/billing").PlanDto[]> => {
+    const { data } =
+      await apiClient.get<import("@/types/billing").PlanDto[]>(`/plans`);
+    return data;
+  },
+
+  /**
+   * Every plan, deactivated ones included. System Admin only — the route is authorized.
+   *
+   * The plan-management page must NOT use `getPlans`: deactivating a plan through the edit form
+   * would drop it out of the only list that page has, and there would be no way to switch it back
+   * on. Deactivation would be a one-way door.
+   */
+  /**
+   * The VAT checkout adds on top of a price (3 Oct 2026). Prices are stored without VAT, so every
+   * card that shows a price reads this to print "+ VAT" and the amount Stripe will charge.
+   */
+  getPlanTax: async (): Promise<{ vatPercent: number; pricesIncludeVat: boolean }> => {
+    const { data } = await apiClient.get<{ vatPercent: number; pricesIncludeVat: boolean }>(
+      `/plans/tax`,
+    );
+    return data;
+  },
+
+  getAllPlansForAdmin: async (): Promise<import("@/types/billing").PlanDto[]> => {
+    const { data } =
+      await apiClient.get<import("@/types/billing").PlanDto[]>(`/plans/all`);
+    return data;
+  },
+
+  createCheckoutSession: async (
+    request: CreateCheckoutSessionRequest,
+  ): Promise<string> => {
+    const { data } = await apiClient.post<{ url: string }>(
+      "/payments/checkout",
+      request,
+    );
+    return data.url;
+  },
+
+  getCheckoutSession: async (
+    sessionId: string,
+  ): Promise<CheckoutSessionDto> => {
+    const { data } = await apiClient.get<CheckoutSessionDto>(
+      `/payments/checkout-session/${sessionId}`,
+    );
+    return data;
+  },
+
+  /**
+   * Cancel the active subscription for a workspace at period end.
+   */
+  /**
+   * WT-471 — switch renewal back on for a subscription that was cancelled but has not expired.
+   *
+   * NOT `/resume`, which clears a ServiceState suspension caused by running past the overage cap.
+   * Cancellation and suspension are independent axes: a subscription can be healthy and cancelled,
+   * or suspended and renewing. Calling `/resume` on a cancelled-but-healthy subscription is
+   * refused with "AI service is not suspended", which is true and answers a question nobody asked.
+   *
+   * Creates no charge — the period is already paid for. A workspace whose period has already ended
+   * is refused and has to go through Checkout instead.
+   */
+  reactivateSubscription: async (workspaceId: string): Promise<SubscriptionDto> => {
+    const { data } = await apiClient.post<SubscriptionDto>(
+      `/subscriptions/workspace/${workspaceId}/reactivate`,
+    );
+    return data;
+  },
+
+  /**
+   * backend#466 — renewal as the billing page shows it: who renews, the next charge date and
+   * amount, the card on file (brand + last four only) and any failed renewal charge.
+   */
+  getRecurringBilling: async (workspaceId: string): Promise<RecurringBillingStatusDto> => {
+    const { data } = await apiClient.get<RecurringBillingStatusDto>(
+      API.adminSubscriptions.recurring(workspaceId),
+    );
+    return data;
+  },
+
+  /**
+   * backend#466 — switch automatic renewal off or back on. For a card plan the server moves Stripe's
+   * cancel_at_period_end first; the paid period always runs to its end. A plan that was paid once
+   * answers 409 BILLING_AUTO_RENEW_REQUIRES_CHECKOUT when switched on.
+   */
+  setAutoRenew: async (workspaceId: string, autoRenew: boolean): Promise<SubscriptionDto> => {
+    const { data } = await apiClient.put<SubscriptionDto>(
+      API.adminSubscriptions.autoRenew(workspaceId),
+      { autoRenew },
+    );
+    return data;
+  },
+
+  /** backend#466 — a Stripe billing-portal URL to update the card. `returnPath` is a path on this site. */
+  createBillingPortal: async (workspaceId: string, returnPath: string): Promise<string> => {
+    const { data } = await apiClient.post<{ url: string }>(
+      API.adminSubscriptions.billingPortal(workspaceId),
+      { returnPath },
+    );
+    return data.url;
+  },
+
+  cancelSubscription: async (
+    workspaceId: string,
+    reason?: string,
+  ): Promise<void> => {
+    await apiClient.delete(`/subscriptions/workspace/${workspaceId}`, {
+      data: { reason: reason ?? "User requested cancellation" },
+    });
+  },
+
+  /*
+   * WT-381 — `changeSubscription` used to live here and PUT
+   * `/subscriptions/workspace/{id}/change-plan`. That route does not exist in the billing service
+   * and never did, so the call 404'd for every workspace that had a subscription, which is every
+   * workspace that could reach it.
+   *
+   * There is no replacement to write, because the working path was already here. A payment for a
+   * different plan sets `Subscription.PlanId` in SubscriptionPaymentEventHandler — so
+   * `createCheckoutSession` above IS the plan change, and the plans page routes through it.
+   */
+
+  /**
+   * Create a new subscription plan (Admin only).
+   */
+  createPlan: async (
+    plan: PlanMutationDto,
+  ): Promise<import("@/types/billing").PlanDto> => {
+    const { data } = await apiClient.post<import("@/types/billing").PlanDto>(
+      `/plans`,
+      plan,
+    );
+    return data;
+  },
+
+  /**
+   * Update an existing subscription plan (Admin only).
+   */
+  updatePlan: async (
+    id: string,
+    plan: PlanMutationDto,
+  ): Promise<import("@/types/billing").PlanDto> => {
+    const { data } = await apiClient.put<import("@/types/billing").PlanDto>(
+      `/plans/${id}`,
+      plan,
+    );
+    return data;
+  },
+
+  // WT-481: `deactivatePlan` was here, calling DELETE /plans/{id}. That route does not exist and
+  // never has — PlansController exposes GET, POST and PUT only — so the call could only ever have
+  // 404'd. Nothing referenced it, which is the only reason nobody found out.
+  //
+  // Nor should it exist: a plan is named on every invoice raised against it, so retiring one means
+  // `isActive: false` and leaving the row where the history can still point at it. That is what
+  // admin-pricing.service.ts says in its own header, and what the admin Plans screen already does
+  // — it renders a plan as "Hidden" and offers no delete button at all. This function was the last
+  // thing suggesting otherwise.
+
+  /**
+   * Get all global invoices (Admin only)
+   */
+  getGlobalInvoices: async (
+    pageNumber = 1,
+    pageSize = 20,
+    filters: GlobalInvoiceFilters = {},
+  ): Promise<PagedResult<InvoiceDto>> => {
+    // Empty values are dropped rather than sent as `status=`, which the server would read as a
+    // request for invoices whose status is the empty string.
+    const params: Record<string, string | number> = { pageNumber, pageSize };
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== "") params[key] = value;
+    }
+    const { data } = await apiClient.get<PagedResult<InvoiceDto>>(`/invoices/global`, { params });
+    return data;
+  },
+
+  /**
+   * Get all global subscriptions (Admin only)
+   */
+  getGlobalSubscriptions: async (
+    pageNumber = 1,
+    pageSize = 20,
+  ): Promise<PagedResult<SubscriptionDto>> => {
+    const { data } = await apiClient.get<PagedResult<SubscriptionDto>>(
+      `/subscriptions/global`,
+      {
+        params: { pageNumber, pageSize },
+      },
+    );
+    return data;
+  },
+
+  /**
+   * Get usage alerts (Admin only)
+   */
+  getUsageAlerts: async (): Promise<UsageAlertDto[]> => {
+    const { data } = await apiClient.get<UsageAlertDto[]>(
+      `/usages/metrics/global/alerts`,
+    );
+    return data;
+  },
+
+  // getServiceRates is gone: it called /usages/rates, a route that never existed (the real one
+  // is /usages/rate-card), so the card it fed rendered zeros forever. Rate cards live on
+  // /admin/plans now, where they are editable.
+};

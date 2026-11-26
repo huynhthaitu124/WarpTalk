@@ -19,7 +19,10 @@ use warptalk_db::{Migration, ModuleMigrations};
 use warptalk_kernel::{AppResult, Clock, RoomId, UserId, WorkspaceId};
 use warptalk_web::JwtKeys;
 
-use application::ports::{RoomEventPublisher, RoomRepo, VoiceConsentDirectory, WorkspacePolicy};
+use application::ports::{
+    LogInviteNotifier, RoomEventPublisher, RoomInviteNotifier, RoomRepo, VoiceConsentDirectory,
+    WorkspacePolicy,
+};
 pub use application::service::CreateCopilotRoom;
 use application::service::RoomService;
 pub use domain::BridgeConfig;
@@ -37,6 +40,11 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             version: 2,
             name: "external_bridge",
             sql: include_str!("../migrations/0002_external_bridge.sql"),
+        },
+        Migration {
+            version: 3,
+            name: "room_invitations",
+            sql: include_str!("../migrations/0003_room_invitations.sql"),
         },
     ],
 };
@@ -58,19 +66,24 @@ pub struct RoomModule {
     workspace: Arc<dyn WorkspacePolicy>,
     events: Arc<dyn RoomEventPublisher>,
     bridge: BridgeConfig,
+    invites: Arc<dyn RoomInviteNotifier>,
 }
 
 impl RoomModule {
     pub fn new(deps: RoomDeps) -> Self {
         let repo: Arc<dyn RoomRepo> = Arc::new(PgRoomRepo::new(deps.pool, deps.consent));
         let bridge = BridgeConfig::default();
-        let service = Arc::new(RoomService::new(
-            repo.clone(),
-            deps.workspace.clone(),
-            deps.events.clone(),
-            deps.clock.clone(),
-            bridge,
-        ));
+        let invites: Arc<dyn RoomInviteNotifier> = Arc::new(LogInviteNotifier);
+        let service = Arc::new(
+            RoomService::new(
+                repo.clone(),
+                deps.workspace.clone(),
+                deps.events.clone(),
+                deps.clock.clone(),
+                bridge,
+            )
+            .with_invite_notifier(invites.clone()),
+        );
         Self {
             service,
             repo,
@@ -79,20 +92,35 @@ impl RoomModule {
             workspace: deps.workspace,
             events: deps.events,
             bridge,
+            invites,
         }
     }
 
     /// Override the bridge timings (defaults: heartbeat 15 s, stale after 45 s).
     pub fn with_bridge_config(mut self, cfg: BridgeConfig) -> Self {
         self.bridge = cfg;
-        self.service = Arc::new(RoomService::new(
-            self.repo.clone(),
-            self.workspace.clone(),
-            self.events.clone(),
-            self.clock.clone(),
-            cfg,
-        ));
+        self.rebuild_service();
         self
+    }
+
+    /// Override the outbound invitation notifier (default: log only, no email).
+    pub fn with_invite_notifier(mut self, n: Arc<dyn RoomInviteNotifier>) -> Self {
+        self.invites = n;
+        self.rebuild_service();
+        self
+    }
+
+    fn rebuild_service(&mut self) {
+        self.service = Arc::new(
+            RoomService::new(
+                self.repo.clone(),
+                self.workspace.clone(),
+                self.events.clone(),
+                self.clock.clone(),
+                self.bridge,
+            )
+            .with_invite_notifier(self.invites.clone()),
+        );
     }
 
     /// Routes relative to the API prefix (`/api/v1`), state applied.

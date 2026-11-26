@@ -57,7 +57,10 @@ pub fn router(state: AppState) -> Router {
             "/translation-rooms/{id}/bridge/audio-mode",
             put(handlers::bridge_audio_mode),
         )
-        .route("/translation-rooms/{id}", get(handlers::get_one))
+        .route(
+            "/translation-rooms/{id}",
+            get(handlers::get_one).patch(handlers::update),
+        )
         .route("/translation-rooms/{id}/join", post(handlers::join_by_id))
         .route("/translation-rooms/{id}/start", post(handlers::start))
         .route("/translation-rooms/{id}/pause", post(handlers::pause))

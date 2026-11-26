@@ -76,6 +76,7 @@ pub struct MemberDto {
     pub user_id: UserId,
     pub role: &'static str,
     pub joined_at: DateTime<Utc>,
+    pub membership_type: String,
     pub email: Option<String>,
     pub full_name: Option<String>,
     pub avatar_url: Option<String>,
@@ -91,6 +92,7 @@ impl From<MemberView> for MemberDto {
             user_id: v.record.user_id,
             role: v.record.role.as_str(),
             joined_at: v.record.joined_at,
+            membership_type: v.record.membership_type,
             email,
             full_name,
             avatar_url,
@@ -176,6 +178,61 @@ impl From<AcceptOutcome> for AcceptDto {
             workspace_id: o.workspace_id,
             workspace_name: o.workspace_name,
             role: o.role.as_str(),
+        }
+    }
+}
+
+/// `GET /workspaces/{id}/entitlements`. `isKnown` is false until billing's first snapshot is
+/// projected; the client must not render defaults in its place.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntitlementsDto {
+    pub is_known: bool,
+    pub plan_slug: Option<String>,
+    pub has_active_subscription: bool,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub entitlements: Vec<EntitlementDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntitlementDto {
+    pub key: String,
+    pub kind: crate::domain::entitlements::EntitlementKind,
+    pub value: String,
+    pub source: String,
+    pub ceiling: Option<String>,
+    pub ceiling_source: Option<String>,
+}
+
+impl From<Option<crate::domain::entitlements::EntitlementSnapshot>> for EntitlementsDto {
+    fn from(s: Option<crate::domain::entitlements::EntitlementSnapshot>) -> Self {
+        match s {
+            None => Self {
+                is_known: false,
+                plan_slug: None,
+                has_active_subscription: false,
+                resolved_at: None,
+                entitlements: Vec::new(),
+            },
+            Some(s) => Self {
+                is_known: true,
+                plan_slug: s.plan_slug,
+                has_active_subscription: s.has_active_subscription,
+                resolved_at: Some(s.resolved_at),
+                entitlements: s
+                    .entitlements
+                    .into_iter()
+                    .map(|(key, v)| EntitlementDto {
+                        key,
+                        kind: v.kind,
+                        value: v.value,
+                        source: v.source,
+                        ceiling: v.ceiling,
+                        ceiling_source: v.ceiling_source,
+                    })
+                    .collect(),
+            },
         }
     }
 }

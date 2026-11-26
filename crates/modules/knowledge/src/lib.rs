@@ -66,6 +66,13 @@ impl KnowledgeModule {
         deps.settings.register::<RagConfig>(NS_RAG);
         let repo: Arc<dyn application::KnowledgeRepository> =
             Arc::new(infrastructure::PgKnowledgeRepository::new(deps.pool));
+        let chunks = Arc::new(application::ChunkService::new(
+            application::ChunkServiceDeps {
+                repo: repo.clone(),
+                vectors: deps.vectors.clone(),
+                embeddings: deps.embeddings.clone(),
+            },
+        ));
         let service = Arc::new(KnowledgeService::new(application::SearchDeps {
             repo: repo.clone(),
             vectors: deps.vectors.clone(),
@@ -90,6 +97,7 @@ impl KnowledgeModule {
         Self {
             state: http::HttpState {
                 service,
+                chunks,
                 access: deps.access,
                 jwt: deps.jwt,
             },

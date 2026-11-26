@@ -6,8 +6,8 @@ use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppError, AppResult};
 
 use crate::application::ports::{
-    ChunkRecord, FactRecord, JobRecord, JobStart, JobStatus, KnowledgeRepository, ProfileRow,
-    ProfileStatus, SourceKey,
+    ChunkCursor, ChunkListFilter, ChunkRecord, FactRecord, JobRecord, JobStart, JobStatus,
+    KnowledgeRepository, ProfileRow, ProfileStatus, SourceKey, StoredChunk,
 };
 use crate::domain::{ChunkKind, EmbeddingProfile, FactCategory, SourceType};
 
@@ -48,6 +48,27 @@ fn job_record(r: &sqlx::postgres::PgRow) -> Result<JobRecord, sqlx::Error> {
         last_error: r.try_get("last_error")?,
         chunks_indexed: r.try_get::<i32, _>("chunks_indexed")?.max(0) as u32,
         next_attempt_at: r.try_get("next_attempt_at")?,
+    })
+}
+
+const CHUNK_COLS: &str =
+    "id, source_type, source_id, kind, ordinal, collection, payload, indexed_at";
+
+fn stored_chunk(r: &sqlx::postgres::PgRow) -> Result<StoredChunk, sqlx::Error> {
+    let kind: String = r.try_get("kind")?;
+    Ok(StoredChunk {
+        id: r.try_get("id")?,
+        source_type: r.try_get("source_type")?,
+        source_id: r.try_get("source_id")?,
+        kind: if kind == "fact" {
+            ChunkKind::Fact
+        } else {
+            ChunkKind::Content
+        },
+        ordinal: r.try_get::<i32, _>("ordinal")?.max(0) as u32,
+        collection: r.try_get("collection")?,
+        payload: r.try_get("payload")?,
+        indexed_at: r.try_get("indexed_at")?,
     })
 }
 
@@ -476,6 +497,125 @@ impl KnowledgeRepository for PgKnowledgeRepository {
             .map(fact_record)
             .collect::<Result<_, _>>()
             .map_err(map_sqlx_error)
+    }
+
+    async fn list_chunks(
+        &self,
+        workspace: Uuid,
+        filter: &ChunkListFilter,
+        after: Option<ChunkCursor>,
+        limit: u32,
+    ) -> AppResult<Vec<StoredChunk>> {
+        let docs = filter
+            .allowed_document_ids
+            .as_ref()
+            .map(|v| v.iter().map(Uuid::to_string).collect::<Vec<_>>());
+        let meetings = filter
+            .allowed_meeting_ids
+            .as_ref()
+            .map(|v| v.iter().map(Uuid::to_string).collect::<Vec<_>>());
+        let rows = sqlx::query(&format!(
+            "SELECT {CHUNK_COLS} FROM knowledge.chunks
+              WHERE workspace_id = $1
+                AND source_type <> 'transcript'
+                AND ($2::text[] IS NULL OR source_type = ANY($2))
+                AND ($3::text IS NULL OR (kind = 'fact' AND payload->>'fact_category' = $3))
+                AND ($4::text[] IS NULL OR source_type <> 'document' OR source_id = ANY($4))
+                AND ($5::text[] IS NULL OR source_type <> 'meeting_summary'
+                     OR payload->>'meeting_id' = ANY($5))
+                AND ($6::timestamptz IS NULL OR (indexed_at, id) < ($6, $7::uuid))
+              ORDER BY indexed_at DESC, id DESC
+              LIMIT $8"
+        ))
+        .bind(workspace)
+        .bind(&filter.source_types)
+        .bind(filter.fact_category.map(FactCategory::as_str))
+        .bind(docs)
+        .bind(meetings)
+        .bind(after.map(|c| c.indexed_at))
+        .bind(after.map(|c| c.id))
+        .bind(i64::from(limit.min(1000)))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        rows.iter()
+            .map(stored_chunk)
+            .collect::<Result<_, _>>()
+            .map_err(map_sqlx_error)
+    }
+
+    async fn get_chunk(&self, workspace: Uuid, id: Uuid) -> AppResult<Option<StoredChunk>> {
+        let row = sqlx::query(&format!(
+            "SELECT {CHUNK_COLS} FROM knowledge.chunks
+              WHERE workspace_id = $1 AND id = $2 AND source_type <> 'transcript'"
+        ))
+        .bind(workspace)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        row.as_ref()
+            .map(stored_chunk)
+            .transpose()
+            .map_err(map_sqlx_error)
+    }
+
+    async fn update_fact_chunk(
+        &self,
+        workspace: Uuid,
+        id: Uuid,
+        category: FactCategory,
+        fact: &str,
+        payload: &serde_json::Value,
+        text_hash: &str,
+    ) -> AppResult<()> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let n = sqlx::query(
+            "UPDATE knowledge.chunks SET payload = $3, text_hash = $4
+              WHERE workspace_id = $1 AND id = $2 AND kind = 'fact'",
+        )
+        .bind(workspace)
+        .bind(id)
+        .bind(payload)
+        .bind(text_hash)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+        if n == 0 {
+            return Err(AppError::not_found("knowledge chunk not found"));
+        }
+        sqlx::query(
+            "UPDATE knowledge.facts SET fact = $3, category = $4
+              WHERE workspace_id = $1 AND chunk_id = $2",
+        )
+        .bind(workspace)
+        .bind(id)
+        .bind(fact)
+        .bind(category.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        tx.commit().await.map_err(map_sqlx_error)
+    }
+
+    async fn delete_chunk(&self, workspace: Uuid, id: Uuid) -> AppResult<bool> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        sqlx::query("DELETE FROM knowledge.facts WHERE workspace_id = $1 AND chunk_id = $2")
+            .bind(workspace)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        let n = sqlx::query("DELETE FROM knowledge.chunks WHERE workspace_id = $1 AND id = $2")
+            .bind(workspace)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?
+            .rows_affected();
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(n > 0)
     }
 
     async fn purge_rows(

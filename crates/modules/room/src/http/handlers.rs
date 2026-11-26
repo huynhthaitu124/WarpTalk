@@ -10,10 +10,11 @@ type ApiResult<T> = AppResult<Json<T>>;
 use super::dto::{
     AudioModeRequest, BridgeStateResponse, ClaimBridgeRequest, ClaimBridgeResponse,
     CreateRoomRequest, HeartbeatRequest, JoinByCodeRequest, JoinByIdRequest, JoinedDto, ListQuery,
-    PageDto, ParticipantDto, RoomDto, RoutesDto, UpdateLanguagesRequest,
+    PageDto, ParticipantDto, RoomDto, RoutesDto, SettingsRequest, UpdateLanguagesRequest,
+    UpdateRoomRequest,
 };
 use crate::application::ports::RoomRecord;
-use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom};
+use crate::application::service::{ClaimBridge, CreateRoom, JoinRoom, UpdateRoom};
 use crate::domain::{AudioMode, RoomAction, RoomStatus};
 
 pub async fn create(
@@ -28,15 +29,21 @@ pub async fn create(
             CreateRoom {
                 workspace_id: req.workspace_id,
                 title: req.title,
+                description: req.description,
                 host_display_name: req.display_name,
                 scheduled_at: req.scheduled_at,
                 source_language: req.source_language,
                 target_languages: req.target_languages,
-                requires_approval: req.requires_approval,
+                settings: SettingsRequest::patch(req.settings, req.requires_approval),
+                invited_emails: req.invited_emails,
             },
         )
         .await?;
-    Ok((StatusCode::CREATED, Json(s.room_dto(room))))
+    let invites = s.service.invitations_for(&room, auth.user_id()).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(s.room_dto(room).with_invites(invites)),
+    ))
 }
 
 pub async fn list(
@@ -63,7 +70,35 @@ pub async fn get_one(
     auth: AuthUser,
     Path(id): Path<RoomId>,
 ) -> ApiResult<RoomDto> {
-    Ok(Json(s.room_dto(s.service.get(id, auth.user_id()).await?)))
+    let room = s.service.get(id, auth.user_id()).await?;
+    let invites = s.service.invitations_for(&room, auth.user_id()).await?;
+    Ok(Json(s.room_dto(room).with_invites(invites)))
+}
+
+pub async fn update(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<RoomId>,
+    Json(req): Json<UpdateRoomRequest>,
+) -> ApiResult<RoomDto> {
+    let room = s
+        .service
+        .update(
+            id,
+            auth.user_id(),
+            UpdateRoom {
+                title: req.title,
+                description: req.description,
+                scheduled_at: req.scheduled_at,
+                source_language: req.source_language,
+                target_languages: req.target_languages,
+                settings: SettingsRequest::patch(req.settings, req.requires_approval),
+                invited_emails: req.invited_emails,
+            },
+        )
+        .await?;
+    let invites = s.service.invitations_for(&room, auth.user_id()).await?;
+    Ok(Json(s.room_dto(room).with_invites(invites)))
 }
 
 pub async fn join_by_code(
@@ -242,9 +277,12 @@ pub async fn bridge_claim(
                 source_language: req.source_language,
                 target_languages: req.target_languages,
                 listen_language: req.listen_language,
+                settings: SettingsRequest::patch(req.settings, None),
+                invited_emails: req.invited_emails,
             },
         )
         .await?;
+    let invites = s.service.invitations_for(&out.room, auth.user_id()).await?;
     let status = if out.created {
         StatusCode::CREATED
     } else {
@@ -252,11 +290,10 @@ pub async fn bridge_claim(
     };
     Ok((
         status,
-        Json(ClaimBridgeResponse::new(
-            out,
-            s.service.bridge_config(),
-            s.service.now(),
-        )),
+        Json(
+            ClaimBridgeResponse::new(out, s.service.bridge_config(), s.service.now())
+                .with_invites(invites),
+        ),
     ))
 }
 

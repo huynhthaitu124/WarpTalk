@@ -3,7 +3,9 @@ use tokio::sync::watch;
 use warptalk_ai_plane::ai::{AiProviders, PlatformKeys};
 use warptalk_ai_plane::byo_from_env;
 use warptalk_ai_plane::knowledge::build_vector_store;
-use warptalk_config::{DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig};
+use warptalk_config::{
+    DatabaseConfig, LogFormat as ConfigLogFormat, RedisConfig, TelemetryConfig, TestModeConfig,
+};
 use warptalk_telemetry::LogFormat as TelemetryLogFormat;
 use warptalk_worker::{
     build_ai_plane, build_settings, build_summary, build_transcript_module,
@@ -94,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         build_vector_store()?,
         ai,
         settings,
+        TestModeConfig::from_env()?.suggestion_script,
     )
     .await?;
 

@@ -41,10 +41,8 @@ test.describe('Pre-join', () => {
     await expect(app.getByText('Camera is off')).toBeVisible();
     await app.getByRole('button', { name: 'Turn camera on' }).click();
     await expect(app.getByTestId('camera-preview')).toHaveAttribute('data-camera', 'on');
-    const muted = app.getByRole('checkbox', { name: 'Join with my microphone muted' });
-    await expect(muted).toBeChecked();
-    await muted.click();
-    await expect(muted).not.toBeChecked();
+    await app.getByRole('button', { name: 'Unmute microphone' }).click();
+    await expect(app.getByRole('button', { name: 'Mute microphone' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('MTG-32 selecting another microphone re-opens the preview on that device', async ({ app, tokens, workspace }) => {

@@ -91,6 +91,7 @@ Nguồn: spec 08–14 + repo gốc (clone tại scratchpad `upstream/`). Đánh 
 - `room`: chưa có capacity limit, credit check khi resume, voice-clone toggle endpoint, các trạng thái route degrade
 - Outbox chưa có lease khi claim (consumer phải idempotent)
 - Voice consent đang là Noop
+- WarpBot plugin chưa làm (catalog/install/connect OAuth+API key, MCP client, tool policy, requests/approvals, marketplace, audits, insights); endpoint trả 404, UI plugin phải ẩn. Đính kèm chat tắt.
 
 ## Thương mại hoá — 2026-11-24
 

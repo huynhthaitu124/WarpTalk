@@ -1,5 +1,5 @@
 // Drives the real subscription logic (features/meeting/audio.ts) against fake LiveKit participants.
-import { applyAudioSubscriptions, type PubLike } from '@/features/meeting/audio';
+import { applyAudioSubscriptions, type PubLike } from '@v2/features/meeting/audio';
 
 export interface FakePub { name: string; kind?: 'audio' | 'video'; source?: string }
 export interface FakeRemote { identity: string; pubs: FakePub[] }

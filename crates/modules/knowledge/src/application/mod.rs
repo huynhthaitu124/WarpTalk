@@ -1,5 +1,6 @@
 //! Use cases and ports.
 
+pub mod chunks;
 pub mod eval;
 pub mod extract;
 pub mod facts;
@@ -11,6 +12,7 @@ pub mod query;
 pub mod rerank;
 pub mod search;
 
+pub use chunks::{ChunkPage, ChunkService, ChunkServiceDeps, ChunkView, ListChunks, PatchChunk};
 pub use eval::{RelevanceKey, run_eval};
 pub use extract::{
     DOCX_MIME, ExtractError, ExtractInput, ExtractedText, ExtractorChain, MarkdownExtractor,
@@ -23,8 +25,8 @@ pub use model::{
     AccessContext, EffectiveScope, SearchFilters, SearchHit, SearchMetrics, SearchResult,
 };
 pub use ports::{
-    AccessScope, DocumentAccess, DocumentSource, DocumentSourceError, JobRecord, JobStatus,
-    KnowledgeRepository, ResultPublisher,
+    AccessScope, ChunkCursor, ChunkListFilter, DocumentAccess, DocumentSource, DocumentSourceError,
+    JobRecord, JobStatus, KnowledgeRepository, ResultPublisher,
 };
 pub use rerank::{LexicalReranker, LlmReranker, Reranker};
 pub use search::{KnowledgeService, SearchDeps};

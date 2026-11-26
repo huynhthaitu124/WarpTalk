@@ -1,0 +1,307 @@
+/**
+ * WT-274 — the ONE frontend definition of "who is in this room".
+ *
+ * This mirrors the backend's ratified rule, `TranslationRoomParticipantStatuses.SeatHolding`
+ * (WT-262/263): a seat is held by CONNECTED participants only. Somebody sitting in the lobby
+ * (WAITING) does NOT hold a seat, and INVITED / DISCONNECTED / LEFT / KICKED / REJECTED never
+ * did. Do not widen `SEAT_HOLDING_STATUSES` without changing the backend constant first — the
+ * two are one product rule, not two coincidences.
+ *
+ * Every surface that shows "N in this room" must go through `roomOccupancy`, or through the
+ * `useRoomOccupancy` hook that wraps it. Three surfaces used to derive it privately and
+ * disagreed on screen at the same instant: the room-detail header chip said `1/100`, the
+ * Tracking panel said `Attendees: 0`, and the meetings-list row said `0/100`. Each of those
+ * used a different status set (`["joined","connected"]`, "everyone the page could name minus
+ * the organizer", and the server's `participantCount`), so they could not agree even in
+ * principle. Deriving it once is the fix; three components agreeing to derive it the same way
+ * is how they drifted in the first place.
+ *
+ * Deliberately free of runtime imports so it stays a pure, node --test-able module.
+ */
+
+import { isExternalBridgeStandIn } from "./meeting-types.ts";
+
+/** Statuses that occupy one of the room's `maxParticipants` seats. CONNECTED only. */
+export const SEAT_HOLDING_STATUSES = ["connected"] as const;
+
+/** Statuses that mean "present, but waiting to be let in". Never counted against capacity. */
+export const LOBBY_STATUSES = ["waiting"] as const;
+
+/** The least a record has to carry for the seat rule to apply to it. */
+export type ParticipantLike = { status?: string | null };
+
+/**
+ * WT-308 — how one participant's row reads on a roster, derived once.
+ *
+ * The People panel used to decide this inline as an if/else chain over
+ * `invited → waiting → disconnected`, with a bare `else` that rendered "Left". CONNECTED —
+ * the status the backend seeds the HOST's own row with at room creation
+ * (TranslationRoomService.CreateTranslationRoomAsync) and the status every admitted
+ * participant holds — had no branch of its own, so it fell into that `else`. A host who had
+ * just opened their own meeting read as "Left" on the People tab.
+ *
+ * The lesson from WT-274 applies to the label as much as it did to the count: an if/else
+ * chain whose final arm names a specific terminal state is a chain that mislabels every
+ * status nobody thought to add. So this is exhaustive over the participant_status enum
+ * (INVITED · WAITING · CONNECTED · DISCONNECTED · LEFT · KICKED · REJECTED), and its fallback
+ * is the neutral "not in room" — never "left". Claiming somebody departed is a claim; when
+ * the status is unrecognised we do not have the standing to make it.
+ */
+export type ParticipantPresence =
+  /** Live in the media session right now — the strongest signal, and it outranks status. */
+  | "in-room"
+  /** Holds a seat per the ratified rule, but no live media track has been seen yet. */
+  | "connected"
+  /** Present, awaiting the host's admission. */
+  | "lobby"
+  /** Has a row but has never arrived — invited, or an unrecognised status. */
+  | "not-in-room"
+  /** Was admitted and lost the connection. Recoverable; distinct from leaving. */
+  | "disconnected"
+  /** Terminal: LEFT / KICKED / REJECTED (the client renders KICKED as `removed`). */
+  | "left";
+
+const PRESENCE_BY_STATUS: Record<string, ParticipantPresence> = {
+  connected: "connected",
+  // Not in the Postgres enum, but older payloads and `TranslationRoomParticipantDto` still
+  // carry it. Treated as CONNECTED rather than falling through — the whole point of this bug.
+  joined: "connected",
+  waiting: "lobby",
+  invited: "not-in-room",
+  disconnected: "disconnected",
+  left: "left",
+  kicked: "left",
+  removed: "left",
+  rejected: "left",
+};
+
+/**
+ * Resolve how a participant's row should read.
+ *
+ * `isInRoom` is live media presence (a LiveKit identity match) and deliberately outranks the
+ * stored status: the database row is written on join/leave transitions, while media presence
+ * is observed continuously, so when they disagree the live signal is the fresher one.
+ */
+export function participantPresence(
+  status?: string | null,
+  options?: { isInRoom?: boolean },
+): ParticipantPresence {
+  if (options?.isInRoom) return "in-room";
+  return PRESENCE_BY_STATUS[normalizeStatus(status)] ?? "not-in-room";
+}
+
+/**
+ * The one wording of each presence, in English. Surfaces render this, they do not invent their
+ * own. Left untranslated deliberately: this module is pure and `node --test`-able (see the file
+ * comment above), and this constant's exact English values are pinned by this file's own test
+ * suite. Call sites that read from a translation catalog use `presenceLabel` below instead —
+ * same one-wording rule, with a locale attached.
+ */
+export const PRESENCE_LABELS: Record<ParticipantPresence, string> = {
+  "in-room": "In Room",
+  connected: "Connected",
+  lobby: "Waiting in Lobby",
+  "not-in-room": "Not in room",
+  disconnected: "Disconnected",
+  left: "Left",
+};
+
+/**
+ * Translator shape shared with `getPlanDescription`/`buildFeatureList` (src/lib/utils.ts) and
+ * `describeRecordSharing` (record-sharing.ts), matching a next-intl `useTranslations(...)`
+ * already scoped to `meetingRoomPage.presence` (e.g. `t("connected")`). Optional and defaulted to
+ * `PRESENCE_LABELS` so this stays the one wording of each presence — a caller with no translator
+ * gets exactly what `PRESENCE_LABELS` always gave.
+ */
+type PresenceLabelTranslator = (key: string) => string;
+
+const PRESENCE_LABEL_KEYS: Record<ParticipantPresence, string> = {
+  "in-room": "inRoom",
+  connected: "connected",
+  lobby: "lobby",
+  "not-in-room": "notInRoom",
+  disconnected: "disconnected",
+  left: "left",
+};
+
+/**
+ * The one wording of a presence, translated. Surfaces that read from the i18n catalog call this
+ * instead of indexing `PRESENCE_LABELS` directly, so the translated surface and the pinned
+ * English constant cannot drift into two different sets of words for the same six states.
+ */
+export function presenceLabel(
+  presence: ParticipantPresence,
+  t?: PresenceLabelTranslator,
+): string {
+  if (!t) return PRESENCE_LABELS[presence];
+  return t(PRESENCE_LABEL_KEYS[presence]);
+}
+
+function normalizeStatus(status?: string | null): string {
+  return typeof status === "string" ? status.trim().toLowerCase() : "";
+}
+
+/** True when this participant currently occupies a seat. */
+export function holdsSeat(status?: string | null): boolean {
+  const normalized = normalizeStatus(status);
+  return SEAT_HOLDING_STATUSES.some((seat) => seat === normalized);
+}
+
+/** True when this participant is in the lobby awaiting admission. */
+export function isInLobby(status?: string | null): boolean {
+  const normalized = normalizeStatus(status);
+  return LOBBY_STATUSES.some((lobby) => lobby === normalized);
+}
+
+export interface RoomOccupancy<T extends ParticipantLike = ParticipantLike> {
+  /** Participants holding a seat right now, in roster order. */
+  seated: T[];
+  /** Participants in the lobby. Present, but not against capacity. */
+  lobby: T[];
+  /** The single number every "in this room" surface renders. */
+  seatCount: number;
+  capacity: number;
+  /** The one formatting of the pair, e.g. `"1/100"`. */
+  label: string;
+  isFull: boolean;
+  /**
+   * False when no roster was available and `seatCount` came from the server's aggregate
+   * instead. Surfaces that want to be strict about live presence can check this; it exists
+   * because the meetings list has no per-row roster to read.
+   */
+  fromRoster: boolean;
+}
+
+/**
+ * Resolve a room's occupancy from whatever the caller actually has.
+ *
+ * `participants` is authoritative when supplied — including when it is empty, which means
+ * "nobody is seated", not "unknown". `fallbackCount` is consulted only when there is no
+ * roster at all.
+ */
+/**
+ * Whether this room is over, in which case occupancy is the wrong question.
+ *
+ * "0/100" on a finished meeting is arithmetically true and useless: nobody is in a meeting that
+ * ended. What a finished meeting has is an ATTENDANCE — how many people turned up — and that is
+ * what the pill should carry once the room is over.
+ *
+ * WT-714 added `expired` and `failed`, which were missing for the ordinary reason a list like this
+ * goes wrong: neither status was reachable when it was written. `expired` is now — the sweep
+ * retires a booking nobody attended two hours after its slot — and the omission read at its worst
+ * on exactly that room. Falling through to the live branch, the Tracking panel reported the
+ * server's stale `participantCount` as people who are in the room RIGHT NOW, on a meeting whose
+ * defining property is that nobody ever entered it. `failed` is here for the same reason and is
+ * the more obvious of the two: a room that broke is not one anybody is still sitting in.
+ *
+ * Stated as a set rather than a chain of `===`, because the chain is what let two statuses be
+ * left out of it silently.
+ */
+const FINISHED_ROOM_STATUSES: ReadonlySet<string> = new Set([
+  "ended",
+  "cancelled",
+  "expired",
+  "failed",
+  "timeout",
+]);
+
+export function isFinishedStatus(status?: string | null): boolean {
+  return FINISHED_ROOM_STATUSES.has(status?.toLowerCase() ?? "");
+}
+
+export function roomOccupancy<T extends ParticipantLike>(input: {
+  capacity?: number | null;
+  participants?: readonly T[] | null;
+  fallbackCount?: number | null;
+  /** The room's status, so a finished meeting can report attendance instead of occupancy. */
+  status?: string | null;
+  /** Distinct people who were ever in the room (`attendedCount` from the API). */
+  attendedCount?: number | null;
+}): RoomOccupancy<T> {
+  const capacity = Math.max(0, Math.trunc(input.capacity ?? 0));
+  const roster = input.participants ?? null;
+
+  // A finished meeting answers with who came, not who is here. Everything else about the shape
+  // stays the same so callers do not have to branch.
+  if (isFinishedStatus(input.status)) {
+    const attended = Math.max(0, Math.trunc(input.attendedCount ?? 0));
+    const seated = roster?.filter((participant) => holdsSeat(participant.status)) ?? [];
+    return {
+      seated,
+      lobby: [],
+      seatCount: attended,
+      capacity,
+      label: `${attended}`,
+      isFull: false,
+      fromRoster: false,
+    };
+  }
+
+  if (!roster) {
+    const seatCount = Math.max(0, Math.trunc(input.fallbackCount ?? 0));
+    return {
+      seated: [],
+      lobby: [],
+      seatCount,
+      capacity,
+      label: `${seatCount}/${capacity}`,
+      isFull: capacity > 0 && seatCount >= capacity,
+      fromRoster: false,
+    };
+  }
+
+  const seated = roster.filter((participant) => holdsSeat(participant.status));
+  const lobby = roster.filter((participant) => isInLobby(participant.status));
+
+  return {
+    seated,
+    lobby,
+    seatCount: seated.length,
+    capacity,
+    label: `${seated.length}/${capacity}`,
+    isFull: capacity > 0 && seated.length >= capacity,
+    fromRoster: true,
+  };
+}
+
+/**
+ * WT-904 — an EXTERNAL_BRIDGE room's roster with the Google Meet stand-in taken out of the count.
+ *
+ * The stand-in holds one of the room's two seats from the moment the room is made, so the host's
+ * own room read "2/2 in room" and the People panel listed "External Meeting" as a second person.
+ * It is a connection that carries everyone on the far side, not an attendee:
+ *
+ *   - the roster loses its row (the page shows the connection separately);
+ *   - the capacity loses the seat it permanently occupies, so the host alone reads "1/1";
+ *   - attendance loses one when its row is present — the server counts every user id that ever
+ *     joined, and the stand-in's row is written as joined when the room is created.
+ *
+ * Every other room passes through untouched, which is the common case.
+ */
+export function discountBridgeStandIn<T extends { userId?: string | null }>(input: {
+  roster: readonly T[] | null;
+  capacity?: number | null;
+  attendedCount?: number | null;
+}): {
+  roster: T[] | null;
+  capacity: number | null | undefined;
+  attendedCount: number | null | undefined;
+  standIn: T | null;
+} {
+  const standIn = input.roster?.find((participant) => isExternalBridgeStandIn(participant.userId)) ?? null;
+  if (!standIn || !input.roster) {
+    return {
+      roster: input.roster ? [...input.roster] : null,
+      capacity: input.capacity,
+      attendedCount: input.attendedCount,
+      standIn: null,
+    };
+  }
+  return {
+    roster: input.roster.filter((participant) => participant !== standIn),
+    capacity: typeof input.capacity === "number" ? Math.max(0, input.capacity - 1) : input.capacity,
+    attendedCount:
+      typeof input.attendedCount === "number" ? Math.max(0, input.attendedCount - 1) : input.attendedCount,
+    standIn,
+  };
+}

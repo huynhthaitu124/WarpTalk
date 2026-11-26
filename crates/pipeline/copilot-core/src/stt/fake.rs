@@ -76,7 +76,7 @@ impl SpeechToText for FakeStt {
         if self
             .inner
             .fail_opens
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1))
             .is_ok()
         {
             return Err(SttError::Connect("fake: open failed".into()));

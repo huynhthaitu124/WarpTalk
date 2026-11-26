@@ -14,14 +14,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
     private let copilot: CopilotSessionController
     private let overlay: OverlayController
     private let overlayModel: OverlayModel
+    private let overlayWeb: OverlayWebController
     private let permissions: PermissionsManager
     private let settings: SettingsStore
 
     init(capture: NativeCaptureController, copilot: CopilotSessionController, overlay: OverlayController, overlayModel: OverlayModel,
-         permissions: PermissionsManager, settings: SettingsStore) {
-        self.capture = capture; self.copilot = copilot; self.overlay = overlay; self.overlayModel = overlayModel
+         overlayWeb: OverlayWebController, permissions: PermissionsManager, settings: SettingsStore) {
+        self.capture = capture; self.copilot = copilot; self.overlay = overlay; self.overlayModel = overlayModel; self.overlayWeb = overlayWeb
         self.permissions = permissions; self.settings = settings
         super.init()
+        overlayWeb.onClosed = { [weak self] in self?.dispatch("overlay-command", ["command": "closed"]) }
         capture.emit = { [weak self] type, payload in self?.dispatch(type, payload) }
         copilot.emit = { [weak self] type, payload in self?.dispatch(type, payload) }
         // Copilot mode of the overlay follows the session; the web app drives suggestions (pushOverlaySuggestion).
@@ -114,9 +116,40 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                               isFinal: r.optBool("isFinal") ?? true)
             return NSNull()
         case "clearOverlay": overlayModel.clear(); return NSNull()
+        case "openOverlayWindow":
+            overlayWeb.open(bridge: self)
+            return ["visible": overlayWeb.isVisible]
+        case "closeOverlayWindow":
+            overlayWeb.close()
+            return ["visible": false]
+        case "pushOverlayState":
+            guard let state = r.params["state"] as? [String: Any], JSONSerialization.isValidJSONObject(state),
+                  let data = try? JSONSerialization.data(withJSONObject: state),
+                  let json = String(data: data, encoding: .utf8) else {
+                throw BridgeError(code: "INVALID_ARGUMENT", message: "Thiếu 'state' (object).")
+            }
+            overlayWeb.push(json: json)
+            return NSNull()
+        case "overlayCommand":
+            let command = try r.string("command")
+            if command == "expand" || command == "collapse" {     // window layout only, handled here
+                overlayWeb.setExpanded(command == "expand")
+                return NSNull()
+            }
+            if command == "hide" { overlayWeb.hide(); return NSNull() }
+            if command == "hitrect" { overlayWeb.setHitRect(r.optString("value") ?? ""); return NSNull() }
+            if command == "resize" {                                     // value "WxH" in points
+                let parts = (r.optString("value") ?? "").split(separator: "x").compactMap { Double($0) }
+                if parts.count == 2 { overlayWeb.resizeCard(width: parts[0], height: parts[1]) }
+                return NSNull()
+            }
+            var payload: [String: Any] = ["command": command]
+            if let v = r.optString("value") { payload["value"] = v }
+            dispatch("overlay-command", payload)
+            return NSNull()
         case "setOverlayOptions":
             if let b = r.optBool("clickThrough") { settings.overlayClickThrough = b }
-            if let b = r.optBool("hideFromScreenShare") { settings.overlayHiddenFromScreenShare = b }
+            if let b = r.optBool("hideFromScreenShare") { settings.overlayHiddenFromScreenShare = b; overlayWeb.applySharing() }
             return ["clickThrough": settings.overlayClickThrough, "hideFromScreenShare": settings.overlayHiddenFromScreenShare]
         case "permissions": return permissions.snapshot()
         case "requestPermission":
@@ -150,6 +183,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             "screenCaptureKit": true,
             "voiceMode": true,
             "overlay": true,
+            "overlayWindow": true,
             "copilot": CopilotEngines.isAvailable,   // false: built without `make core`, startCopilotSession fails ENGINE_UNAVAILABLE
             "inputDevices": DeviceManager.inputDevices().map { ["uid": $0.uid, "name": $0.name] },
             "supportedApps": MeetingAppSpec.all.map { ["name": $0.name, "bundleIds": $0.bundleIDs] },

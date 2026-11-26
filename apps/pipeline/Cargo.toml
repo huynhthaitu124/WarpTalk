@@ -15,9 +15,9 @@ path = "src/lib.rs"
 name = "warptalk-pipeline"
 path = "src/main.rs"
 
-[[bin]]
-name = "pipeline-bench"
-path = "src/bin/pipeline_bench.rs"
+# [[bin]]
+# name = "pipeline-bench"
+# path = "src/bin/pipeline_bench.rs"
 
 [features]
 default = []

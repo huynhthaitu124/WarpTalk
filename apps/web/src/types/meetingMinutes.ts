@@ -1,0 +1,283 @@
+/**
+ * Biên bản họp — the signed meeting record.
+ *
+ * Distinct from the AI summary in `meetingSummary.ts`, and deliberately so: the summary is what
+ * a model wrote and nobody owns, while this has a number, a date of record, an attendance list,
+ * a named secretary and a chair, and a state after which it does not change.
+ *
+ * Mirrors MeetingMinutesDto and MeetingMinutesContent in
+ * warptalk-backend/translation-room. `content` arrives as a JSON string and is parsed here, then
+ * sent back as a string — the server stores it verbatim, so a field this client does not know
+ * about survives a round trip through an older web instead of being silently dropped.
+ */
+
+export type MinutesStatus = "DRAFT" | "IN_REVIEW" | "APPROVED";
+
+export interface MinutesAttendee {
+  participantId: string;
+  name: string;
+  role?: string | null;
+  joinedAt?: string | null;
+  leftAt?: string | null;
+  /** Not a member of this workspace when they joined — a guest, on the record as one. */
+  isExternal: boolean;
+  /** What language this person spoke. On a bilingual record, which half is the original. */
+  speakLanguage?: string | null;
+}
+
+export interface MinutesAbsentee {
+  participantId: string;
+  name: string;
+  /** Vắng có phép / không phép. The secretary's to state; the system cannot know it. */
+  reason?: string | null;
+}
+
+export interface MinutesAttendance {
+  present: MinutesAttendee[];
+  absent: MinutesAbsentee[];
+  invitedCount: number;
+  presentCount: number;
+  /** The bar being applied, in words — a bare boolean would not say what it means. */
+  quorumRule?: string | null;
+  /** Null when nobody was formally invited: an ad-hoc room has no roll to be a majority of. */
+  quorumMet?: boolean | null;
+}
+
+export interface MinutesItem {
+  text: string;
+  owner?: string | null;
+  /** Where in the meeting this came from — what lets a reader check a signed line. */
+  atMs?: number | null;
+}
+
+export interface MinutesSection {
+  /** The summary template's key. The title is rendered from it; see meeting-summary.ts. */
+  key: string;
+  kind: "paragraph" | "items";
+  text?: string | null;
+  items?: MinutesItem[] | null;
+}
+
+/**
+ * One thing the meeting actually put to the room.
+ *
+ * WHY `movedBy`, `secondedBy` AND `outcome` ARE OPTIONAL
+ *   A motion under Robert's Rules is four facts, not three counts: somebody moved it, somebody
+ *   seconded it, the room voted, and the CHAIR DECLARED a result. The declaration is the part
+ *   that is not arithmetic — a motion needing a two-thirds majority can be lost on a count that
+ *   looks like a win, and a motion can be withdrawn or tabled with no count at all — so the
+ *   outcome is recorded as what was declared rather than recomputed from the tallies here.
+ *
+ *   They are optional because minutes already stored in production predate them. `content` is
+ *   kept verbatim by the server, so those documents come back exactly as they were written; a
+ *   required field would make every one of them fail to describe itself, and this is a signed
+ *   record where quietly filling in a proposer nobody named is the worst possible repair. Absent
+ *   means NOT RECORDED, and the templates print the line only when it is there.
+ */
+export interface MinutesVote {
+  topic: string;
+  forCount: number;
+  againstCount: number;
+  abstainCount: number;
+  /** Who put the motion. Absent on a document written before this was recorded. */
+  movedBy?: string | null;
+  /** Who seconded it. A motion can genuinely have no seconder — absent is not "unknown". */
+  secondedBy?: string | null;
+  /** What the chair declared: "Carried", "Failed", "Withdrawn", "Tabled". Free text by design —
+   *  the vocabulary belongs to the room's own rules of order, not to this client. */
+  outcome?: string | null;
+  atMs?: number | null;
+}
+
+export interface MeetingMinutesContent {
+  meetingTitle?: string | null;
+  /** The language the meeting was held in — which half of a bilingual record is the original. */
+  primaryLanguage?: string | null;
+  /**
+   * The same sections in the room's other languages, keyed by language code.
+   *
+   * Present only for a room with more than one target language, and PARTIAL by nature: the
+   * summary worker asks the model for {summary, decisions, actionItems}, so a template's other
+   * sections have no translation. A missing language means "not produced", never "empty".
+   */
+  translations?: Record<string, MinutesSection[]> | null;
+  location?: string | null;
+  /**
+   * How the record is classified — "Internal", "Confidential", "Public", or whatever vocabulary
+   * the organisation actually uses.
+   *
+   * NOTHING IN THIS CLIENT DERIVES ONE. A classification is a decision somebody makes about a
+   * document; it is not a function of who attended or of whether the host pressed Publish. The
+   * templates print this line when the stored document carries a value and print NO line at all
+   * when it does not, because a "Confidential" banner this product invented is a legal assurance
+   * behind which there is nobody — the same rule the .docx writer already follows when it prints
+   * an ellipsis rather than guessing a date.
+   */
+  classification?: string | null;
+  /** When the meeting was called to order — the first participant's join. */
+  openedAt?: string | null;
+  closedAt?: string | null;
+  /** Kept beside the real opening time, because "started late" is itself a fact. */
+  scheduledAt?: string | null;
+  agenda?: string | null;
+  attendance: MinutesAttendance;
+  sections: MinutesSection[];
+  votes: MinutesVote[];
+  notes?: string | null;
+}
+
+export interface MeetingMinutesDto {
+  id: string;
+  translationRoomId: string;
+  minutesNo: string;
+  /**
+   * A DISPLAY name: the title the meeting was held under when this version was drawn up, read by
+   * the server out of the document's own body.
+   *
+   * The record's identity is `minutesNo` — that is what the database keys on and what a reader
+   * files it under. This is deliberately NOT the room's current title: renaming a room must not
+   * retitle a document somebody has already signed. Null means not recorded; fall back to the
+   * room's title for display.
+   */
+  meetingTitle?: string | null;
+  status: MinutesStatus;
+  version: number;
+  isCurrent: boolean;
+  previousMinutesId?: string | null;
+  /** Which transcript version the draft was drawn from; a newer one means a revision is due. */
+  basedOnTranscriptVersion?: number | null;
+  /** The program that produced the draft. NEVER the answerable party — see secretaryName. */
+  draftedByEngine?: string | null;
+  draftedAt?: string | null;
+  secretaryParticipantId?: string | null;
+  secretaryName?: string | null;
+  secretarySignedAt?: string | null;
+  chairParticipantId?: string | null;
+  chairName?: string | null;
+  chairApprovedAt?: string | null;
+  /** How much the secretary changed before signing — the reader's evidence a person read it. */
+  editCountVsDraft: number;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * What THIS viewer may do, decided by the server so the page never re-derives a permission.
+   *
+   * canEdit — host, workspace Owner/Admin, or the secretary the host assigned; false once approved.
+   * canDesignateSecretary — host authority, until somebody has signed.
+   * canApprove — host authority: approve, open an addendum, share.
+   *
+   * Optional because an older server does not send them; callers fall back to the host rule.
+   */
+  canEdit?: boolean;
+  canDesignateSecretary?: boolean;
+  canApprove?: boolean;
+}
+
+const EMPTY_ATTENDANCE: MinutesAttendance = {
+  present: [],
+  absent: [],
+  invitedCount: 0,
+  presentCount: 0,
+};
+
+/**
+ * The stored JSON as an object, or an empty document when it cannot be read.
+ *
+ * Never throws. A minutes row whose content failed to parse should still render its number, its
+ * status and its signatures — those live in columns, and hiding the whole document because one
+ * field is malformed would lose the part that is definitely correct.
+ */
+export function parseMinutesContent(raw: string | null | undefined): MeetingMinutesContent {
+  if (!raw) return { attendance: { ...EMPTY_ATTENDANCE }, sections: [], votes: [] };
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<MeetingMinutesContent>;
+    return {
+      ...parsed,
+      attendance: {
+        ...EMPTY_ATTENDANCE,
+        ...(parsed.attendance ?? {}),
+        present: parsed.attendance?.present ?? [],
+        absent: parsed.attendance?.absent ?? [],
+      },
+      sections: parsed.sections ?? [],
+      votes: parsed.votes ?? [],
+      translations: parsed.translations ?? null,
+    };
+  } catch {
+    return { attendance: { ...EMPTY_ATTENDANCE }, sections: [], votes: [] };
+  }
+}
+
+/**
+ * One original line and the translation of it, when a translation can be established.
+ *
+ * MIRRORS MinutesBilingualPairing.PairByCitation in warptalk-backend/translation-room. Two copies
+ * of a rule is a drift risk, taken deliberately: the alternative is a round trip to the server to
+ * lay out a document the client already holds, and both sides are tested against the same cases.
+ *
+ * The rule: pair on `atMs`, NEVER on position. Nothing makes the translated array the same length
+ * or order as the original, and this is a signed document — a line printed beside the wrong
+ * original attributes a decision to something nobody decided. Pairing is all-or-nothing per
+ * section, so a reader never has to work out which lines are claims of correspondence.
+ */
+export function pairByCitation(
+  original: MinutesItem[] | null | undefined,
+  translated: MinutesItem[] | null | undefined,
+): { original: MinutesItem; translated: MinutesItem }[] | null {
+  if (!original?.length || !translated?.length) return null;
+  if (original.some((item) => item.atMs == null)) return null;
+
+  const originalCitations = new Set(original.map((item) => item.atMs));
+  if (originalCitations.size !== original.length) return null;
+
+  const byCitation = new Map<number, MinutesItem>();
+  for (const item of translated) {
+    if (item.atMs == null) continue;
+    // A citation repeated on the translated side cannot identify anything either.
+    if (byCitation.has(item.atMs)) return null;
+    byCitation.set(item.atMs, item);
+  }
+
+  const pairs: { original: MinutesItem; translated: MinutesItem }[] = [];
+  for (const item of original) {
+    const match = byCitation.get(item.atMs!);
+    if (!match) return null;
+    pairs.push({ original: item, translated: match });
+  }
+  return pairs;
+}
+
+/** The translated counterpart of one section, by key, or undefined when there is none. */
+export function counterpartOf(
+  section: MinutesSection,
+  translated: MinutesSection[] | null | undefined,
+): MinutesSection | undefined {
+  return translated?.find((candidate) => candidate.key === section.key);
+}
+
+/** Whether the document is still open to editing. Approved minutes are never edited in place. */
+export function isEditable(minutes: MeetingMinutesDto | undefined): boolean {
+  return minutes != null && minutes.status !== "APPROVED";
+}
+
+/**
+ * The record's proceedings in a language it was not drawn up in.
+ *
+ * `MeetingMinutesContent.translations` covers the languages the meeting was interpreted into
+ * while it ran. This is the answer for a reader outside that set — generated when they ask,
+ * never in advance for a language nobody wanted.
+ *
+ * `unavailable` is a real answer and the reason must be shown. A biên bản its secretary has
+ * edited cannot honestly be translated from the meeting's summary, because the summary no longer
+ * says what the document says — and a record whose whole value is that somebody signed it must
+ * not be rendered in words the signatory never wrote. Silence would leave a reader clicking a
+ * picker that does nothing.
+ */
+export interface MinutesTranslationDto {
+  language: string;
+  sections: MinutesSection[] | null;
+  status: "ready" | "generating" | "unavailable";
+  unavailableReason?: string | null;
+}

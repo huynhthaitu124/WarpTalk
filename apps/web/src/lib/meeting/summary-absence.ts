@@ -1,0 +1,119 @@
+/**
+ * Why the Summary tab has nothing to show — told apart, because the causes are not the same.
+ *
+ * WHY THIS EXISTS
+ *   A meeting listed `summary export (TEXT/MARKDOWN) · Ready` under Artifacts while the Summary
+ *   tab beside it said "This meeting ended without a summary artifact." Two tabs, one meeting,
+ *   opposite answers — and the Summary tab was the one that was wrong.
+ *
+ *   The summary existed. What was missing was permission to read it: room artifacts default to
+ *   HOST_ONLY, and BuildRoomTimelinePageAsync omits `content` for anyone the room's
+ *   ArtifactAccessHelper refuses, while still listing the row. The client saw an artifact with no
+ *   body, could not parse a summary out of it, and reported the meeting as having produced none.
+ *
+ *   That is the same class of defect as an artifact download answering 404 for a row that exists:
+ *   "you may not see this" rendered as "this does not exist". A user reading it goes looking for a
+ *   broken summary generator instead of asking the host for access.
+ */
+
+export type SummaryAbsence =
+  | "generating"
+  | "failed"
+  | "insufficient-data"
+  /** The artifact is there and readable by somebody — just not by this viewer. */
+  | "withheld"
+  /** Nobody spoke, so there was never anything to summarise. */
+  | "no-transcript"
+  /** No summary artifact was ever written for this meeting. */
+  | "absent";
+
+export type SummaryAbsenceInput = {
+  isGenerating: boolean;
+  /** "ready" | "failed" | … as the room record reports it. */
+  summaryState?: string | null;
+  /** True when a SUMMARY_EXPORT artifact row exists for this meeting, whatever its body. */
+  hasSummaryArtifact: boolean;
+  /** True when this client actually parsed a summary out of that artifact. */
+  hasParsedSummary: boolean;
+  /** The worker ran and said the transcript was too thin. */
+  insufficientData?: boolean;
+  /** Whether the meeting captured any transcript, once that is known. `undefined` = not loaded. */
+  hasTranscript?: boolean;
+};
+
+export function describeSummaryAbsence(input: SummaryAbsenceInput): SummaryAbsence {
+  if (input.isGenerating) return "generating";
+  if (input.summaryState === "failed") return "failed";
+
+  // Before the withheld check: the worker ran, produced a row, and said the transcript was too
+  // thin. That is a real answer about the meeting, not a permission problem, and it stays the
+  // more specific of the two.
+  // WT-828: except when there is no transcript at all. The worker marks an empty meeting's summary
+  // insufficient too, and "there wasn't enough transcript content" about a meeting with none is
+  // the empty Recap the owner reported — true, and no help to anybody. Silence is the reason.
+  if (input.insufficientData && input.hasTranscript === false) return "no-transcript";
+  if (input.insufficientData) return "insufficient-data";
+
+  // The distinction the old code could not draw. A row exists, its body did not reach us, and the
+  // reason is on the server — either the access policy withheld it or it was never written.
+  // Either way, "this meeting produced no summary" is a claim we cannot support.
+  if (input.hasSummaryArtifact && !input.hasParsedSummary) return "withheld";
+
+  // Below "withheld" on purpose: a meeting with no transcript can still have a summary artifact
+  // somebody else can read — a regeneration, or a summary written before a correction emptied
+  // the transcript — and "not shared with you" is the more specific of the two.
+  if (input.hasTranscript === false) return "no-transcript";
+
+  return "absent";
+}
+
+/**
+ * Translator shape shared with `getPlanDescription`/`buildFeatureList` in `src/lib/utils.ts`,
+ * matching `useTranslations("meetingSummary")` from next-intl — so a caller already holding
+ * `const t = useTranslations("meetingSummary")` can pass it straight through. Optional and
+ * defaulted below so this pure lib function — and the node:test file that asserts its literal
+ * English output — keep working unmodified for callers that have not (yet) started passing a
+ * translator. See `.agents/page-docs/i18n-localization.md` for the pattern.
+ *
+ * The key handed to `t` is the leaf under the `meetingSummary.absence.*` catalog namespace
+ * (e.g. `t("absence.withheld")`), which is also how the default copy below is keyed.
+ */
+type SummaryAbsenceTranslator = (key: string) => string;
+
+/** `SummaryAbsence` value → the leaf key under `meetingSummary.absence.*`. Kept as its own map
+ *  because `SummaryAbsence`'s values are hyphenated and JSON catalog keys are camelCase. */
+const ABSENCE_KEY: Record<SummaryAbsence, string> = {
+  generating: "generating",
+  failed: "failed",
+  "insufficient-data": "insufficientData",
+  withheld: "withheld",
+  "no-transcript": "noTranscript",
+  absent: "absent",
+};
+
+const DEFAULT_ABSENCE_COPY: Record<string, string> = {
+  generating:
+    "WarpTalk's AI assistant is analyzing the transcript. This usually takes under a minute.",
+  failed: "Summary generation did not complete for this meeting. The transcript is still available.",
+  insufficientData: "There wasn't enough transcript content in this meeting to generate a summary.",
+  // Names the likely cause and who can change it, rather than the flat denial that sent
+  // people looking for a broken generator.
+  withheld:
+    "A summary was produced for this meeting, but it is not shared with you. The meeting host controls who can read it.",
+  // Says which of the two things is missing. "No summary" alone sends the reader after a
+  // broken generator; the transcript being empty is the whole explanation.
+  noTranscript: "Nobody spoke in this meeting, so there is no transcript and nothing to summarise.",
+  absent: "This meeting ended without a summary artifact.",
+};
+
+function defaultAbsenceCopy(key: string): string {
+  const leaf = key.startsWith("absence.") ? key.slice("absence.".length) : key;
+  return DEFAULT_ABSENCE_COPY[leaf] ?? key;
+}
+
+export function summaryAbsenceMessage(
+  absence: SummaryAbsence,
+  t: SummaryAbsenceTranslator = defaultAbsenceCopy,
+): string {
+  return t(`absence.${ABSENCE_KEY[absence]}`);
+}

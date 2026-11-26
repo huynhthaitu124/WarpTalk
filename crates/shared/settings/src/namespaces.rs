@@ -13,6 +13,8 @@ pub const NS_PIPELINE: &str = "pipeline";
 pub const NS_SUGGESTION: &str = "suggestion";
 pub const NS_RAG: &str = "rag";
 pub const NS_AI_PROVIDERS: &str = "ai_providers";
+/// Platform-wide notice every visitor sees (maintenance banner, support contact). Platform scope only.
+pub const NS_PLATFORM_STATUS: &str = "platform_status";
 pub const NS_FEATURES: &str = "features";
 
 /// Register the validators of all built-in namespaces.
@@ -21,6 +23,7 @@ pub fn register_defaults(store: &SettingsStore) {
     store.register::<SuggestionSettings>(NS_SUGGESTION);
     store.register::<RagSettings>(NS_RAG);
     store.register::<AiProvidersSettings>(NS_AI_PROVIDERS);
+    store.register::<PlatformStatusSettings>(NS_PLATFORM_STATUS);
     store.register::<FeatureFlags>(NS_FEATURES);
 }
 
@@ -141,7 +144,7 @@ pub struct SuggestionSettings {
 impl Default for SuggestionSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             decide_model: "gpt-4o-mini".into(),
             generate_model: "gpt-4.1".into(),
             decide_max_tokens: 64,
@@ -310,6 +313,67 @@ impl Validate for AiProvidersSettings {
             }
         }
         Ok(())
+    }
+}
+
+/// Maintenance notice shown to every visitor while `enabled`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MaintenanceNotice {
+    pub enabled: bool,
+    /// Text of the banner; `None` lets the client show its own generic wording.
+    pub message: Option<String>,
+}
+
+/// Public platform status. Empty by default: no maintenance, no support address until an
+/// operator sets one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformStatusSettings {
+    pub maintenance: MaintenanceNotice,
+    /// Contact address shown in the banner; empty = none shown.
+    pub support_email: String,
+}
+
+impl Validate for PlatformStatusSettings {
+    fn validate(&self) -> Result<(), String> {
+        if let Some(m) = &self.maintenance.message
+            && m.chars().count() > 500
+        {
+            return Err("maintenance.message must be at most 500 characters".into());
+        }
+        let email = self.support_email.trim();
+        if !email.is_empty() {
+            let valid = email.len() <= 254
+                && !email.chars().any(char::is_whitespace)
+                && email
+                    .split_once('@')
+                    .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'));
+            if !valid {
+                return Err("support_email must be an email address".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod platform_status_tests {
+    use super::*;
+
+    #[test]
+    fn validates_support_email_and_message() {
+        assert!(PlatformStatusSettings::default().validate().is_ok());
+        let mut s = PlatformStatusSettings {
+            support_email: "help@example.com".into(),
+            ..Default::default()
+        };
+        assert!(s.validate().is_ok());
+        s.support_email = "not an email".into();
+        assert!(s.validate().is_err());
+        s.support_email = String::new();
+        s.maintenance.message = Some("x".repeat(501));
+        assert!(s.validate().is_err());
     }
 }
 

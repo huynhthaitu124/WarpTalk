@@ -50,21 +50,18 @@ test.describe('Meeting shell', () => {
     await expect(app.getByRole('textbox', { name: 'Message' })).toBeDisabled();
   });
 
-  test('MTG-02 pre-join: speak/listen language selectors offer the room languages and are sent with the join', async ({ app, tokens, workspace }) => {
+  test('MTG-02 pre-join: one language selector offers the room languages and is sent as both speak and listen', async ({ app, tokens, workspace }) => {
     const room = await createRoom(tokens.accessToken, workspace.id);
     await app.goto(`/meetings/${room.id}`);
-    const speak = app.getByRole('combobox', { name: 'I speak' });
-    await expect(speak).toContainText('Vietnamese'); // room source language
-    await speak.click();
+    const lang = app.getByRole('combobox', { name: 'My language' });
+    await expect(lang).toContainText('Vietnamese'); // room source language
+    await lang.click();
     await expect(app.getByRole('option')).toHaveText(['Vietnamese', 'English', 'Japanese']);
     await app.getByRole('option', { name: 'English' }).click();
-    const listen = app.getByRole('combobox', { name: 'I listen in' });
-    await listen.click();
-    await app.getByRole('option', { name: 'Japanese' }).click();
-    await expect(listen).toContainText('Japanese');
+    await expect(lang).toContainText('English');
     const req = app.waitForRequest((r) => r.url().endsWith(`/translation-rooms/${room.id}/join`) && r.method() === 'POST');
     await app.getByRole('button', { name: 'Join meeting' }).click();
-    expect((await req).postDataJSON()).toMatchObject({ speakLanguage: 'en', listenLanguage: 'ja' });
+    expect((await req).postDataJSON()).toMatchObject({ speakLanguage: 'en', listenLanguage: 'en' });
   });
 
   test('MTG-03 meetings list shows live rooms only', async ({ app, tokens, workspace }) => {

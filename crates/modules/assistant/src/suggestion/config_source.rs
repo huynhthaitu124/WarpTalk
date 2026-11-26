@@ -21,8 +21,8 @@ pub trait ConfigSource: Send + Sync {
 /// Resolves through [`SettingsStore`]. Each room holds a `watch` receiver on its scope chain; the
 /// store refreshes it on every relevant `put`/`delete` (and at least every TTL), so a change is
 /// visible to the next segment without a restart. Invalid documents fall back to the last valid
-/// value (store behaviour); a store failure on first use yields the defaults (`enabled = false`,
-/// i.e. silence).
+/// value (store behaviour); a store failure on first use yields the defaults (`enabled = true`,
+/// i.e. suggestions on).
 pub struct SettingsConfigSource {
     store: SettingsStore,
     watchers: Mutex<HashMap<RoomId, watch::Receiver<SuggestionConfig>>>,

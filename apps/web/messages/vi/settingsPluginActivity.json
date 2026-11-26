@@ -1,0 +1,67 @@
+{
+  "accessDenied": {
+    "title": "Từ chối truy cập",
+    "description": "Chỉ Chủ sở hữu và Quản trị viên không gian làm việc mới có thể xem hoạt động plugin."
+  },
+  "loadError": {
+    "title": "Không thể tải hoạt động plugin",
+    "description": "Hãy thử lại, và nếu vẫn thất bại hãy kiểm tra dịch vụ trợ lý có hoạt động không."
+  },
+  "retrying": "Đang thử lại…",
+  "retry": "Thử lại",
+  "allPlugins": "Tất cả plugin",
+  "allMembers": "Tất cả thành viên",
+  "memberFallback": "Thành viên",
+  "empty": {
+    "noMoreTitle": "Không còn hoạt động nào",
+    "noMoreDescription": "Đó là trang cuối cùng.",
+    "noMatchTitle": "Không có hoạt động nào khớp với bộ lọc này",
+    "noMatchDescription": "Xóa một bộ lọc để xem thêm.",
+    "noActivityTitle": "Chưa có hoạt động plugin nào",
+    "noActivityDescription": "Khi WarpBot chạy một công cụ plugin cho ai đó trong không gian làm việc này, nó sẽ được liệt kê ở đây."
+  },
+  "table": {
+    "time": "Thời gian",
+    "member": "Thành viên",
+    "plugin": "Plugin",
+    "tool": "Công cụ",
+    "result": "Kết quả"
+  },
+  "noLongerMember": "Không còn là thành viên",
+  "page": "Trang {page}",
+  "previous": "Trước",
+  "next": "Sau",
+  "outcome": {
+    "succeeded": "Thành công",
+    "blocked": "Bị chặn",
+    "blockedHint": "Workspace này chưa cho phép plugin này. Thêm plugin ở trang plugin của workspace.",
+    "workspaceToolBlocked": "Workspace đã chặn",
+    "workspaceToolBlockedHint": "Owner của workspace đã chặn công cụ này với WarpBot. Chỉ Owner mới cho phép lại được, ở trang plugin của workspace.",
+    "turnedOff": "Thành viên đã tắt",
+    "turnedOffHint": "Thành viên đã tắt công cụ này cho WarpBot. Chỉ họ mới bật lại được.",
+    "declined": "Đã từ chối",
+    "declinedHint": "Thành viên đã huỷ ở màn hình cấp quyền của nhà cung cấp.",
+    "awaitingConfirmation": "Đang chờ xác nhận",
+    "awaitingConfirmationHint": "WarpBot đã hỏi thành viên xác nhận thao tác này trong chat.",
+    "needsSetup": "Cần thiết lập",
+    "needsSetupHint": "Kết nối của thành viên còn thiếu hoặc chưa đủ quyền. Họ sửa ở My connections.",
+    "providerError": "Lỗi nhà cung cấp",
+    "providerErrorHint": "Nhà cung cấp không phản hồi hoặc giới hạn yêu cầu. Không cần sửa gì; thử lại sau.",
+    "providerConfigurationHint": "Cấu hình của WarpTalk cho nhà cung cấp này bị sai. Quản trị viên nền tảng phải sửa.",
+    "toolError": "Lỗi công cụ",
+    "toolErrorHint": "Công cụ đã chạy và từ chối yêu cầu. Hỏi WarpBot theo cách khác có thể được.",
+    "failed": "Thất bại"
+  },
+  "fixer": {
+    "owner": "Bạn sửa được",
+    "member": "Thành viên tự sửa",
+    "platform": "Quản trị viên nền tảng sửa",
+    "nobody": "Không cần làm gì"
+  },
+  "formerMember": "Cựu thành viên",
+  "managePlugins": "Quản lý plugin",
+  "copyMemberLink": "Sao chép link cho thành viên",
+  "linkCopied": "Đã sao chép link",
+  "copyFailed": "Không sao chép được link",
+  "trendsInInsights": "Xu hướng ở Insights"
+}

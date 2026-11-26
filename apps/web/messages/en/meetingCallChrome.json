@@ -1,0 +1,33 @@
+{
+  "readyCard": {
+    "dismissAria": "Dismiss",
+    "title": "Your meeting’s ready",
+    "description": "Share this link with the people you want in the meeting.",
+    "addOthers": "Add others"
+  },
+  "captions": {
+    "collapse": "Hide captions",
+    "expand": "Show captions",
+    "latest": "Latest",
+    "liveRegionAria": "Live captions",
+    "emptyState": "Captions will appear here as people speak."
+  },
+  "stage": {
+    "cameraOff": "Camera is off",
+    "presenting": "You are presenting",
+    "retryConnection": "Retry connection",
+    "spotlightedByHost": "Spotlighted by host",
+    "pinned": "Pinned",
+    "connectionState": {
+      "connected": "Connected",
+      "connecting": "Connecting",
+      "reconnecting": "Reconnecting",
+      "waiting": "Waiting for LiveKit"
+    }
+  },
+  "displaced": {
+    "title": "You joined this meeting from another device or tab.",
+    "description": "This account is in the meeting somewhere else now, so this window stopped connecting rather than push that one out. Keep using the other one, or move the meeting here.",
+    "takeOver": "Use this device"
+  }
+}

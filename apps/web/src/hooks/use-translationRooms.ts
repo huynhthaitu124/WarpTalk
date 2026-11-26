@@ -1,0 +1,704 @@
+"use client";
+
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
+import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/api/errors";
+import { getLanguageName } from "@/lib/language/languages";
+import {
+  readLanguagePolicyNotice,
+  readStartLanguagesRefusal,
+  StartLanguagesRefusedError,
+} from "@/lib/meeting/start-language-policy";
+import { translationRoomService } from "@/services/translation-room.service";
+import type { BridgeClaimRequest } from "@/lib/meeting/bridge-capturer";
+import { applyRoomSettingsPatch } from "@/lib/meeting/room-settings-patch";
+import { applyRoomLanguages } from "@/lib/meeting/room-languages-changed";
+import { SERIES_ROOT_KEY } from "@/hooks/use-series";
+import { endRoomFlightKey, singleFlight } from "@/lib/meeting/single-flight";
+import type { FlashModeState } from "@/services/translation-room.service";
+import type { NoiseReductionMode } from "@/lib/meeting/noise-reduction";
+import type { ArtifactAccessLevel } from "@/lib/meeting/record-sharing";
+import type {
+  CreateTranslationRoomRequest,
+  RecurrenceRequest,
+  JoinTranslationRoomByCodeRequest,
+  SubmitTranslationRoomFeedbackRequest,
+  TranslationRoomFeedbackDto,
+  TranslationRoomFeedbackStateDto,
+  TranslationRoomDto,
+  TranslationRoomParticipantDto,
+  UpdateRoomSettingsRequest,
+} from "@/types/translationRoom";
+
+const MEETING_KEY = ["translationRooms"] as const;
+const ROOM_FEEDBACK_KEY = ["translationRoomFeedback"] as const;
+/** Exported so a room-wide Start/Stop broadcast can refresh it without re-spelling the key. */
+export const sessionsKey = (roomId: string) => [...MEETING_KEY, roomId, "sessions"] as const;
+
+/**
+ * Second argument of the room-scoped polling hooks (participants, sessions).
+ *
+ * A bare boolean is the older `enabled` form and still works. `poll: false` fetches once and
+ * never refetches on an interval — an ENDED meeting's roster and sessions no longer change, and
+ * polling them every few seconds from the recap page only spent the per-user rate limit (WT-701).
+ */
+export type TranslationRoomPollOptions = {
+  /** Gate the request entirely. Defaults to true. */
+  enabled?: boolean;
+  /** Keep refetching on an interval. Defaults to true. */
+  poll?: boolean;
+};
+
+function resolvePollOptions(value: boolean | TranslationRoomPollOptions | undefined): {
+  enabled: boolean;
+  poll: boolean;
+} {
+  if (typeof value === "boolean") return { enabled: value, poll: true };
+  return { enabled: value?.enabled ?? true, poll: value?.poll ?? true };
+}
+
+export function useTranslationRooms(params?: {
+  status?: string;
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+  /** Pass the active workspace on any workspace-scoped screen. See `translationRoomService.list`. */
+  workspaceId?: string;
+  /**
+   * WT-327: one row per repeating BOOKING instead of one per occurrence. See
+   * `translationRoomService.list` for which screens should ask for it — the day panel and the day
+   * strip must not, because they are asking about a date, and a booking has no single date.
+   */
+  groupBySeries?: boolean;
+  /** Off for a query a screen keeps mounted but is not currently showing. */
+  enabled?: boolean;
+}) {
+  const { enabled = true, ...listParams } = params ?? {};
+
+  return useQuery({
+    queryKey: [...MEETING_KEY, listParams],
+    queryFn: async () => {
+      const { data } = await translationRoomService.list(listParams);
+      return data;
+    },
+    enabled,
+  });
+}
+
+/**
+ * The cache key of one room. Exported so a realtime handler that patches the room (WT-709's
+ * RoomLanguagesChanged) names the same key the query uses, rather than a second literal that a
+ * rename would silently leave behind.
+ */
+export function translationRoomQueryKey(id: string) {
+  return [...MEETING_KEY, id] as const;
+}
+
+/** Fetch a single translationRoom by ID */
+/**
+ * @param refetchInterval poll the room's state, in ms. Off by default — only the waiting room
+ * needs it, so it can notice the host starting the meeting (WT-232) without every other screen
+ * paying for a poll.
+ */
+export function useTranslationRoom(id: string, refetchInterval?: number) {
+  return useQuery({
+    queryKey: translationRoomQueryKey(id),
+    queryFn: async () => {
+      const { data } = await translationRoomService.get(id);
+      return data;
+    },
+    enabled: !!id,
+    refetchInterval,
+  });
+}
+
+/** Create translationRoom mutation */
+export function useCreateTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: CreateTranslationRoomRequest) => {
+      const { data: translationRoom } = await translationRoomService.create(data);
+      return translationRoom;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+/**
+ * External Meeting: claim the WarpTalk room for a Google Meet / Zoom / Teams call by its link. The
+ * server finds the call's existing room in the workspace (`created: false`) or makes one.
+ */
+export function useClaimExternalMeetingRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: BridgeClaimRequest) => translationRoomService.claimBridgeRoom(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+/**
+ * WT-327: create a repeating booking.
+ *
+ * Separate from useCreateTranslationRoom rather than a flag on it, because the two return
+ * different shapes and a caller that has to narrow a union at runtime is a caller that can
+ * forget to. Invalidates the same key, so the meetings list and the day timeline pick up all
+ * N occurrences at once — they are ordinary rooms and the list endpoint never learned about
+ * series at all.
+ */
+export function useCreateRecurringTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      data: CreateTranslationRoomRequest & { recurrence: RecurrenceRequest },
+    ) => {
+      const { data: result } = await translationRoomService.createRecurring(data);
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+/**
+ * WT-327: stop a whole series. Future occurrences are cancelled with it; meetings that already
+ * ran are untouched. Cancelling ONE occurrence is useCancelTranslationRoom and leaves the
+ * series running.
+ */
+export function useCancelTranslationRoomSeries() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ seriesId, keepOccurrenceId }: { seriesId: string; keepOccurrenceId?: string }) =>
+      translationRoomService.cancelSeries(seriesId, keepOccurrenceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+/** Update translationRoom settings mutation */
+export function useUpdateTranslationRoomSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdateRoomSettingsRequest }) => {
+      await translationRoomService.updateSettings(id, data);
+    },
+    // WT-852: "Room updated successfully." used to appear over the old page. The saved edit is
+    // written into the cached room first, so the page shows it the moment the save succeeds;
+    // the refetches below then confirm it. Returned, so `mutateAsync` resolves only once the
+    // room has been re-read — the caller's toast never announces a save the page does not show.
+    onSuccess: (_, { id, data }) => {
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], (room) =>
+        room ? applyRoomSettingsPatch(room, data) : room,
+      );
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: MEETING_KEY }),
+        // A recurring meeting's "Daily · 20:40 / Next …" line is read from the series, which
+        // embeds this occurrence and lives under its own key — the meetings key never reached it.
+        queryClient.invalidateQueries({ queryKey: SERIES_ROOT_KEY }),
+      ]);
+    },
+  });
+}
+
+/**
+ * WT-468 — which languages the pre-join screen may offer for a room code.
+ *
+ * The policy belongs to the workspace that OWNS the room, not to whichever workspace the joiner
+ * has selected. The screen holds only a code and cannot resolve the room until the join itself,
+ * which is why it used to fall back to the joiner's own workspace settings and offer the wrong
+ * list to anyone joining across workspaces.
+ *
+ * Disabled below 4 characters, the same threshold the join button uses, so typing a code does not
+ * fire a request per keystroke. Data is kept while a longer code is being typed
+ * (`placeholderData: keepPreviousData`) so the picker does not flicker back to the full list
+ * mid-edit.
+ */
+export function useJoinLanguagePolicy(code: string) {
+  const trimmed = code.trim();
+  return useQuery({
+    queryKey: ["translationRooms", "joinLanguagePolicy", trimmed],
+    queryFn: () => translationRoomService.getJoinLanguagePolicy(trimmed),
+    enabled: trimmed.length >= 4,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+}
+
+/** Join translationRoom by room code for the web preflight flow */
+export function useJoinTranslationRoomByCode() {
+  return useMutation({
+    mutationFn: async (data: JoinTranslationRoomByCodeRequest) => {
+      const { data: joinResult } = await translationRoomService.joinByCode(data);
+      return joinResult;
+    },
+  });
+}
+
+/**
+ * WT-480: publish or unpublish a finished meeting's record.
+ *
+ * Invalidates the room so the banner, the badge and the button all re-derive from the stored
+ * setting rather than from local optimism — the whole point of this control is that the screen
+ * tells the truth about who can read the record.
+ */
+export function useSetArtifactAccess(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (level: ArtifactAccessLevel) => {
+      await translationRoomService.setArtifactAccess(roomId, level);
+      return level;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId] });
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+/**
+ * Start (or re-Start) a room.
+ *
+ * WT-708: Start re-checks the meeting's languages against the workspace's CURRENT whitelist, and
+ * both outcomes are handled here so every call site gets them — the room page, the lobby, the
+ * create dialog, the in-meeting Start and the bridge controls all go through this hook:
+ *   - narrowed: the response carries `languagePolicyNotice`, shown as a warning naming what was
+ *     dropped and what the meeting runs in;
+ *   - nothing left: the 403 is rethrown as a StartLanguagesRefusedError whose message is the
+ *     localized sentence naming both sets, so each caller's own `getErrorMessage(error, …)` toast
+ *     shows it instead of a generic "could not start".
+ */
+export function useStartTranslationRoom() {
+  const queryClient = useQueryClient();
+  const t = useTranslations("rooms.languagePolicy");
+  const locale = useLocale();
+
+  const languageNames = (codes: string[]) => {
+    let display: Intl.DisplayNames | null = null;
+    try {
+      display = new Intl.DisplayNames([locale], { type: "language" });
+    } catch {
+      display = null;
+    }
+    return codes.map((code) => display?.of(code) ?? getLanguageName(code)).join(", ");
+  };
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      try {
+        const { data: translationRoom } = await translationRoomService.start(id);
+        return translationRoom;
+      } catch (error) {
+        const refusal = readStartLanguagesRefusal(getErrorMessage(error, ""));
+        if (!refusal) throw error;
+        throw new StartLanguagesRefusedError(
+          t("startRefused", {
+            meeting: languageNames(refusal.meeting),
+            allowed: refusal.allowed.length > 0 ? languageNames(refusal.allowed) : t("none"),
+          }),
+          refusal,
+          error,
+        );
+      }
+    },
+    onSuccess: (startedRoom, id) => {
+      const notice = readLanguagePolicyNotice(startedRoom);
+      if (notice) {
+        toast.warning(t("narrowedTitle", { dropped: languageNames(notice.dropped) }), {
+          description: t("narrowedDescription", {
+            dropped: languageNames(notice.dropped),
+            effective: languageNames(notice.effective),
+          }),
+          duration: 12_000,
+        });
+      }
+      // The notice belongs to this one response, not to the room: keep it out of the cache.
+      const translationRoom: TranslationRoomDto = { ...startedRoom, languagePolicyNotice: undefined };
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], translationRoom);
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+      queryClient.invalidateQueries({ queryKey: sessionsKey(id) });
+    },
+  });
+}
+
+export function usePauseTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await translationRoomService.pause(id);
+    },
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], (current) =>
+        current ? { ...current, status: "paused" } : current,
+      );
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+      queryClient.invalidateQueries({ queryKey: sessionsKey(id) });
+    },
+  });
+}
+
+/**
+ * Stop Translation. The room stays live — only the translation session ends — so the transcript
+ * keeps arriving and the room's own query data is deliberately left alone. What changes is the
+ * session list, which is where "is translation running" is read from.
+ */
+export function useStopTranslation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await translationRoomService.stopTranslation(id);
+    },
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: sessionsKey(id) });
+    },
+  });
+}
+
+export function useResumeTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await translationRoomService.resume(id);
+    },
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], (current) =>
+        current ? { ...current, status: "in_progress" } : current,
+      );
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+      queryClient.invalidateQueries({ queryKey: sessionsKey(id) });
+    },
+  });
+}
+
+/** All translation sessions for a room — used to bucket transcript segments into
+ * "Translation 1", "Translation 2"... blocks. Polls while the room is live so every
+ * participant's transcript picks up a Start/Pause/Resume without a manual refresh. */
+export function useTranslationRoomSessions(
+  roomId: string,
+  options: boolean | TranslationRoomPollOptions = true,
+) {
+  const { enabled, poll } = resolvePollOptions(options);
+  return useQuery({
+    queryKey: sessionsKey(roomId),
+    queryFn: async () => {
+      const { data } = await translationRoomService.sessions(roomId);
+      return data;
+    },
+    enabled: Boolean(roomId) && enabled,
+    refetchInterval: enabled && poll ? 5000 : false,
+  });
+}
+
+/** Self-service consent (or withdrawal) to have MY OWN voice cloned in this room —
+ * see TranslationRoomAudioRouteController.SetVoiceCloneConsent. */
+export function useSetVoiceCloneConsent(roomId: string) {
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      await translationRoomService.setVoiceCloneConsent(roomId, enabled);
+    },
+  });
+}
+
+/**
+ * Make a dub-voice change taken in AuthService reach THIS meeting now.
+ *
+ * Called after VoiceProfileService.setDubVoice, never instead of it: the setting lives in
+ * AuthService, which knows nothing about rooms, and the AI pipeline learns it only from a route
+ * payload TranslationRoomService builds. Without this the change is correct everywhere except
+ * the meeting the person is standing in.
+ */
+export function useRefreshDubVoice(roomId: string) {
+  return useMutation({
+    mutationFn: async () => {
+      await translationRoomService.refreshDubVoice(roomId);
+    },
+  });
+}
+
+/**
+ * WT-B "flash mode" for THIS room — read by anyone in it, written by the host.
+ *
+ * Read on an interval as well as on mount, because the host can move it from another client and
+ * a guest looking at a stale switch has no way to tell. Cheap: one small GET, and only while the
+ * meeting UI is mounted.
+ */
+export function useFlashMode(roomId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["translation-room", roomId, "flash-mode"],
+    queryFn: () => translationRoomService.getFlashMode(roomId),
+    enabled: enabled && Boolean(roomId),
+    refetchInterval: 30_000,
+    // A room that cannot answer is not an error worth showing anybody. It is NOT rendered as
+    // "off" any more, though: the AI side falls back to the deployment default, so "off" was a
+    // claim about the room that nothing had actually checked — and it became a false one the day
+    // that default turned on. "unknown" renders the same switch position without asserting it.
+    retry: false,
+    initialData: { enabled: false, source: "unknown" } satisfies FlashModeState,
+  });
+}
+
+export function useSetFlashMode(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => translationRoomService.setFlashMode(roomId, enabled),
+    onSuccess: (enabled) => {
+      // Seeded from what the SERVER returned, not from what was asked for. A 403 never reaches
+      // here, so the switch cannot show a state the room does not actually have.
+      queryClient.setQueryData(["translation-room", roomId, "flash-mode"], enabled);
+    },
+  });
+}
+
+/**
+ * How much the STT provider denoises THIS user's own microphone in this meeting.
+ *
+ * No polling interval, unlike useFlashMode above, and the difference is not an oversight: flash
+ * mode is a ROOM setting somebody else can change under you, so a guest's switch has to keep
+ * catching up. This is the caller's own microphone and nobody else can move it, so the only writer
+ * is the mutation below — which seeds the cache itself.
+ */
+export function useNoiseReduction(roomId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["translation-room", roomId, "noise-reduction"],
+    queryFn: () => translationRoomService.getNoiseReduction(roomId),
+    enabled: enabled && Boolean(roomId),
+    // A room that cannot answer is not an error worth showing anybody: the STT worker falls back
+    // when it cannot read the key, and "off" is the honest thing to render.
+    retry: false,
+    initialData: "off" as NoiseReductionMode,
+  });
+}
+
+export function useSetNoiseReduction(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: NoiseReductionMode) =>
+      translationRoomService.setNoiseReduction(roomId, mode),
+    onSuccess: (mode) => {
+      // Seeded from what the SERVER returned, not from what was asked for — the endpoint refuses
+      // an unusable mode, and the menu must never show a mode the pipeline did not accept.
+      queryClient.setQueryData(["translation-room", roomId, "noise-reduction"], mode);
+    },
+  });
+}
+
+/** End translationRoom mutation */
+export function useEndTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // Single-flight per room, like useEndMeetingForAll: repeated presses share one request.
+    mutationFn: (id: string) =>
+      singleFlight(endRoomFlightKey(id), async () => {
+        await translationRoomService.end(id);
+      }),
+    onSuccess: (_data, id) => {
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], (current) =>
+        current
+          ? {
+              ...current,
+              status: "ended",
+              endedAt: current.endedAt ?? new Date().toISOString(),
+            }
+          : current
+      );
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, id] });
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+      queryClient.invalidateQueries({ queryKey: sessionsKey(id) });
+    },
+  });
+}
+
+export function useCancelTranslationRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data: translationRoom } = await translationRoomService.cancel(id);
+      return translationRoom;
+    },
+    onSuccess: (translationRoom, id) => {
+      queryClient.setQueryData<TranslationRoomDto>([...MEETING_KEY, id], translationRoom);
+      queryClient.invalidateQueries({ queryKey: MEETING_KEY });
+    },
+  });
+}
+
+export function useTranslationRoomParticipants(
+  roomId: string,
+  options: boolean | TranslationRoomPollOptions = true,
+) {
+  const { enabled, poll } = resolvePollOptions(options);
+  return useQuery({
+    queryKey: [...MEETING_KEY, roomId, "participants"],
+    queryFn: async () => {
+      const { data } = await translationRoomService.participants(roomId);
+      return data;
+    },
+    enabled: Boolean(roomId) && enabled,
+    refetchInterval: poll ? 3000 : false,
+  });
+}
+
+export function useTranslationRoomInvitations(roomId: string) {
+  return useQuery({
+    queryKey: [...MEETING_KEY, roomId, "invitations"],
+    queryFn: async () => {
+      const { data } = await translationRoomService.invitations(roomId);
+      return data;
+    },
+    enabled: Boolean(roomId),
+  });
+}
+
+/**
+ * WT-552: invite somebody once the meeting has started.
+ *
+ * Invalidates the invitation list AND the roster. A member of this workspace who is already
+ * signed in gets the in-app notification immediately and can be in the room before the host has
+ * closed the dialog, so the roster is as stale as the invitation list after this succeeds.
+ */
+export function useInviteToRoom(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (emails: string[]) => translationRoomService.inviteParticipants(roomId, emails),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId, "invitations"] });
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId, "participants"] });
+    },
+  });
+}
+
+/**
+ * WT-709 — the host adds a language to the running meeting.
+ *
+ * The answer is the meeting's whole set, patched into the room query the picker reads — the same
+ * patch the RoomLanguagesChanged handler applies, so the host's own menu grows the moment the
+ * request succeeds instead of waiting for its own broadcast to come back round.
+ */
+export function useAddRoomLanguage(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (language: string) => translationRoomService.addRoomLanguage(roomId, language),
+    onSuccess: (languages) => {
+      queryClient.setQueryData<TranslationRoomDto>(translationRoomQueryKey(roomId), (room) =>
+        room ? applyRoomLanguages(room, languages) : room,
+      );
+    },
+  });
+}
+
+export function useUpdateParticipantAudio(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      participantId,
+      isTranslationAudioEnabled,
+    }: {
+      participantId: string;
+      isTranslationAudioEnabled: boolean;
+    }) => {
+      await translationRoomService.updateParticipantAudio(roomId, participantId, isTranslationAudioEnabled);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.setQueryData<TranslationRoomParticipantDto[]>([...MEETING_KEY, roomId, "participants"], (current) =>
+        current?.map((participant) =>
+          participant.id === variables.participantId
+            ? { ...participant, isTranslationAudioEnabled: variables.isTranslationAudioEnabled }
+            : participant
+        )
+      );
+    },
+  });
+}
+
+export function useAdmitParticipant(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (participantId: string) => {
+      await translationRoomService.admitParticipant(roomId, participantId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId, "participants"] });
+    },
+  });
+}
+
+export function useKickParticipant(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (participantId: string) => {
+      await translationRoomService.kickParticipant(roomId, participantId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId, "participants"] });
+    },
+  });
+}
+
+export function useLeaveTranslationRoom(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      await translationRoomService.leave(roomId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...MEETING_KEY, roomId, "participants"] });
+    },
+  });
+}
+
+export function useTranslationRoomFeedbackState(roomId: string) {
+  return useQuery({
+    queryKey: [...ROOM_FEEDBACK_KEY, roomId],
+    queryFn: async () => {
+      const { data } = await translationRoomService.getFeedbackState(roomId);
+      return data;
+    },
+    enabled: Boolean(roomId),
+  });
+}
+
+export function useSubmitTranslationRoomFeedback(roomId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: SubmitTranslationRoomFeedbackRequest) => {
+      const { data: feedback } = await translationRoomService.submitFeedback(roomId, data);
+      return feedback;
+    },
+    onSuccess: (feedback) => {
+      queryClient.setQueryData<TranslationRoomFeedbackStateDto>(
+        [...ROOM_FEEDBACK_KEY, roomId],
+        {
+          hasSubmitted: true,
+          feedback,
+        }
+      );
+      queryClient.setQueryData<TranslationRoomFeedbackDto>(
+        [...ROOM_FEEDBACK_KEY, roomId, "submission"],
+        feedback
+      );
+    },
+  });
+}
+
+export function useRoomPreflight(roomCode: string, enabled = true) {
+  return useQuery({
+    queryKey: ["translationRooms", "preflight", roomCode],
+    queryFn: () => translationRoomService.preflight(roomCode),
+    enabled: enabled && !!roomCode,
+    staleTime: 5000,
+  });
+}

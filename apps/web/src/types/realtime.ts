@@ -1,0 +1,264 @@
+/**
+ * SignalR realtime DTOs — aligned with Gateway Hub models.
+ * Source: WarpTalk.Gateway.Hubs.HubModels
+ */
+
+import type { TranslationRoomParticipantDto } from "@/types/translationRoom";
+
+// ── TranslationRoom Hub DTOs ──────────────────────────
+
+export interface ParticipantInfoDto {
+  userId: string;
+  displayName: string;
+  speakLanguage: string;
+  listenLanguage: string;
+  isMuted: boolean;
+  joinedAt: string;
+  role?: "host" | "participant" | "interpreter";
+  /**
+   * WT-538: was `"joined" | "connected" | "left" | "removed"`, and `"joined"` was a value the
+   * backend has never once written — `IdleRoomMonitoringWorker` removed the last branch that
+   * read it as dead code. Typed against the participant DTO's own union now, so a live roster
+   * cannot merge a status the rest of the app does not recognise (see `mergeParticipants`).
+   *
+   * Like `role` above, this is never populated in practice: the Gateway's `ParticipantInfoDto`
+   * record (gateway/Hubs/HubModels.cs) carries only user id, name, the two languages, mute and
+   * joined-at. Optional because the wire may omit it, which it always does.
+   */
+  status?: TranslationRoomParticipantDto["status"];
+  avatarUrl?: string;
+  isUsingVoiceClone?: boolean;
+}
+
+/**
+ * TranscriptInterimReceived: the words of a turn still being spoken. A preview — the speaker's
+ * TranscriptSegmentReceived line replaces it. See lib/transcript/live-text.ts.
+ */
+export interface TranscriptInterimDto {
+  speakerId: string;
+  speakerName: string;
+  itemId: string;
+  text: string;
+  language: string;
+}
+
+export interface TranscriptSegmentDto {
+  segmentId: string;
+  speakerId: string;
+  speakerName: string;
+  originalText: string;
+  originalLanguage: string;
+  /**
+   * Set on the wire, never populated by the gateway — AiResultConsumerService builds every
+   * TranscriptSegmentReceived with `TranslatedText: null, TargetLanguage: null`. Kept because
+   * the record shape is shared with the hub model, and read only as a fallback for a segment
+   * that predates `translations`.
+   *
+   * @deprecated for live rendering — read {@link translations} through
+   * `resolveSegmentTranslation`, which answers for a specific reader's language.
+   */
+  translatedText?: string;
+  /** @deprecated see {@link translatedText}. */
+  targetLanguage?: string;
+  /**
+   * Every translation of this line, keyed by NORMALIZED target language code ("en", "vi").
+   *
+   * WT-371 Bug 4: a bubble does not have a target language — a reader does. The room translates
+   * into every language somebody is listening in and the gateway fans all of them out to the
+   * whole group, so the panel picks the entry matching the viewer's listen language at render
+   * time. Holding one overwritten translation instead is what let a slow-resolving listen
+   * language leave the transcript showing two different directions at once.
+   */
+  translations?: Record<string, string>;
+  /**
+   * Client-only: the translated SENTENCES behind each `translations` entry, by sentence index
+   * (the `-c{n}` suffix of the translation's own segment id). Kept so a sentence that arrives
+   * late, or twice, lands in its own slot instead of being appended after a later one or on top
+   * of itself; `translations[lang]` is these joined in index order.
+   */
+  translationSentences?: Record<string, string[]>;
+  confidence: number;
+  startTimeMs: number;
+  endTimeMs: number;
+  /**
+   * When THIS client received the segment, stamped in the store on first insert.
+   *
+   * `startTimeMs` cannot be used as a clock: it is an offset into the audio ingress track, and
+   * that track RESETS on reconnect — dedupeTranscriptSegments already carries a comment saying
+   * so. A line spoken 18 minutes into a meeting was rendered as 6:00 because the ingress had
+   * reconnected 6 minutes earlier, under an aria-label reading "Meeting time".
+   *
+   * Client-stamped rather than server-sent because for a live segment the two are a second
+   * apart, and a second is invisible next to being twelve minutes wrong. Absent on segments
+   * loaded from the saved transcript, which is why every reader must fall back.
+   */
+  receivedAt?: number;
+  /**
+   * WT-716: the cleaned wording — fillers and stutters removed, profanity-masked. `null`/absent
+   * means "not cleaned, read originalText"; `""` means the line was nothing but filler. See the
+   * saved DTO in types/transcript.ts for the full contract; the wire meaning is the same.
+   */
+  cleanText?: string | null;
+  /** WT-716: what cleaning did (`filler_only`, `fillers_removed`, `stutter_removed`, `escalate`). */
+  cleanFlags?: string[];
+  /**
+   * Only on lines backfilled from the SAVED transcript (toLiveSegment) — the realtime event does
+   * not carry them. Read by the Clean view to notice a merged sentence that a correction has made
+   * stale (see isCleanSentenceStale).
+   */
+  isCorrected?: boolean;
+  updatedAt?: string | null;
+}
+
+/**
+ * WT-716: `TranscriptCleanSentenceReceived`, broadcast to translationRoom:{roomId}. The REST
+ * shape (TranscriptCleanSentenceDto) without `updatedAt`. Revisions of one sentence arrive under
+ * the same `id`; keep the highest.
+ */
+export interface TranscriptCleanSentenceEventDto {
+  id: string;
+  speakerId: string | null;
+  segmentIds: string[];
+  cleanText: string;
+  language: string;
+  flags: string[];
+  source: "llm" | "prepass" | "unknown";
+  revision: number;
+}
+
+/**
+ * `TranscriptSegmentSpeakerNamed`, broadcast to translationRoom:{roomId}: the Meet person on a
+ * bridge line that went out as "Google Meet participants", found about a second later from the
+ * captions that followed it. `segmentId` is the original TranscriptSegmentReceived's segmentId.
+ * Sent at most once per segment, only above the gateway's display confidence; older backends never
+ * send it. Applied by `applyLateFarSpeakerName` (speaker-identity.ts).
+ */
+export interface TranscriptSegmentSpeakerNamedDto {
+  segmentId: string;
+  speakerName: string;
+}
+
+export interface TranslationTextDto {
+  segmentId: string;
+  speakerId: string;
+  originalText: string;
+  translatedText: string;
+  sourceLang: string;
+  targetLang: string;
+  startTimeMs?: number;
+  endTimeMs?: number;
+  /** Links back to the TranscriptSegmentDto.segmentId this translation belongs to. */
+  sourceSegmentId?: string;
+  /** Position within the source segment's sentence split — 0 for the first (usual) sentence. */
+  chunkIndex?: number;
+}
+
+export interface TranslatedAudioDto {
+  segmentId: string;
+  speakerId: string;
+  audioBase64: string;
+  voiceType: "default" | "blended" | "cloned";
+  durationMs: number;
+  voiceMode?: "standard" | "blended" | "cloned" | "caption_only";
+  cloneStrength?: number;
+  anchorProvider?: string;
+  cloneProvider?: string;
+  renderLocation?: "server" | "desktop";
+  cacheKey?: string;
+  cacheHit?: boolean;
+  synthesisLatencyMs?: number;
+  conversionLatencyMs?: number;
+  fallbackReason?: string;
+}
+
+/**
+ * An unprompted one-line hint about a transcript segment — pushed by the gateway as
+ * "AiSuggestionReceived", produced by warptalk-ai/suggestion_worker.
+ *
+ * `segmentId` is the STT segment that triggered it, which is NOT necessarily the
+ * `segmentId` of the bubble it belongs to: consecutive segments from one speaker are
+ * merged into a single bubble whose id is the first segment's. Resolve it through
+ * `findSuggestionForUtterance` rather than a direct lookup.
+ *
+ * Ephemeral — nothing about this is persisted, so it is gone after a reload.
+ */
+export interface AiSuggestionDto {
+  translationRoomId: string;
+  segmentId: string;
+  category: "clarification" | "term" | "action" | "correction" | "fact" | (string & {});
+  content: string;
+  detail?: string | null;
+  confidence: number;
+  language: string;
+  createdAt: string;
+  /**
+   * Documents this hint drew on, as the same JSON array the chat assistant publishes — see
+   * lib/assistant/answer-sources. Absent for a hint that came out of the transcript, which is
+   * the normal case.
+   */
+  sourcesJson?: string | null;
+}
+
+export interface ChatMentionDto {
+  id: string;
+  display: string;
+  type: string;
+}
+
+export interface ChatMessageDto {
+  id: string;
+  meetingRoomId: string;
+  senderUserId?: string;
+  senderDisplayName: string;
+  senderType: string;
+  messageType: string;
+  originalLanguage: string;
+  originalText: string;
+  translationEnabled: boolean;
+  containsWarpbotMention?: boolean;
+  mentions?: ChatMentionDto[];
+  createdAt: string;
+  /**
+   * Only ever set on a WarpBot answer: the sources it cited, as the JSON array warptalk-ai
+   * published. See lib/assistant/answer-sources for what the list means and why it is a string.
+   */
+  sourcesJson?: string | null;
+}
+
+export interface ChatMessageTranslationDto {
+  messageId: string;
+  targetLanguage: string;
+  translatedText: string;
+  cached: boolean;
+}
+
+export interface TranslationRoomStateDto {
+  translationRoomId: string;
+  translationRoomCode: string;
+  status: string;
+  participants: ParticipantInfoDto[];
+}
+
+/** One selectable TTS voice — from TranslationRoomHub.GetVoiceCatalog. `id` is a real
+ * Cartesia voice id, safe to round-trip straight into SetVoicePreference. */
+export interface VoiceOptionDto {
+  id: string;
+  name: string;
+  gender: string;
+}
+
+/**
+ * What the TTS worker currently knows about one speaker's voice clone. WT-420.
+ *
+ * Every metric is optional and absent when the worker had nothing to say about it — a zero would
+ * render as "0 seconds captured" or "quality 0", which is a claim rather than a gap. See
+ * lib/meeting/clone-capture-state.ts for the reason codes and how they read.
+ */
+export interface VoiceCloneStateDto {
+  speakerId: string;
+  reason: string;
+  seconds?: number | null;
+  requiredSeconds?: number | null;
+  score?: number | null;
+  activeSpeechRatio?: number | null;
+}

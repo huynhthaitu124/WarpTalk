@@ -1,0 +1,935 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { WorkspaceService } from "@/services/workspace.service";
+import type {
+  UpdateKnowledgeChunkRequest,
+  WorkspaceKnowledgeQuery,
+} from "@/types/workspace-knowledge";
+import type { ApplyWorkspaceRoleChangeRequest, WorkspaceSettingsDto } from "@/types/workspace";
+import { WORKSPACE_DOCUMENT_INGESTION_STATUS } from "@/constants/workspace-document";
+import { isWarpBotLoading } from "@/lib/glossary/warpbot-status";
+
+// Query Keys
+export const WORKSPACE_KEYS = {
+  list: (page: number, pageSize: number, search: string) => ["workspaces", "list", { page, pageSize, search }] as const,
+  detail: (id: string) => ["workspaces", "detail", id] as const,
+  settings: (id: string) => ["workspaces", "settings", id] as const,
+  entitlements: (id: string) => ["workspaces", "entitlements", id] as const,
+  verifiedDomains: (id: string) => ["workspaces", "verified-domains", id] as const,
+  members: (workspaceId: string, page: number, pageSize: number, search: string) =>
+    ["workspaces", "members", workspaceId, { page, pageSize, search }] as const,
+  invitations: (workspaceId: string, page: number, pageSize: number, search: string) =>
+    ["workspaces", "invitations", workspaceId, { page, pageSize, search }] as const,
+  pendingInvitations: () => ["workspaces", "invitations", "pending"] as const,
+  myJoinRequests: () => ["workspaces", "join-requests", "mine"] as const,
+  invitationPreview: (token: string) => ["workspaces", "invitation-preview", token] as const,
+  documentLists: (workspaceId: string) => ["workspaces", "documents", workspaceId] as const,
+  knowledge: (workspaceId: string, query: WorkspaceKnowledgeQuery) =>
+    ["workspaces", "knowledge", workspaceId, query] as const,
+  documents: (workspaceId: string, page: number, pageSize: number, search: string) =>
+    ["workspaces", "documents", workspaceId, { page, pageSize, search }] as const,
+  documentDetail: (workspaceId: string, docId: string) => ["workspaces", "document", workspaceId, docId] as const,
+  documentHistory: (workspaceId: string, docId: string) => ["workspaces", "document-history", workspaceId, docId] as const,
+  documentPolicies: (workspaceId: string, docId: string, page: number, pageSize: number) =>
+    ["workspaces", "document-policies", workspaceId, docId, { page, pageSize }] as const,
+  glossaries: (workspaceId: string) => ["glossaries", "list", workspaceId] as const,
+  glossaryDetail: (id: string) => ["glossaries", "detail", id] as const,
+  terms: (glossaryId: string) => ["glossaries", "terms", glossaryId] as const,
+  glossaryWarpBotStatus: (glossaryId: string) => ["glossaries", "warpbot-status", glossaryId] as const,
+};
+
+// ─── Workspaces ───
+
+export function useWorkspaces(page = 1, pageSize = 10, search = "") {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.list(page, pageSize, search),
+    queryFn: () => WorkspaceService.list(page, pageSize, search),
+    placeholderData: (previousData) => previousData,
+    staleTime: 30000,
+  });
+}
+
+export function useWorkspace(id: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.detail(id),
+    queryFn: () => WorkspaceService.getById(id),
+    enabled: !!id,
+    staleTime: 60000,
+  });
+}
+
+export function useCreateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: WorkspaceService.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
+  });
+}
+
+export function useSelectWorkspace() {
+  return useMutation({
+    mutationFn: WorkspaceService.select,
+  });
+}
+
+
+export function useWorkspaceSettings(id: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.settings(id),
+    queryFn: () => WorkspaceService.getSettings(id),
+    enabled: !!id,
+    staleTime: 60000,
+  });
+}
+
+/**
+ * The workspace's resolved entitlements. Read-only; changes arrive through billing, so a minute of
+ * staleness costs nothing a reader would notice.
+ */
+export function useWorkspaceEntitlements(id: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.entitlements(id),
+    queryFn: () => WorkspaceService.getEntitlements(id),
+    enabled: !!id,
+    staleTime: 60000,
+  });
+}
+
+/** Full-document replace. Callers must supply every field — the server binds the whole DTO. */
+export function useUpdateWorkspaceSettings(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: WorkspaceSettingsDto) => WorkspaceService.updateSettings(workspaceId, settings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.settings(workspaceId) });
+    },
+  });
+}
+
+/**
+ * Partial update. This used to be an alias for the PUT hook, so every single-control save on
+ * the workspace settings page posted a one-key body to an endpoint that binds the whole DTO
+ * and got a 400 back — while the control kept the value the user picked until a reload.
+ * It now targets the read-merge-write PATCH, which is what a one-key body needs.
+ *
+ * The merged document comes back in the response, so we seed the cache with it rather than
+ * only invalidating: that closes the window where the UI would briefly show the pre-save
+ * value while the refetch is in flight.
+ */
+export function usePatchWorkspaceSettings(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<WorkspaceSettingsDto>) => WorkspaceService.patchSettings(workspaceId, patch),
+    onSuccess: (merged) => {
+      queryClient.setQueryData(WORKSPACE_KEYS.settings(workspaceId), merged);
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.settings(workspaceId) });
+    },
+  });
+}
+
+/**
+ * Verified domains come from `workspace_verified_domains`, through the endpoints that own it.
+ *
+ * All three of these used to work by PATCHing the `verifiedDomains` array inside the settings
+ * JSON — a display mirror the backend refreshes from that table and ignores on write. Reads
+ * showed whatever the mirror last happened to contain, and writes did nothing whatsoever.
+ *
+ * Both queries are invalidated together on every mutation: the domain list decides the
+ * workspace's membership policy, so a change here also changes what /settings reports.
+ */
+export function useVerifiedDomains(workspaceId: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.verifiedDomains(workspaceId),
+    queryFn: () => WorkspaceService.listVerifiedDomains(workspaceId),
+    enabled: !!workspaceId,
+  });
+}
+
+export function useAddVerifiedDomain(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ domain, consentVersion }: { domain: string; consentVersion?: string }) =>
+      WorkspaceService.addVerifiedDomain(workspaceId, domain, consentVersion),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.verifiedDomains(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.settings(workspaceId) });
+    },
+  });
+}
+
+export function useRevokeVerifiedDomain(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (domainId: string) => WorkspaceService.revokeVerifiedDomain(workspaceId, domainId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.verifiedDomains(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.settings(workspaceId) });
+    },
+  });
+}
+
+
+
+export function usePreviewWorkspaceMemberRoleChange(workspaceId: string) {
+  return useMutation({
+    mutationFn: (payload: { memberId?: string; userId?: string; targetRole?: string; toRole?: string }) => {
+      const targetId = payload.memberId || payload.userId || "";
+      const role = payload.targetRole || payload.toRole || "";
+      return WorkspaceService.previewMemberRoleChange(workspaceId, targetId, role);
+    },
+  });
+}
+
+export function useApplyWorkspaceMemberRoleChange(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { memberId?: string; userId?: string; request: ApplyWorkspaceRoleChangeRequest }) => {
+      const targetId = payload.memberId || payload.userId || "";
+      return WorkspaceService.applyMemberRoleChange(workspaceId, targetId, payload.request);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+// ─── Members ───
+
+export function useWorkspaceMembers(workspaceId: string | undefined, page = 1, pageSize = 10, search = "") {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.members(workspaceId ?? "", page, pageSize, search),
+    queryFn: () => WorkspaceService.listMembers(workspaceId ?? "", page, pageSize, search),
+    enabled: !!workspaceId,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30000,
+  });
+}
+
+export function useRemoveWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => WorkspaceService.removeMember(workspaceId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+export function useChangeWorkspaceMemberRole(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, roleName }: { userId: string; roleName: string }) =>
+      WorkspaceService.changeMemberRole(workspaceId, userId, roleName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+
+
+export function useTransferWorkspaceOwnership(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (newOwnerId: string) => WorkspaceService.transferOwnership(workspaceId, newOwnerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.detail(workspaceId) });
+    },
+  });
+}
+
+export function useUpdateWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, canCreateMeetings }: { userId: string; canCreateMeetings: boolean }) =>
+      WorkspaceService.updateMember(workspaceId, userId, canCreateMeetings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+// ─── Invitations ───
+
+export function useInviteWorkspaceMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      email,
+      roleName,
+      membershipType,
+    }: {
+      email: string;
+      roleName: string;
+      membershipType: "Internal" | "External";
+    }) => WorkspaceService.invite(workspaceId, email, roleName, membershipType),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations", workspaceId] });
+    },
+  });
+}
+
+/**
+ * What Internal/External access this workspace currently permits for `email`, so the invite
+ * form can pre-select and disable options instead of guessing at the rules client-side and
+ * finding out it guessed wrong from a 4xx after submit.
+ *
+ * Debounced by hand — email is typed character by character and every keystroke would
+ * otherwise fire a request. `enabled` requires a syntactically complete address so the
+ * server never sees "a", "al", "ali"...
+ */
+export function useInvitationPolicy(workspaceId: string, email: string) {
+  const [debouncedEmail, setDebouncedEmail] = useState(email);
+
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedEmail(email), 350);
+    return () => clearTimeout(handle);
+  }, [email]);
+
+  const isLikelyCompleteEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(debouncedEmail.trim());
+
+  return useQuery({
+    queryKey: ["workspaces", "invitation-policy", workspaceId, debouncedEmail.trim().toLowerCase()],
+    queryFn: () => WorkspaceService.getInvitationPolicy(workspaceId, debouncedEmail.trim()),
+    enabled: !!workspaceId && isLikelyCompleteEmail,
+    staleTime: 10_000,
+  });
+}
+
+/**
+ * @param enabled Pass `false` for a viewer who is not allowed to read this list. WT-521 — the
+ * Members page ran the "outbound" and "join-request" queries for everybody, and the server
+ * (correctly) answers 403 to a plain Member, so opening Members as one printed a pair of 403s to
+ * the console on every render. Gating the request is the fix, not widening the endpoint: a Member
+ * genuinely may not see who else has been invited.
+ */
+export function useWorkspaceInvitations(workspaceId: string, page = 1, pageSize = 10, search = "", category?: string, enabled = true) {
+  return useQuery({
+    queryKey: [...WORKSPACE_KEYS.invitations(workspaceId, page, pageSize, search), category],
+    queryFn: () => WorkspaceService.listInvitations(workspaceId, page, pageSize, search, category),
+    enabled: !!workspaceId && enabled,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30000,
+  });
+}
+
+export function useRevokeWorkspaceInvitation(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) => WorkspaceService.revokeInvitation(workspaceId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations", workspaceId] });
+    },
+  });
+}
+
+export function usePreviewWorkspaceInvitation(token: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.invitationPreview(token),
+    queryFn: () => WorkspaceService.previewInvitation(token),
+    enabled: !!token,
+    staleTime: 60000,
+  });
+}
+
+export function useAcceptWorkspaceInvitation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: WorkspaceService.acceptInvitation,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
+  });
+}
+
+export function usePendingWorkspaceInvitations() {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.pendingInvitations(),
+    queryFn: WorkspaceService.getPendingInvitations,
+    staleTime: 30000,
+  });
+}
+
+export function useAcceptWorkspaceInvitationById() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: WorkspaceService.acceptInvitationById,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.pendingInvitations() });
+    },
+  });
+}
+
+export function useCreateJoinRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: { roomCode?: string; workspaceSlug?: string } | string) => {
+      const payload = typeof request === "string" ? { workspaceSlug: request } : request;
+      return WorkspaceService.createJoinRequest(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations"] });
+    },
+  });
+}
+
+export function useApproveWorkspaceJoinRequest(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { inviteId: string; membershipType?: string }) =>
+      WorkspaceService.approveJoinRequest(workspaceId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations"] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members"] });
+    },
+  });
+}
+
+export function useRejectWorkspaceJoinRequest(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) => WorkspaceService.rejectJoinRequest(workspaceId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations"] });
+    },
+  });
+}
+
+export const useApproveJoinRequest = useApproveWorkspaceJoinRequest;
+export const useRejectJoinRequest = useRejectWorkspaceJoinRequest;
+
+export function useCreateLeaveRequest(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => WorkspaceService.createLeaveRequest(workspaceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations", workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+export function useApproveLeaveRequest(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (leaveRequestId: string) => WorkspaceService.approveLeaveRequest(workspaceId, leaveRequestId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations", workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "members", workspaceId] });
+    },
+  });
+}
+
+export function useRejectLeaveRequest(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (leaveRequestId: string) => WorkspaceService.rejectLeaveRequest(workspaceId, leaveRequestId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "invitations", workspaceId] });
+    },
+  });
+}
+
+export function useMyJoinRequests() {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.myJoinRequests(),
+    queryFn: WorkspaceService.getPendingInvitations, // Pending requests query fallback
+    staleTime: 30000,
+  });
+}
+
+// ─── Documents ───
+
+export function useUploadWorkspaceDocument(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Parameters<typeof WorkspaceService.uploadDocument>[1]) =>
+      WorkspaceService.uploadDocument(workspaceId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+export function useArchiveWorkspaceDocument(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (docId: string) => WorkspaceService.archiveDocument(workspaceId, docId),
+    onSuccess: (_, docId) => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+export function useRestoreWorkspaceDocument(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (docId: string) => WorkspaceService.restoreDocument(workspaceId, docId),
+    onSuccess: (_, docId) => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+export function useWorkspaceDocuments(workspaceId: string, page = 1, pageSize = 10, search = "") {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.documents(workspaceId, page, pageSize, search),
+    queryFn: () => WorkspaceService.listDocuments(workspaceId, page, pageSize, search),
+    enabled: !!workspaceId,
+    placeholderData: (previousData) => previousData,
+    staleTime: 3000,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data || !data.items) return false;
+      const hasActiveProcessing = data.items.some((doc: { ingestionStatus?: string }) => {
+        const status = doc.ingestionStatus?.toLowerCase();
+        return status === WORKSPACE_DOCUMENT_INGESTION_STATUS.PROCESSING || status === WORKSPACE_DOCUMENT_INGESTION_STATUS.PENDING;
+      });
+      return hasActiveProcessing ? 3000 : false;
+    },
+  });
+}
+
+export function useWorkspaceDocument(workspaceId: string, docId: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId),
+    queryFn: () => WorkspaceService.getDocumentById(workspaceId, docId),
+    enabled: !!workspaceId && !!docId,
+    staleTime: 3000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.ingestionStatus?.toLowerCase();
+      const isProcessing = status === WORKSPACE_DOCUMENT_INGESTION_STATUS.PROCESSING || status === WORKSPACE_DOCUMENT_INGESTION_STATUS.PENDING;
+      // A requested re-scan of the masked copy reports back only through this route.
+      const isMasking = query.state.data?.maskedVersionStatus === "pending";
+      return isProcessing || isMasking ? 3000 : false;
+    },
+  });
+}
+
+export function useWorkspaceDocumentExtractedText(
+  workspaceId: string,
+  docId: string,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: ["workspaces", "document-extracted-text", workspaceId, docId],
+    queryFn: () => WorkspaceService.getExtractedText(workspaceId, docId),
+    enabled: (options?.enabled ?? true) && !!workspaceId && !!docId,
+    staleTime: 30000,
+  });
+}
+
+export function useUpdateWorkspaceDocumentExtractedText(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => WorkspaceService.updateExtractedText(workspaceId, docId, text),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "document-extracted-text", workspaceId, docId] });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+    },
+  });
+}
+
+export function usePatchWorkspaceDocumentMetadata(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: { name?: string; confidentialityLevel?: string; isAiAllowed?: boolean }) =>
+      WorkspaceService.patchDocumentMetadata(workspaceId, docId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+/**
+ * Makes a document private again, or shares a private one with the workspace.
+ *
+ * The detail page shows the new state from the server's own answer the moment it lands — the
+ * status badge, the Visibility section and the Access controls all read `status`, and waiting for
+ * a refetch would leave "Public" on screen after the confirm dialog closed. Only the fields the
+ * transition changes are copied in: the detail route adds `approvedBy` and `rejectionReason`,
+ * which this response does not carry, so replacing the whole object would blank them.
+ *
+ * Knowledge is invalidated too, because making a document private deletes its chunks from the
+ * index that page lists.
+ */
+export function useSetWorkspaceDocumentVisibility(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (visibility: "private" | "public") =>
+      visibility === "private"
+        ? WorkspaceService.unpublishDocument(workspaceId, docId)
+        : WorkspaceService.publishDocument(workspaceId, docId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        WORKSPACE_KEYS.documentDetail(workspaceId, docId),
+        (previous: Record<string, unknown> | undefined) =>
+          previous
+            ? {
+                ...previous,
+                status: updated.status,
+                ingestionStatus: updated.ingestionStatus,
+                aiEligible: updated.aiEligible,
+                updatedAt: updated.updatedAt,
+              }
+            : previous,
+      );
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentHistory(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "knowledge", workspaceId] });
+    },
+  });
+}
+
+/**
+ * @param reason Required by the API when `approve` is false. WT-633: the uploader is shown this
+ * sentence, and a rejection that does not carry one is the defect that ticket describes.
+ */
+export function useApproveWorkspaceDocument(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docId, approve, reason }: { docId: string; approve: boolean; reason?: string }) =>
+      WorkspaceService.approveDocument(workspaceId, docId, approve, reason),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, variables.docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentHistory(workspaceId, variables.docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+/**
+ * Replaces a rejected document's file, keeping its id and its history. WT-633.
+ *
+ * Invalidates the HISTORY as well as the document: the whole point of the revision route is that
+ * it appends to the trail, and a stale history panel beside a freshly-resubmitted document is
+ * exactly the "no trace of what happened" the ticket reports.
+ */
+export function useReuploadWorkspaceDocument(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: { file: File; name?: string; note?: string }) =>
+      WorkspaceService.reuploadDocument(workspaceId, docId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentHistory(workspaceId, docId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+/** A document's approval and feedback history, newest first. WT-633. */
+export function useWorkspaceDocumentHistory(workspaceId: string, docId: string, enabled = true) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.documentHistory(workspaceId, docId),
+    queryFn: () => WorkspaceService.getDocumentHistory(workspaceId, docId),
+    enabled: Boolean(workspaceId && docId) && enabled,
+    staleTime: 10000,
+  });
+}
+
+export function useDeleteWorkspaceDocument(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (docId: string) => WorkspaceService.deleteDocument(workspaceId, docId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentLists(workspaceId) });
+    },
+  });
+}
+
+export function useAddWorkspaceDocumentAccessPolicy(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (policy: {
+      subjectType: string;
+      subjectId?: string | null;
+      subjectKey?: string | null;
+      permission: string;
+      effect: string;
+    }) => WorkspaceService.addAccessPolicy(workspaceId, docId, policy),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentPolicies(workspaceId, docId, 1, 100) });
+    },
+  });
+}
+
+export function useRemoveWorkspaceDocumentAccessPolicy(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (policyId: string) => WorkspaceService.removeAccessPolicy(workspaceId, docId, policyId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentPolicies(workspaceId, docId, 1, 100) });
+    },
+  });
+}
+
+export function useWorkspaceDocumentAccessPolicies(workspaceId: string, docId: string, page = 1, pageSize = 10) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.documentPolicies(workspaceId, docId, page, pageSize),
+    queryFn: () => WorkspaceService.getAccessPolicies(workspaceId, docId, page, pageSize),
+    enabled: !!workspaceId && !!docId,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30000,
+  });
+}
+
+// ─── Glossaries ───
+
+export function useCreateGlossary(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Omit<Parameters<typeof WorkspaceService.createGlossary>[0], "workspaceId">) =>
+      WorkspaceService.createGlossary({ ...request, workspaceId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaries(workspaceId) });
+    },
+  });
+}
+
+export function useGlossary(id: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.glossaryDetail(id),
+    queryFn: () => WorkspaceService.getGlossary(id),
+    enabled: !!id,
+    staleTime: 60000,
+  });
+}
+
+export function useGlossariesByWorkspace(workspaceId: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.glossaries(workspaceId),
+    queryFn: () => WorkspaceService.getGlossariesByWorkspace(workspaceId),
+    enabled: !!workspaceId,
+    staleTime: 60000,
+  });
+}
+
+export function useUpdateGlossary(workspaceId: string, id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Parameters<typeof WorkspaceService.updateGlossary>[1]) =>
+      WorkspaceService.updateGlossary(id, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryDetail(id) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaries(workspaceId) });
+    },
+  });
+}
+
+/** PO 2026-10-02: change a glossary's pair in place; its chip moves to the new pair group. */
+export function useUpdateGlossaryLanguages(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...request }: { id: string; sourceLanguage: string; targetLanguage: string }) =>
+      WorkspaceService.updateGlossaryLanguages(id, request),
+    onSuccess: (glossary) => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaries(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryDetail(glossary.id) });
+    },
+  });
+}
+
+export function useDeleteGlossary(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => WorkspaceService.deleteGlossary(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaries(workspaceId) });
+    },
+  });
+}
+
+export function useAddGlossaryTerm(glossaryId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Parameters<typeof WorkspaceService.addTerm>[1]) =>
+      WorkspaceService.addTerm(glossaryId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.terms(glossaryId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryWarpBotStatus(glossaryId) });
+    },
+  });
+}
+
+/**
+ * PO 2026-10-02 — is this glossary in WarpBot's knowledgebase yet? Real state from the server
+ * (index results counted per glossary); polled only while a load is in flight, and re-read after
+ * every import / added term (those mutations invalidate this key).
+ */
+export function useGlossaryWarpBotStatus(glossaryId: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.glossaryWarpBotStatus(glossaryId),
+    queryFn: () => WorkspaceService.getGlossaryWarpBotStatus(glossaryId),
+    enabled: !!glossaryId,
+    staleTime: 0,
+    retry: false,
+    refetchInterval: (query) => (isWarpBotLoading(query.state.data) ? 2000 : false),
+  });
+}
+
+/**
+ * WT-472 — import a spreadsheet of terms in one request.
+ *
+ * Invalidates the same key as useAddGlossaryTerm, so the dictionary re-reads once when the file
+ * lands rather than once per row.
+ */
+export function useBulkImportGlossaryTerms(glossaryId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (terms: Parameters<typeof WorkspaceService.bulkImportTerms>[1]) =>
+      WorkspaceService.bulkImportTerms(glossaryId, terms),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.terms(glossaryId) });
+      queryClient.invalidateQueries({ queryKey: ["workspaces", "glossaries"] });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryWarpBotStatus(glossaryId) });
+    },
+  });
+}
+
+export function useGlossaryTerms(glossaryId: string) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.terms(glossaryId),
+    queryFn: () => WorkspaceService.getTerms(glossaryId),
+    enabled: !!glossaryId,
+    staleTime: 30000,
+  });
+}
+
+export function usePublishedGlobalGlossaryTerms() {
+  return useQuery({
+    queryKey: ["glossaries", "global-published"] as const,
+    queryFn: () => WorkspaceService.getPublishedGlobalTerms(),
+    staleTime: 60000,
+  });
+}
+
+export function useUpdateGlossaryTerm(glossaryId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ termId, request }: { termId: string; request: Parameters<typeof WorkspaceService.updateTerm>[2] }) =>
+      WorkspaceService.updateTerm(glossaryId, termId, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.terms(glossaryId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryWarpBotStatus(glossaryId) });
+    },
+  });
+}
+
+export function useDeleteGlossaryTerm(glossaryId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (termId: string) => WorkspaceService.deleteTerm(glossaryId, termId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.terms(glossaryId) });
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.glossaryWarpBotStatus(glossaryId) });
+    },
+  });
+}
+
+export function useDownloadWorkspaceDocument(workspaceId: string) {
+  return useMutation({
+    mutationFn: (docId: string) => WorkspaceService.downloadDocument(workspaceId, docId),
+  });
+}
+
+/** The PII-masked copy, in the uploaded format. */
+export function useDownloadMaskedWorkspaceDocument(workspaceId: string) {
+  return useMutation({
+    mutationFn: (docId: string) => WorkspaceService.downloadMaskedDocument(workspaceId, docId),
+  });
+}
+
+/** Owner/Admin: produce the masked copy of a restricted document that predates masked copies. */
+export function useRescanMaskedDocumentVersion(workspaceId: string, docId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => WorkspaceService.rescanMaskedVersion(workspaceId, docId),
+    onSuccess: (doc) => {
+      queryClient.setQueryData(WORKSPACE_KEYS.documentDetail(workspaceId, docId), doc);
+      queryClient.invalidateQueries({ queryKey: WORKSPACE_KEYS.documentDetail(workspaceId, docId) });
+    },
+  });
+}
+
+export function useDeleteWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workspaceId: string) => WorkspaceService.deleteWorkspace(workspaceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
+  });
+}
+
+// ─── Indexed knowledge ───
+
+/**
+ * One page of what the system has indexed about this workspace.
+ *
+ * `placeholderData` keeps the previous page on screen while the next one loads, so paging
+ * does not flash an empty table — the same thing an empty workspace looks like.
+ */
+export function useWorkspaceKnowledge(
+  workspaceId: string,
+  query: WorkspaceKnowledgeQuery = {},
+) {
+  return useQuery({
+    queryKey: WORKSPACE_KEYS.knowledge(workspaceId, query),
+    queryFn: () => WorkspaceService.listKnowledge(workspaceId, query),
+    enabled: !!workspaceId,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30000,
+  });
+}
+
+/**
+ * Corrects one indexed chunk.
+ *
+ * Invalidates every page of this workspace's listing rather than patching the one row: the
+ * fact-category filter is part of the query key, so recategorising a chunk changes which
+ * filtered pages it belongs to — and a surgical cache write would leave it on the page for
+ * the category it just left.
+ */
+export function useUpdateKnowledgeChunk(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      chunkId,
+      update,
+    }: {
+      chunkId: string;
+      update: UpdateKnowledgeChunkRequest;
+    }) => WorkspaceService.updateKnowledgeChunk(workspaceId, chunkId, update),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspaces", "knowledge", workspaceId],
+      });
+    },
+  });
+}
+
+export function useDeleteKnowledgeChunk(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (chunkId: string) =>
+      WorkspaceService.deleteKnowledgeChunk(workspaceId, chunkId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspaces", "knowledge", workspaceId],
+      });
+    },
+  });
+}

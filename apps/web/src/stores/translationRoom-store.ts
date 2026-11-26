@@ -1,0 +1,1016 @@
+import { create } from "zustand";
+// Relative, with the extension: session-scoped-state.test.ts imports this store under the plain
+// node test runner, which does not resolve the "@/" alias for a real (non-type) import.
+import { normalizeLanguageCode } from "../lib/language/languages.ts";
+import { upsertCleanSentence } from "../lib/transcript/clean-transcript.ts";
+import {
+  clearLiveLine,
+  expireLiveLine,
+  upsertLiveLine,
+  type LiveLine,
+  type LiveLines,
+} from "../lib/transcript/live-text.ts";
+import {
+  applyLateFarSpeakerName,
+  holdLateFarSpeakerName,
+  lateFarSpeakerNameFor,
+  revisedFarSideSpeakerName,
+  takeLateFarSpeakerName,
+  type FarSpeakerLateName,
+  type HeldLateName,
+} from "../lib/transcript/speaker-identity.ts";
+import type {
+  AiSuggestionDto,
+  ChatMentionDto,
+  ChatMessageDto,
+  TranslationRoomStateDto,
+  ParticipantInfoDto,
+  TranscriptCleanSentenceEventDto,
+  TranscriptSegmentDto,
+  TranslationTextDto,
+} from "@/types/realtime";
+// Relative, not "@/...": these stores are imported directly by node-run contract tests, which
+// have no bundler and cannot resolve the alias. The same trap already cost a fix once
+// (normalizeLanguageCode, WT-371).
+import {
+  REASONING_STEP,
+  THINKING_STEP,
+  WRITING_STEP,
+  type AssistantStep,
+} from "../lib/meeting/assistant-tool-labels.ts";
+
+interface TranslationRoomStoreState {
+  // Current live translationRoom state
+  translationRoomState: TranslationRoomStateDto | null;
+  participants: ParticipantInfoDto[];
+  /**
+   * Two lanes fed by the same broadcasts, and they are kept apart on purpose. WT-605.
+   *
+   * `captionSegments` is what the live subtitle overlay reads: every segment the room hears,
+   * whether or not the transcript is being written down. Pause Transcript stops the RECORD, never
+   * the captions — the paused banner says so to the whole room.
+   *
+   * `transcriptSegments` is what the transcript panel reads: only what arrived while the
+   * transcript was running. A segment that arrives while `transcriptPaused` is true goes to the
+   * caption lane alone. This used to be one list, filtered at render by the panel — so any gate
+   * placed in front of the list (the gateway once dropped STT while paused) silently froze the
+   * captions too.
+   */
+  captionSegments: TranscriptSegmentDto[];
+  transcriptSegments: TranscriptSegmentDto[];
+  /**
+   * Whether the host has the transcript paused, as this client knows it. Set by the session from
+   * the same resolveTranscriptPause answer the banner shows. Decides only which lane a NEW segment
+   * joins; nothing already in either list is moved.
+   */
+  transcriptPaused: boolean;
+  /** Segments kept out of the transcript lane since the current pause began. 0 while running. */
+  withheldWhilePaused: number;
+  /**
+   * Live text, one line per speaker: the words of a turn still being spoken. Cleared by that
+   * speaker's final line. Captions always show it; the transcript panel shows it only while the
+   * transcript is running. See lib/transcript/live-text.ts.
+   */
+  liveLines: LiveLines;
+  /**
+   * Late far-speaker names that arrived before their line (the gateway's two consumer loops are not
+   * ordered), applied when the line lands. Bounded in age and count — see holdLateFarSpeakerName.
+   */
+  heldLateSpeakerNames: readonly HeldLateName[];
+  /**
+   * WT-716 tier 2: merged clean sentences received live (TranscriptCleanSentenceReceived), highest
+   * revision per id. Kept as sentences, not folded into the segments: a sentence REPLACES the
+   * segments it covers only at render, and only in the Clean view, so the segment lanes above stay
+   * the raw record the caption lane, corrections and Verbatim all read.
+   *
+   * Not split into caption/transcript lanes like the segments: a sentence covering a segment the
+   * pause kept out of the transcript lane simply finds that segment missing there, and the Clean
+   * view falls back for it (isCleanSentenceStale), so a pause cannot leak through a sentence.
+   */
+  cleanSentences: TranscriptCleanSentenceEventDto[];
+  // AI suggestions keyed by the segment id they were anchored to. A record rather than a
+  // list because at most one suggestion exists per segment and dismissing must be O(1);
+  // note the key is a BACKEND segment id, which may have been merged into a bubble with a
+  // different id — see findSuggestionForUtterance.
+  suggestions: Record<string, AiSuggestionDto>;
+  chatMessages: ChatMessageDto[];
+  /**
+   * Where a WarpBot answer is between being asked for and arriving.
+   *
+   * The backend broadcasts ChatAssistantResponsePending for exactly this and nothing bound
+   * it, so between "@WarpBot ..." and the answer — an OpenAI tool-calling loop, which is
+   * seconds, not milliseconds — the chat showed no sign anything was happening. Asking and
+   * being ignored look identical when there is nothing in between.
+   */
+  assistantState: "idle" | "thinking" | "slow";
+  /**
+   * Questions for WarpBot typed while it was still answering the previous one. WT-580.
+   *
+   * IN THE STORE, NOT IN THE PANEL. Switching to Transcript or People unmounts the chat panel, so
+   * component state would drop a question the user had already sent and been told was queued —
+   * the same class of loss the side-panel tabs have caused before. It also keeps the drain out of
+   * a React setState-in-effect: this is an external store, which is where an effect is allowed to
+   * write.
+   */
+  queuedAgentAsks: { text: string; mentions: ChatMentionDto[] }[];
+  /**
+   * When the open turn began and when it ended, so the finished trail can say how long it took
+   * rather than only what it did. Both null before the first question of a session.
+   */
+  assistantStartedAt: number | null;
+  assistantFinishedAt: number | null;
+  /**
+   * Which tool WarpBot reached for last, so the room can see the step rather than a spinner.
+   *
+   * The backend has always carried the tool name on the result message and threw it away; the
+   * global assistant widget has shown it since it shipped.
+   */
+  /**
+   * The tools WarpBot has reached for this turn, in order.
+   *
+   * A single latest-tool string was overwritten by each new call, so a loop that checked the
+   * glossary and then searched documents showed one label for a moment and looked like a
+   * spinner. The trail is the evidence somebody asked for: which tools, in what order.
+   */
+  assistantSteps: AssistantStep[];
+  /**
+   * The finished trail of each answer that has already landed, keyed by its message id.
+   *
+   * WHY THE LIVE ARRAY IS NOT ENOUGH
+   *   `assistantSteps` is ONE turn — the next question clears it. In the widget every answer
+   *   keeps its own folded trail underneath it, so scrolling back shows which tools each reply
+   *   came through; here the trail sat at the bottom of the panel and belonged to whichever
+   *   question was asked last. Two surfaces running one agent, showing two different amounts of
+   *   its work.
+   *
+   *   Sealed rather than copied live: a trail is attached to the message it produced at the
+   *   moment that message arrives, which is the only point where the pairing is known.
+   */
+  assistantTrails: Record<string, { steps: AssistantStep[]; durationMs: number | null }>;
+  /**
+   * The answer as WarpBot is writing it, before it exists as a message.
+   *
+   * A meeting chat message is only persisted once the whole turn is over, so the room saw
+   * nothing between the question and the finished reply — a long answer read as a stall while
+   * the widget beside it was visibly writing. The agent takes the same time on both surfaces;
+   * only one of them showed its work.
+   *
+   * A DRAFT, not a message: it has no id, is never persisted, and is dropped the moment the real
+   * one arrives. Anyone who reloads or joins late sees the persisted message and never this.
+   */
+  assistantDraft: string;
+  /**
+   * The three cards WarpBot can raise mid-turn, one slot each (WT-688).
+   *
+   * All three arrive on the same ChatAssistantQuestion event, and they used to share ONE slot that
+   * every event overwrote. The worker sends one card per event, so an operator-setup event landing
+   * after a question replaced the question's payload with one the question card cannot read: the
+   * half-answered card vanished, and — the panel having no setup card — nothing took its place.
+   * Separate slots let an event replace only the kind of card it actually carries.
+   *
+   * Raw JSON rather than parsed actions, like the questions before them: this store is imported by
+   * node-run tests that cannot resolve the card modules, and it has no business knowing what a
+   * card means. The session routes each payload; the panel parses what it renders.
+   */
+  assistantQuestionsJson: string | null;
+  /**
+   * What WarpBot is waiting on before it may act: a write to confirm, a plugin to connect, or a
+   * provider only an operator can register. One slot, because it is one question, and the panel
+   * draws one form for all three above its composer (AssistantPermissionPrompt).
+   */
+  assistantPermissionJson: string | null;
+  /**
+   * When WarpBot last showed a sign of life — a pending signal, a tool call, an answer.
+   *
+   * The deadline is measured from HERE, not from when the question was asked. Measured from the
+   * question, a model that simply thought for longer than the threshold was declared dead while
+   * it was still working, and the notice then sat in the chat after the answer arrived. A
+   * tool-calling loop emits a step every few seconds, so silence for the whole window is the only
+   * thing that can now mean trouble.
+   */
+  assistantActivityAt: number;
+  isMuted: boolean;
+  // userIds of OTHER participants with a raised hand — TranslationRoomHub.RaiseHand
+  // broadcasts via OthersInGroup, so this never includes the caller's own userId; the
+  // caller tracks its own raised state locally instead.
+  raisedHands: string[];
+
+  // Actions — called from SignalR event handlers
+  setTranslationRoomState: (state: TranslationRoomStateDto) => void;
+  setParticipants: (participants: ParticipantInfoDto[]) => void;
+  addParticipant: (participant: ParticipantInfoDto) => void;
+  removeParticipant: (userId: string) => void;
+  updateParticipantMute: (userId: string, isMuted: boolean) => void;
+  updateParticipantSpeakLanguage: (userId: string, speakLanguage: string) => void;
+  updateParticipantListenLanguage: (userId: string, listenLanguage: string) => void;
+  addTranscriptSegment: (segment: TranscriptSegmentDto) => void;
+  upsertLiveLine: (line: Omit<LiveLine, "receivedAt">, now: number) => void;
+  expireLiveLine: (speakerId: string, receivedAt: number) => void;
+  /** TranscriptSegmentSpeakerNamed — see applyLateFarSpeakerName for the whole rule. */
+  nameTranscriptSegmentSpeaker: (late: FarSpeakerLateName) => void;
+  addOrMergeTranslationText: (translation: TranslationTextDto) => void;
+  upsertCleanSentence: (sentence: TranscriptCleanSentenceEventDto) => void;
+  setTranscriptPaused: (paused: boolean) => void;
+  addSuggestion: (suggestion: AiSuggestionDto, preferredLanguage?: string) => void;
+  dismissSuggestion: (segmentId: string) => void;
+  setChatMessages: (messages: ChatMessageDto[]) => void;
+  addChatMessage: (message: ChatMessageDto) => void;
+  setAssistantState: (state: "idle" | "thinking" | "slow") => void;
+  /** Hold a question until WarpBot finishes the one it is on. WT-580. */
+  enqueueAgentAsk: (ask: { text: string; mentions: ChatMentionDto[] }) => void;
+  /** Take the oldest queued question, or null when there is none. */
+  dequeueAgentAsk: () => { text: string; mentions: ChatMentionDto[] } | null;
+  /**
+   * A question has just been put to WarpBot. Opens a fresh trail on the step that is genuinely
+   * running — reading the question — and drops whatever the previous turn left behind.
+   *
+   * SEPARATE FROM setAssistantState("thinking"), which is what the panel used to call on its
+   * own. That set the state to "thinking" BEFORE any activity arrived, so every later
+   * `noteAssistantActivity` saw a non-idle state, took the "already running" branch, and never
+   * seeded anything. The trail therefore began at the first tool call — and for the whole
+   * stretch before it, which on a slow turn is the longest part, the panel showed a bare
+   * spinner where the widget shows "Reading your question".
+   */
+  beginAssistantTurn: () => void;
+  /** WarpBot showed a sign of life; optionally names the tool it just reached for. */
+  noteAssistantActivity: (toolName?: string | null, toolDetail?: string | null) => void;
+  /**
+   * A new WarpBot turn has started in the room — possibly one somebody ELSE asked — so the previous
+   * turn's cards go.
+   *
+   * Cards outlive their own turn's answer (see sealAssistantTrail), so something has to end them
+   * on every participant's screen, and beginAssistantTurn only runs on the asker's. The session
+   * calls this on ChatAssistantResponsePending, which the meeting service broadcasts exactly once
+   * per request, on the worker's first chunk or tool call. A card can only be raised inside a tool
+   * call, after that tool call's started event, so the signal always lands BEFORE its own turn's
+   * card and never erases it. Not a store-side guess from the state machine: idle -> thinking can
+   * recur mid-turn on a client that did not ask.
+   */
+  clearAssistantCards: () => void;
+  /**
+   * A tool WarpBot reached for has FINISHED, and what it was aimed at.
+   *
+   * Folded into the step already running for that tool rather than appended: OpenAI's hosted web
+   * search reports its target on the completed event, because the started one fires before the
+   * item naming the query is on the wire. Appending would draw the same search twice — once with
+   * no target and once with it.
+   */
+  noteAssistantToolFinished: (toolName?: string | null, toolDetail?: string | null) => void;
+  /**
+   * WarpBot said, in its own words, what it is doing.
+   *
+   * Separate from noteAssistantActivity because it is a different KIND of step, not another
+   * tool: it carries a heading and a paragraph, and the trail draws those on two lines.
+   */
+  noteAssistantReasoning: (title?: string | null, body?: string | null) => void;
+  /**
+   * Attach the turn that just finished to the answer it produced, and clear the live trail.
+   *
+   * Idempotent by message id: the answer can arrive twice — once over the hub and again in a
+   * history backfill after a reconnect — and the second arrival must not overwrite a sealed
+   * trail with the empty array the first one left behind.
+   */
+  /**
+   * Another piece of the answer. Additive — the worker emits the text since the last piece, so
+   * these concatenate rather than replace.
+   */
+  appendAssistantDraft: (delta?: string | null) => void;
+  setAssistantQuestionsJson: (questionsJson: string | null) => void;
+  setAssistantPermissionJson: (permissionJson: string | null) => void;
+  sealAssistantTrail: (messageId: string) => void;
+  hideChatMessage: (messageId: string) => void;
+  setMuted: (muted: boolean) => void;
+  setHandRaised: (userId: string, isRaised: boolean) => void;
+  reset: () => void;
+}
+
+/**
+ * WT-862. Hub events name a participant by the id in the caller's token, while roster entries
+ * carry whatever casing the server serialised a Guid with. They agree today, but a live update
+ * that silently matched nobody was indistinguishable from a live update that never arrived — the
+ * badge simply stayed wrong — so the comparison does not depend on that agreement.
+ */
+export function sameUserId(a: string | null | undefined, b: string | null | undefined): boolean {
+  return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+}
+
+const initialState = {
+  translationRoomState: null,
+  participants: [],
+  captionSegments: [],
+  transcriptSegments: [],
+  transcriptPaused: false,
+  withheldWhilePaused: 0,
+  liveLines: {} as LiveLines,
+  heldLateSpeakerNames: [] as readonly HeldLateName[],
+  cleanSentences: [] as TranscriptCleanSentenceEventDto[],
+  suggestions: {},
+  chatMessages: [],
+  assistantState: "idle" as const,
+  queuedAgentAsks: [],
+  assistantStartedAt: null as number | null,
+  assistantFinishedAt: null as number | null,
+  assistantSteps: [] as AssistantStep[],
+  assistantTrails: {} as Record<string, { steps: AssistantStep[]; durationMs: number | null }>,
+  assistantDraft: "",
+  assistantQuestionsJson: null as string | null,
+  assistantPermissionJson: null as string | null,
+  assistantActivityAt: 0,
+  isMuted: false,
+  raisedHands: [],
+};
+
+export const useTranslationRoomStore = create<TranslationRoomStoreState>()((set, get) => ({
+  ...initialState,
+
+  setTranslationRoomState: (translationRoomState) =>
+    set({ translationRoomState, participants: translationRoomState.participants }),
+
+  setParticipants: (participants) => set({ participants }),
+
+  addParticipant: (participant) =>
+    set((s) => ({
+      participants: [
+        ...s.participants.filter((p) => p.userId !== participant.userId),
+        participant,
+      ],
+    })),
+
+  removeParticipant: (userId) =>
+    set((s) => ({
+      participants: s.participants.map((p) =>
+        p.userId === userId ? { ...p, status: "left" } : p
+      ),
+    })),
+
+  updateParticipantMute: (userId, isMuted) =>
+    set((s) => ({
+      participants: s.participants.map((p) =>
+        sameUserId(p.userId, userId) ? { ...p, isMuted } : p
+      ),
+    })),
+
+  updateParticipantSpeakLanguage: (userId, speakLanguage) =>
+    set((s) => ({
+      participants: s.participants.map((p) =>
+        sameUserId(p.userId, userId) ? { ...p, speakLanguage } : p
+      ),
+    })),
+
+  // The listen half of the pair above, and it was missing — with a consequence bigger than a
+  // stale roster row. hasDubAudience() answers "is anyone listening in another language?" from
+  // each OTHER participant's listenLanguage, and that sentence is what the Voice panel shows
+  // ("Nobody is listening in another language right now, so nothing is being dubbed"). With no
+  // live update, a partner switching languages mid-meeting never changed the sentence: in the
+  // 16 Aug test both users sat on "nobody is listening" while the mesh had already built their
+  // routes, and concluded voice clone was broken.
+  updateParticipantListenLanguage: (userId, listenLanguage) =>
+    set((s) => ({
+      participants: s.participants.map((p) =>
+        sameUserId(p.userId, userId) ? { ...p, listenLanguage } : p
+      ),
+    })),
+
+  addTranscriptSegment: (incoming) =>
+    set((s) => {
+      // A late name that outran this line is applied as the line arrives, by the same rule as an
+      // event that finds it (lateFarSpeakerNameFor): a line that came named keeps its own name.
+      const taken = takeLateFarSpeakerName(s.heldLateSpeakerNames, incoming.segmentId, Date.now());
+      const heldName = taken.name ? lateFarSpeakerNameFor(incoming, taken.name) : null;
+      const segment = heldName ? { ...incoming, speakerName: heldName } : incoming;
+      const held = taken.held === s.heldLateSpeakerNames ? {} : { heldLateSpeakerNames: taken.held };
+      const captionSegments = mergeTranscriptSegment(s.captionSegments, segment);
+      // The speaker's final line replaces their live text, in both lanes.
+      const liveLines = clearLiveLine(s.liveLines, segment.speakerId);
+      // A revision of a line the transcript already holds keeps updating it, paused or not: the
+      // line was said while recording, and only its wording is changing.
+      const alreadyRecorded = s.transcriptSegments.some((existing) => existing.segmentId === segment.segmentId);
+      if (s.transcriptPaused && !alreadyRecorded) {
+        const alreadyCaptioned = s.captionSegments.some((existing) => existing.segmentId === segment.segmentId);
+        return {
+          ...held,
+          captionSegments,
+          liveLines,
+          withheldWhilePaused: s.withheldWhilePaused + (alreadyCaptioned ? 0 : 1),
+        };
+      }
+      return {
+        ...held,
+        captionSegments,
+        liveLines,
+        transcriptSegments: mergeTranscriptSegment(s.transcriptSegments, segment),
+      };
+    }),
+
+  upsertLiveLine: (line, now) =>
+    set((s) => {
+      const liveLines = upsertLiveLine(s.liveLines, line, now);
+      return liveLines === s.liveLines ? {} : { liveLines };
+    }),
+
+  expireLiveLine: (speakerId, receivedAt) =>
+    set((s) => {
+      const liveLines = expireLiveLine(s.liveLines, speakerId, receivedAt);
+      return liveLines === s.liveLines ? {} : { liveLines };
+    }),
+
+  // The late far-speaker name renames a line in BOTH lanes, paused or not: it adds nothing to
+  // either, it only says who spoke a line the lane already holds — the caption runs group by the
+  // same speaker key the panel does. `{}` when there is nothing to name, which is also every
+  // repeat of the event, so a redelivery re-renders nothing.
+  //
+  // Neither lane holding the id at all is a different case from holding a line it may not rename:
+  // the event may have outrun its line, so the name is held briefly (heldLateSpeakerNames) and
+  // addTranscriptSegment applies it. A line that IS here and keeps its name is simply left alone.
+  nameTranscriptSegmentSpeaker: (late) =>
+    set((s) => {
+      const captionSegments = applyLateFarSpeakerName(s.captionSegments, late);
+      const transcriptSegments = applyLateFarSpeakerName(s.transcriptSegments, late);
+      if (captionSegments !== s.captionSegments || transcriptSegments !== s.transcriptSegments) {
+        return { captionSegments, transcriptSegments };
+      }
+      const id = (late?.segmentId ?? "").trim().toLowerCase();
+      const holds = (lines: TranscriptSegmentDto[]) =>
+        lines.some((line) => line.segmentId.trim().toLowerCase() === id);
+      if (!id || holds(s.captionSegments) || holds(s.transcriptSegments)) return {};
+      const heldLateSpeakerNames = holdLateFarSpeakerName(s.heldLateSpeakerNames, late, Date.now());
+      return heldLateSpeakerNames === s.heldLateSpeakerNames ? {} : { heldLateSpeakerNames };
+    }),
+
+  /**
+   * Files a translation under ITS OWN language rather than overwriting the bubble's.
+   *
+   * WT-371 Bug 4. This used to keep exactly one translation per bubble — `translatedText` plus
+   * `targetLanguage`, replaced by whichever payload landed last — and the SignalR handler
+   * protected that single slot by dropping every translation whose language was not the
+   * viewer's. Two things fall out of that, and the report is both:
+   *
+   *   • The viewer's listen language is RESOLVED, not known. It comes from the picker, then
+   *     session storage, then their participant row (see participant-language-preference), and
+   *     the participant row arrives over the network. In the window before it does, the room
+   *     default stands in — so on a cold direct navigation to an [en, vi] room the filter
+   *     briefly admitted the wrong language, those bubbles kept it forever, and the panel ended
+   *     up showing "English → Vietnamese" on one line and "Vietnamese → English" on the next.
+   *   • Changing the listen language mid-meeting only affected new lines. Everything already on
+   *     screen stayed in the old language, which is the same mixture arrived at from the other
+   *     direction.
+   *
+   * Keyed by normalized language, the bubble no longer has a language of its own — the READER
+   * does, and the panel picks the matching entry at render time. A late-resolving or changed
+   * listen language re-renders the whole transcript into that language instead of leaving a
+   * permanent seam. The handler no longer has to filter to protect a slot, which is what made
+   * the race reachable in the first place.
+   *
+   * Memory is bounded by (segments × languages in the room) short strings; nothing extra crosses
+   * the network, since the gateway already fans every language out to the whole room group.
+   */
+  addOrMergeTranslationText: (translation) =>
+    set((s) => {
+      // Normalized so "en-US" from a picker and "en" from the worker are one key. Unnormalized
+      // they are two, and the panel — which looks the reader's language up by key — would miss.
+      if (!normalizeLanguageCode(translation.targetLang)) return {};
+      return {
+        captionSegments: mergeTranslationText(s.captionSegments, translation, true),
+        // Joins a line the transcript already holds. It may only START a new line while
+        // recording: a translation of something said during a pause has no line to join, and
+        // creating one would put paused speech in the panel through the back door.
+        transcriptSegments: mergeTranslationText(s.transcriptSegments, translation, !s.transcriptPaused),
+      };
+    }),
+
+  // Same array back when the revision is not newer, so a redelivered event re-renders nothing.
+  upsertCleanSentence: (sentence) =>
+    set((s) => {
+      const cleanSentences = upsertCleanSentence(s.cleanSentences, sentence);
+      return cleanSentences === s.cleanSentences ? {} : { cleanSentences };
+    }),
+
+  setTranscriptPaused: (paused) =>
+    set((s) =>
+      s.transcriptPaused === paused
+        ? {}
+        : { transcriptPaused: paused, withheldWhilePaused: 0 },
+    ),
+
+  /**
+   * AI suggestions are fanned out to the WHOLE room, one per language the room is translating
+   * into — the same broadcast shape as TranslationTextReceived, which the transcript handler
+   * already filters by the viewer's own language. This did not filter at all, so a viewer set to
+   * English read a suggestion written in Vietnamese because another participant was listening in
+   * Vietnamese ("e set speak en - hear en mà sao suggest ở vi").
+   *
+   * PREFERRED, not required. Dropping every non-matching suggestion would be correct only if the
+   * worker is guaranteed to emit the viewer's language, and it is not — a room translating into
+   * one language would then show nobody any suggestions at all. So a matching language always
+   * wins, and a non-matching one is only kept when nothing better has arrived for that segment.
+   */
+  addSuggestion: (suggestion, preferredLanguage) =>
+    set((s) => ({
+      suggestions: (() => {
+        const existing = s.suggestions[suggestion.segmentId];
+        if (!existing) return { ...s.suggestions, [suggestion.segmentId]: suggestion };
+
+        const matches = (candidate: AiSuggestionDto) =>
+          Boolean(preferredLanguage) &&
+          candidate.language?.slice(0, 2).toLowerCase() ===
+            preferredLanguage!.slice(0, 2).toLowerCase();
+
+        // Keep what is already shown unless the newcomer is a better language match.
+        if (matches(existing) || !matches(suggestion)) return s.suggestions;
+        return { ...s.suggestions, [suggestion.segmentId]: suggestion };
+      })(),
+    })),
+
+  dismissSuggestion: (segmentId) =>
+    set((s) => {
+      // Nothing here is persisted, so a dismissal only has to survive until the room is
+      // left — deleting the key is enough, and it can never come back: the worker takes a
+      // one-shot Redis slot per suggestion and never republishes one.
+      if (!(segmentId in s.suggestions)) return s;
+      const remaining = { ...s.suggestions };
+      delete remaining[segmentId];
+      return { suggestions: remaining };
+    }),
+
+  setChatMessages: (messages) =>
+    set((s) => ({
+      chatMessages: mergeChatMessages(s.chatMessages, messages),
+    })),
+
+  enqueueAgentAsk: (ask) =>
+    set((state) => ({ queuedAgentAsks: [...state.queuedAgentAsks, ask] })),
+
+  dequeueAgentAsk: () => {
+    const [next, ...rest] = get().queuedAgentAsks;
+    if (!next) return null;
+    set({ queuedAgentAsks: rest });
+    return next;
+  },
+
+  setAssistantState: (assistantState) =>
+    set((state) => ({
+      assistantState,
+      // Stamped on the way to idle, and only from a turn that was actually running: the room sets
+      // idle defensively in several places, and a second stamp would restart the clock on a trail
+      // already folded.
+      assistantFinishedAt:
+        assistantState === "idle" && state.assistantState !== "idle"
+          ? Date.now()
+          : state.assistantFinishedAt,
+    })),
+  beginAssistantTurn: () =>
+    set(() => ({
+      assistantState: "thinking" as const,
+      assistantStartedAt: Date.now(),
+      assistantFinishedAt: null,
+      // The previous turn's live steps go, whether or not it ever produced an answer to seal
+      // them onto — a question that failed leaves a trail behind, and appending the next
+      // question's steps to it would present one turn's work as another's.
+      assistantSteps: [{ key: THINKING_STEP, tool: THINKING_STEP, done: false }],
+      // A turn that died without an answer leaves its half-written draft behind; the next
+      // question must not open under somebody else's unfinished sentence.
+      assistantDraft: "",
+      // Every card belongs to the turn that raised it, and lives until the next one starts —
+      // here. A Connect card left over from the last question would open an OAuth flow this one
+      // never asked for.
+      assistantQuestionsJson: null,
+      assistantPermissionJson: null,
+      assistantActivityAt: Date.now(),
+    })),
+
+  // One call for "WarpBot did something", so no caller can move the state and forget to reset
+  // the deadline it is measured against.
+  noteAssistantActivity: (toolName = null, toolDetail = null) =>
+    set((state) => {
+      // Idle -> thinking is a NEW question, so the previous turn's trail goes with it.
+      const starting = state.assistantState === "idle";
+      // A turn that opens without naming a tool opens on the step that IS running: WarpBot is
+      // reading the question. The widget has seeded this since the trail shipped; here the same
+      // moment drew a bare "WarpBot is thinking…" with no trail behind it, so the longest
+      // stretch of a slow turn was the one stretch that said nothing about itself.
+      const carried = starting
+        ? toolName
+          ? []
+          : [{ key: THINKING_STEP, tool: THINKING_STEP, done: false }]
+        : state.assistantSteps;
+      return {
+        assistantState: starting ? "thinking" : state.assistantState,
+        assistantStartedAt: starting ? Date.now() : state.assistantStartedAt,
+        assistantFinishedAt: starting ? null : state.assistantFinishedAt,
+        assistantSteps: toolName
+          ? [
+              // Anything still running has finished — a second tool cannot start inside the
+              // first, and two spinners at once would say otherwise.
+              ...carried.map((step) => ({ ...step, done: true })),
+              {
+                key: `${toolName}-${carried.length}`,
+                tool: toolName,
+                done: false,
+                // What the call is about, straight from the worker. Never derived here: a
+                // target this client guessed at would be a claim about what the agent did,
+                // made by something that cannot know.
+                detail: toolDetail || undefined,
+              },
+            ]
+          : carried,
+        // No card clearing here, although idle -> thinking looks like a turn starting. On a client
+        // that did not ask, the panel's answer baseline is stale, so the state can drop back to
+        // idle mid-turn and a later tool call of the SAME turn re-enters this branch — which would
+        // erase the card that turn just raised. See clearAssistantCards for the signal that fires
+        // exactly once per turn.
+        assistantActivityAt: Date.now(),
+      };
+    }),
+
+  clearAssistantCards: () =>
+    set({
+      assistantQuestionsJson: null,
+      assistantPermissionJson: null,
+    }),
+
+  noteAssistantToolFinished: (toolName = null, toolDetail = null) =>
+    set((state) => {
+      if (!toolName) return state;
+
+      // Last match, not first: one turn can search the web more than once, and the call that
+      // just finished is the most recent one bearing that name.
+      const index = [...state.assistantSteps]
+        .map((step, position) => ({ step, position }))
+        .reverse()
+        .find((entry) => entry.step.tool === toolName)?.position;
+
+      // A tool whose start was never announced still deserves its step. The hosted web search is
+      // exactly this: in production the only event it emits is the completed one, so without
+      // this branch a whole web-search turn leaves no trace in the trail at all — which is the
+      // reported defect.
+      if (index === undefined) {
+        return {
+          assistantState: state.assistantState === "idle" ? "thinking" : state.assistantState,
+          assistantStartedAt: state.assistantStartedAt ?? Date.now(),
+          assistantSteps: [
+            ...state.assistantSteps.map((step) => ({ ...step, done: true })),
+            {
+              key: `${toolName}-${state.assistantSteps.length}`,
+              tool: toolName,
+              done: true,
+              detail: toolDetail || undefined,
+            },
+          ],
+          assistantActivityAt: Date.now(),
+        };
+      }
+
+      return {
+        assistantSteps: state.assistantSteps.map((step, position) =>
+          position === index
+            ? {
+                ...step,
+                done: true,
+                // Only ever FILLS a gap. The started event may have had no target yet; if it did
+                // have one, it described this same call and is not overwritten by a later,
+                // possibly emptier, report of the same thing.
+                detail: step.detail || toolDetail || undefined,
+              }
+            : step,
+        ),
+        assistantActivityAt: Date.now(),
+      };
+    }),
+
+  noteAssistantReasoning: (title = null, body = null) =>
+    set((state) => {
+      const heading = title?.trim() ?? "";
+      const paragraph = body?.trim() ?? "";
+      if (!heading && !paragraph) return state;
+      const starting = state.assistantState === "idle";
+      const carried = starting ? [] : state.assistantSteps;
+      return {
+        assistantState: starting ? "thinking" : state.assistantState,
+        assistantStartedAt: starting ? Date.now() : state.assistantStartedAt,
+        assistantFinishedAt: starting ? null : state.assistantFinishedAt,
+        assistantSteps: [
+          // The model has moved on from whatever it was doing when it wrote this.
+          ...carried.map((step) => ({ ...step, done: true })),
+          {
+            key: `${REASONING_STEP}-${carried.length}`,
+            tool: REASONING_STEP,
+            done: false,
+            detail: heading || undefined,
+            body: paragraph || undefined,
+          },
+        ],
+        assistantActivityAt: Date.now(),
+      };
+    }),
+
+  appendAssistantDraft: (delta = null) =>
+    set((state) => {
+      if (!delta) return state;
+
+      // The FIRST piece of prose ends the tool phase and starts the writing one — the same
+      // signal the widget takes off its token stream, which this surface only gained when the
+      // meeting chat started streaming. Before that, "wrote the answer" could only be claimed
+      // on arrival, because nothing here could see it begin.
+      const writing = state.assistantSteps.some((step) => step.tool === WRITING_STEP);
+      const steps = writing
+        ? state.assistantSteps
+        : [
+            ...state.assistantSteps.map((step) => ({ ...step, done: true })),
+            { key: `${WRITING_STEP}-${state.assistantSteps.length}`, tool: WRITING_STEP, done: false },
+          ];
+
+      return {
+        assistantSteps: steps,
+        assistantDraft: state.assistantDraft + delta,
+        // Text arriving IS a sign of life, and the panel's deadline is measured from the last
+        // one. Without this a long answer that streams for two minutes without a tool call
+        // would be declared slow while it was visibly writing.
+        assistantActivityAt: Date.now(),
+      };
+    }),
+
+  setAssistantQuestionsJson: (assistantQuestionsJson) =>
+    set({
+      assistantQuestionsJson,
+      assistantActivityAt: Date.now(),
+    }),
+
+  // Stamps activity like the questions setter: a prompt arriving is the worker showing a sign of
+  // life mid-turn, and a permission-only event must not leave the slow-turn deadline running.
+  setAssistantPermissionJson: (assistantPermissionJson) =>
+    set({
+      assistantPermissionJson,
+      assistantActivityAt: Date.now(),
+    }),
+
+  sealAssistantTrail: (messageId) =>
+    set((state) => {
+      // Nothing to attach, or this answer already has its trail. Either way, leave it alone:
+      // the same answer arrives twice whenever the hub reconnects mid-turn, and the second
+      // arrival carries an empty live array that would erase what the first one sealed.
+      if (!messageId || state.assistantTrails[messageId]) return state;
+      if (state.assistantSteps.length === 0) return state;
+
+      return {
+        assistantTrails: {
+          ...state.assistantTrails,
+          [messageId]: {
+            // Every step is over — the answer is the last thing a turn produces, so a step
+            // still marked running would spin forever underneath a finished reply.
+            steps: state.assistantSteps.some((step) => step.tool === WRITING_STEP)
+              ? state.assistantSteps.map((step) => ({ ...step, done: true }))
+              : [
+                  ...state.assistantSteps.map((step) => ({ ...step, done: true })),
+                  // "Wrote the answer" when nothing streamed — a turn whose text never arrived
+                  // as chunks still produced an answer, and the trail should say so. Guarded,
+                  // because appendAssistantDraft names this step the moment prose starts and a
+                  // second copy would claim the answer was written twice.
+                  { key: WRITING_STEP, tool: WRITING_STEP, done: true },
+                ],
+            durationMs:
+              state.assistantStartedAt !== null ? Date.now() - state.assistantStartedAt : null,
+          },
+        },
+        // The live trail belongs to the turn that just ended, and the next question starts its
+        // own. Left in place, it would render twice: folded under the answer and live below it.
+        assistantSteps: [],
+        // And the draft is superseded by the message it was a preview of. The persisted one is
+        // authoritative: an aborted tool-calling iteration can emit text that is not in the
+        // final answer, so a client that kept its own accumulation would keep a sentence the
+        // server never saved.
+        assistantDraft: "",
+        // The cards are NOT cleared here, and must not be. A card is raised mid-turn — when the
+        // plugin tool returns — and the answer that lands next is the one explaining it ("connect
+        // Google Calendar", "confirm this write"). Clearing on that answer erased the card moments
+        // after it appeared, before anyone could press it: in a meeting that made a plugin write
+        // effectively impossible to approve. A card lives until the NEXT turn starts: the asker's
+        // beginAssistantTurn, and clearAssistantCards for everyone else in the room (WT-688).
+      };
+    }),
+
+  addChatMessage: (message) =>
+    set((s) => ({
+      // Clearing the waiting state is NOT done here. The store is imported by a node test
+      // that cannot resolve the "@/" alias for a value import — and more to the point, a
+      // message store has no business knowing what an assistant message means. The chat
+      // panel watches for the answer instead, in one place, covering both the live broadcast
+      // and a history backfill.
+      chatMessages: s.chatMessages.some((existing) => existing.id === message.id)
+        ? s.chatMessages.map((existing) => (existing.id === message.id ? message : existing))
+        : [...s.chatMessages, message],
+    })),
+
+  hideChatMessage: (messageId) =>
+    set((s) => ({
+      chatMessages: s.chatMessages.filter((m) => m.id !== messageId),
+    })),
+
+  setMuted: (isMuted) => set({ isMuted }),
+
+  setHandRaised: (userId, isRaised) =>
+    set((s) => ({
+      raisedHands: isRaised
+        ? s.raisedHands.includes(userId)
+          ? s.raisedHands
+          : [...s.raisedHands, userId]
+        : s.raisedHands.filter((id) => id !== userId),
+    })),
+
+  reset: () => set(initialState),
+}));
+
+function mergeTranscriptSegment(
+  current: TranscriptSegmentDto[],
+  segment: TranscriptSegmentDto,
+): TranscriptSegmentDto[] {
+  return current.some((existing) => existing.segmentId === segment.segmentId)
+    ? current.map((existing) =>
+        existing.segmentId === segment.segmentId
+          ? {
+              ...segment,
+              // A revision may not take a named Meet person back to "Google Meet participants" —
+              // a copy of the original broadcast would otherwise undo a late name. See
+              // revisedFarSideSpeakerName.
+              speakerName: revisedFarSideSpeakerName(existing, segment),
+              // Translations already filed against this bubble survive a later STT revision
+              // of the same segment. TranscriptSegmentReceived always carries them as null
+              // (AiResultConsumerService builds it that way), so spreading `segment` over an
+              // existing entry would erase every translation the panel is rendering.
+              translations: existing.translations ?? segment.translations,
+              translatedText: existing.translatedText || segment.translatedText,
+              targetLanguage: existing.targetLanguage || segment.targetLanguage,
+              // Keep the FIRST arrival. A revision of the same segment (the translation
+              // landing, a corrected transcription) must not shuffle the line's clock
+              // forward to whenever the correction happened.
+              receivedAt: existing.receivedAt ?? segment.receivedAt ?? Date.now(),
+            }
+          : existing,
+      )
+    : insertByStartTime(current, { ...segment, receivedAt: segment.receivedAt ?? Date.now() });
+}
+
+/**
+ * How far back on the meeting clock a NEW line may be inserted rather than appended.
+ *
+ * Late lines are real and bounded: a translation held for its predecessor (10 s), a message
+ * retried by the stale reclaim (about a minute). A line much further back than that is not late,
+ * it is on a different clock — the STT worker lost the room's anchor and started counting from
+ * zero again — and inserting it by start time would bury it above minutes of conversation.
+ */
+export const LATE_LINE_WINDOW_MS = 120_000;
+
+/**
+ * Puts a NEW live line where it was spoken: after every line that started at the same time or
+ * earlier, before the first one that started later. Arrival order is not speech order — two
+ * speakers' lines are transcribed in parallel, and a retried line comes back late — and the
+ * owner's rule is that a later sentence never shows above an earlier one.
+ *
+ * `startTimeMs` is on the room's anchor clock (stt_worker `_elapsed_ms`, WT-421), not a per-track
+ * offset; the per-track reset that `dedupeTranscriptSegments` once defended against is gone.
+ * Ties keep arrival order. Exported for tests.
+ */
+export function insertByStartTime(
+  current: TranscriptSegmentDto[],
+  segment: TranscriptSegmentDto,
+): TranscriptSegmentDto[] {
+  const start = segment.startTimeMs;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const existing of current) {
+    if (existing.startTimeMs > latest) latest = existing.startTimeMs;
+  }
+  if (!Number.isFinite(start) || current.length === 0 || start >= latest || latest - start > LATE_LINE_WINDOW_MS) {
+    return [...current, segment];
+  }
+  // Scan from the end: a late line is almost always within the last few.
+  let index = current.length;
+  while (index > 0 && current[index - 1].startTimeMs > start) index -= 1;
+  return [...current.slice(0, index), segment, ...current.slice(index)];
+}
+
+/** The sentence index a translation carries in its own id, `{source}-{lang}-c{n}`; null if none. */
+function sentenceIndexOf(translation: TranslationTextDto): number | null {
+  const match = /-c(\d+)$/.exec(translation.segmentId ?? "");
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Files a translation under ITS OWN language rather than overwriting the bubble's.
+ *
+ * WT-371 Bug 4. This used to keep exactly one translation per bubble — `translatedText` plus
+ * `targetLanguage`, replaced by whichever payload landed last — and the SignalR handler
+ * protected that single slot by dropping every translation whose language was not the
+ * viewer's. Two things fall out of that, and the report is both:
+ *
+ *   • The viewer's listen language is RESOLVED, not known. It comes from the picker, then
+ *     session storage, then their participant row (see participant-language-preference), and
+ *     the participant row arrives over the network. In the window before it does, the room
+ *     default stands in — so on a cold direct navigation to an [en, vi] room the filter
+ *     briefly admitted the wrong language, those bubbles kept it forever, and the panel ended
+ *     up showing "English → Vietnamese" on one line and "Vietnamese → English" on the next.
+ *   • Changing the listen language mid-meeting only affected new lines. Everything already on
+ *     screen stayed in the old language, which is the same mixture arrived at from the other
+ *     direction.
+ *
+ * Keyed by normalized language, the bubble no longer has a language of its own — the READER
+ * does, and the panel picks the matching entry at render time. A late-resolving or changed
+ * listen language re-renders the whole transcript into that language instead of leaving a
+ * permanent seam. The handler no longer has to filter to protect a slot, which is what made
+ * the race reachable in the first place.
+ *
+ * `createIfMissing` false leaves a translation with no line to join on the floor — see the
+ * transcript lane in addOrMergeTranslationText.
+ */
+function mergeTranslationText(
+  current: TranscriptSegmentDto[],
+  translation: TranslationTextDto,
+  createIfMissing: boolean,
+): TranscriptSegmentDto[] {
+  // translation.segmentId is its OWN id ("{sourceSegmentId}-{targetLang}-c{idx}"), never
+  // equal to the transcript bubble's segmentId — sourceSegmentId is the actual join key
+  // back to the TranscriptSegmentReceived bubble it translates. Falling back to
+  // translation.segmentId only covers old/unmigrated messages that never carried it.
+  const joinKey = translation.sourceSegmentId || translation.segmentId;
+  const chunkIndex = translation.chunkIndex ?? 0;
+  const language = normalizeLanguageCode(translation.targetLang);
+  if (!language) return current;
+
+  const existingIndex = current.findIndex((segment) => segment.segmentId === joinKey);
+
+  if (existingIndex === -1) {
+    if (!createIfMissing) return current;
+    const sentence = sentenceIndexOf(translation);
+    return insertByStartTime(current, {
+      segmentId: joinKey,
+      speakerId: translation.speakerId,
+      speakerName: "Speaker",
+      originalText: translation.originalText,
+      originalLanguage: translation.sourceLang,
+      translations: { [language]: translation.translatedText },
+      ...(sentence === null
+        ? {}
+        : { translationSentences: { [language]: placeSentence([], sentence, translation.translatedText) } }),
+      confidence: 1,
+      startTimeMs: translation.startTimeMs ?? 0,
+      endTimeMs: translation.endTimeMs ?? 0,
+    });
+  }
+
+  const segment = current[existingIndex];
+  const existingTranslations = segment.translations ?? {};
+  // One STT segment can be split into multiple translated sentences (chunk_index > 0 for
+  // the 2nd+ sentence) — those must be APPENDED, not overwrite the first sentence's
+  // translation. chunk_index 0 always replaces (it's either the only sentence, or a fresh
+  // segment's first one). Now scoped to the language being written: sentence 2 of the
+  // Vietnamese translation must never be appended to the English one, which is what a
+  // single shared slot made possible whenever two languages interleaved.
+  //
+  // `chunkIndex` on the wire is the STT AUDIO chunk counter, not the sentence number, so it says
+  // "append" for every sentence after a track's first chunk and "replace" for every sentence of
+  // that first chunk — the second sentence of somebody's first utterance overwrote the first. The
+  // sentence number is the `-c{n}` suffix of the translation's own id; when it is present each
+  // sentence has its own slot, so a late or repeated one cannot land after a later sentence or on
+  // top of itself. The chunkIndex rule stays only for messages without the suffix.
+  const previous = existingTranslations[language];
+  const sentence = sentenceIndexOf(translation);
+  const existingSentences = segment.translationSentences?.[language];
+  let text: string;
+  let translationSentences = segment.translationSentences;
+  if (sentence !== null) {
+    const sentences = placeSentence(existingSentences ?? [], sentence, translation.translatedText);
+    translationSentences = { ...(segment.translationSentences ?? {}), [language]: sentences };
+    text = sentences.filter((part) => part).join(" ").trim();
+  } else {
+    text =
+      chunkIndex > 0 && previous
+        ? `${previous} ${translation.translatedText}`.trim()
+        : translation.translatedText;
+  }
+
+  const next = current.slice();
+  next[existingIndex] = {
+    ...segment,
+    originalText: segment.originalText || translation.originalText,
+    originalLanguage: segment.originalLanguage || translation.sourceLang,
+    translations: { ...existingTranslations, [language]: text },
+    ...(translationSentences ? { translationSentences } : {}),
+    startTimeMs: segment.startTimeMs || translation.startTimeMs || 0,
+    endTimeMs: translation.endTimeMs || segment.endTimeMs,
+  };
+  return next;
+}
+
+function placeSentence(sentences: string[], index: number, text: string): string[] {
+  const next = sentences.slice();
+  while (next.length < index) next.push("");
+  next[index] = text;
+  return next;
+}
+
+function mergeChatMessages(current: ChatMessageDto[], incoming: ChatMessageDto[]) {
+  const messagesById = new Map(current.map((message) => [message.id, message]));
+  incoming.forEach((message) => messagesById.set(message.id, message));
+
+  return Array.from(messagesById.values()).sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+  );
+}

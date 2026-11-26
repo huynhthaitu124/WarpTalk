@@ -496,7 +496,8 @@ Nguồn: `docs/architecture/PROGRESS.md`, `apps/pipeline/LIVEKIT.md`, `apps/maco
 - Số đo latency (`docs/perf`) dùng provider giả theo spec 08; các giả định (STT trả ranh giới câu trước commit, 20% TTS cold-open, TTS 2x realtime) cần xác nhận với provider thật. Chỉ số e2e không gồm SFU/jitter buffer.
 
 **Tính năng chưa làm hoặc chưa đủ:**
-- W10 assistant (WarpBot) chat + tools + cổng xác nhận; metering billing; notification; lời mời series/artifacts: chưa.
+- WarpBot: chat (SSE) + tool tìm kiếm knowledge đã có. **Plugin chưa làm**: catalog/install/connect (OAuth, API key), MCP client, tool policy, duyệt yêu cầu, marketplace workspace, audit (`/assistant/mcp/tools/audits`), insights (`/assistant/workspaces/{ws}/insights/tools`): các endpoint này trả 404, UI plugin phải ẩn. Đính kèm file trong chat đang tắt (`ATTACHMENTS_SUPPORTED = false`).
+- Metering billing; notification; lời mời series/artifacts: chưa.
 - Voice clone (spec 13): chưa. Voice consent đang là Noop.
 - Knowledge: member chưa có allowlist meeting/document (fail closed); upload tài liệu workspace chưa làm.
 - Pipeline chưa phát `__MEETING_END__`; isochrony cần `source_ms` trên `SttSegment`.

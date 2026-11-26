@@ -1,0 +1,54 @@
+{
+  "entries": [
+    {
+      "match": ["ngân sách", "budget"],
+      "category": "consideration",
+      "content": "Ngân sách Q3 đã dùng 82%, cần chốt phần còn lại trước khi mở rộng phạm vi.",
+      "detail": "Nếu thêm hạng mục mới, nên xin phê duyệt bổ sung hoặc cắt hạng mục ưu tiên thấp.",
+      "translations": {
+        "en": { "content": "Q3 budget is 82% spent; lock the remainder before expanding scope.", "detail": "New items need extra approval or a lower-priority cut." }
+      }
+    },
+    {
+      "match": ["SLA", "uptime"],
+      "category": "term",
+      "content": "SLA (Service Level Agreement): cam kết mức dịch vụ, ví dụ uptime 99.9% ≈ 43 phút downtime/tháng.",
+      "translations": {
+        "en": { "content": "SLA (Service Level Agreement): a committed service level, e.g. 99.9% uptime ≈ 43 min downtime/month.", "detail": "" }
+      }
+    },
+    {
+      "match": ["ý bạn là", "what do you mean", "không rõ"],
+      "category": "clarification",
+      "content": "Có thể hỏi lại: \"Ý anh là deadline cho bản beta hay bản chính thức?\"",
+      "translations": {
+        "en": { "content": "You could ask: \"Do you mean the beta deadline or the GA deadline?\"", "detail": "" }
+      }
+    },
+    {
+      "match": ["sẽ gửi", "will send"],
+      "category": "follow_up",
+      "content": "Lan gửi bản demo cho khách trước thứ Sáu.",
+      "follow_up": { "owner": "Lan", "task": "Gửi bản demo cho khách", "due": "Thứ Sáu" },
+      "translations": {
+        "en": { "content": "Lan sends the demo to the client by Friday.", "detail": "" }
+      }
+    },
+    {
+      "match": ["cần làm", "action item", "giao cho"],
+      "category": "action_item",
+      "content": "Việc cần làm: Minh cập nhật lại timeline dự án và chia sẻ trong kênh team.",
+      "translations": {
+        "en": { "content": "Action: Minh updates the project timeline and shares it in the team channel.", "detail": "" }
+      }
+    },
+    {
+      "match": ["so với", "compared to", "đối thủ"],
+      "category": "comparison",
+      "content": "So với phương án A, phương án B rẻ hơn ~15% nhưng triển khai lâu hơn 2 tuần.",
+      "translations": {
+        "en": { "content": "Versus option A, option B is ~15% cheaper but takes 2 more weeks.", "detail": "" }
+      }
+    }
+  ]
+}

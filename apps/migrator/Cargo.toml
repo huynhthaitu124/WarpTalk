@@ -21,6 +21,7 @@ warptalk-settings = { workspace = true }
 warptalk-meeting = { workspace = true }
 warptalk-transcript = { workspace = true }
 warptalk-knowledge = { workspace = true }
+warptalk-notification = { workspace = true }
 warptalk-assistant = { workspace = true }
 warptalk-copilot = { workspace = true }
 warptalk-billing = { workspace = true }

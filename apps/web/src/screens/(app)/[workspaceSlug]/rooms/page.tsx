@@ -1,0 +1,759 @@
+"use client";
+
+import { useLocale, useTranslations } from "next-intl";
+import { Button } from "@/components/ui/button";
+import { ExpandingSearchDock } from "@/components/ui/expanding-search-dock";
+import { FilterChip, FilterChipGroup } from "@/components/ui/filter-chip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useRoomOccupancy } from "@/hooks/use-room-occupancy";
+import { useTranslationRooms } from "@/hooks/use-translationRooms";
+import { useWorkspaceMembers } from "@/hooks/use-workspace";
+import { isInvitedToRoom, resolveRoomHost } from "@/lib/meeting/room-host";
+import { useAuthStore } from "@/stores/auth-store";
+import { useCanCreateMeetings, useWorkspaceStore } from "@/stores/workspace-store";
+import type { SeriesListSummary, TranslationRoomDto } from "@/types/translationRoom";
+import {
+  describeRecurrenceWithTime,
+  recurrenceBadgeLabel,
+} from "@/lib/meeting/recurrence";
+import { LanguageLabel } from "@/components/language/language-label";
+import { UserChip } from "@/components/user/user-chip";
+import { meetingLanguageSet } from "@/lib/language/languages";
+// The home day panel needs the same two answers; they live in one place so the two surfaces
+// cannot drift the way the language chip did.
+import {
+  ALL_ROOM_STATUSES_FILTER,
+  belongsToDay,
+  isMeetingOver,
+  startOfDay,
+} from "@/lib/meeting/meeting-day";
+import type { WorkspaceMemberDto } from "@/types/workspace";
+import {
+  Calendar as CalendarIcon,
+  CaretDown,
+  CaretRight,
+  CheckCircle,
+  Circle,
+  Copy,
+  Funnel,
+  Keyboard,
+  Plus,
+  Repeat,
+  SlidersHorizontal,
+  Users,
+} from "@phosphor-icons/react/dist/ssr";
+import Link from "@/lib/next-shim/link";
+import { useParams, useRouter } from "@/lib/next-shim/navigation";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { MeetingDayStrip } from "@/components/meetings/meeting-day-strip";
+import { StatusPanel } from "./StatusPanel";
+import { PagePlaceholder } from "@/components/workspace/page-placeholder";
+
+function formatTimeShort(value: string | undefined, noDateLabel: string) {
+  if (!value) return noDateLabel;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
+}
+
+
+/**
+ * WT-327: marks a room that is one occurrence of a recurring booking.
+ *
+ * A series is NOT grouped or collapsed in this list, deliberately. Every occurrence is a real,
+ * separate meeting — its own code, its own transcript, its own artifacts, its own billing — and
+ * a collapsed "1 series" row would hide exactly the thing the host came here to check: whether
+ * tomorrow's 8am actually exists. The day timeline could not collapse it at all, since each
+ * occurrence belongs to a different day. So they look like N meetings, because they ARE N
+ * meetings; this badge is the only thing that says they share a rule.
+ */
+function RepeatBadge({
+  compact = false,
+  series,
+}: {
+  compact?: boolean;
+  /**
+   * The booking behind this row, when the list was grouped. Without it the badge can only say
+   * that the meeting repeats — which is all this row knows on an ungrouped list, and saying
+   * "Daily" there was a guess that happened to be right while DAILY was the only cadence.
+   */
+  series?: SeriesListSummary | null;
+}) {
+  const t = useTranslations("rooms.repeatBadge");
+  const label = series ? recurrenceBadgeLabel(series.type) : t("label");
+  const description = series
+    ? describeRecurrenceWithTime(series)
+    : t("description");
+
+  return (
+    <span
+      data-testid="recurring-room-badge"
+      title={description}
+      className={
+        compact
+          ? "shrink-0 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 py-0.5 text-[8px] font-medium text-primary border border-primary/20"
+          : "shrink-0 inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary border border-primary/20"
+      }
+    >
+      <Repeat weight="bold" size={compact ? 8 : 10} aria-hidden />
+      {label}
+      <span className="sr-only">{description}</span>
+    </span>
+  );
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === "in_progress")
+    return (
+      <div className="w-3 h-3 rounded-full border-[1.5px] border-status-in-progress bg-status-in-progress/20 shadow-[0_0_8px_var(--color-status-in-progress)]/30" />
+    );
+  // Open (WT-612 / WT-621) borrows the in-progress hue, because the room really is enterable —
+  // but not its glow, which is the "somebody is in here talking" signal and would overstate a
+  // room the clock unlocked and nobody has walked into yet.
+  if (status === "open")
+    return (
+      <div className="w-3 h-3 rounded-full border-[1.5px] border-status-in-progress bg-status-in-progress/20" />
+    );
+  if (status === "waiting")
+    return (
+      <div className="w-3 h-3 rounded-full border-[1.5px] border-status-waiting bg-status-waiting/20" />
+    );
+  if (status === "scheduled")
+    return (
+      <div className="w-3 h-3 rounded-full border-[1.5px] border-status-scheduled bg-status-scheduled/20" />
+    );
+  if (status === "ended")
+    return (
+      <CheckCircle size={13} weight="fill" className="text-status-ended" />
+    );
+  if (["cancelled", "failed", "expired"].includes(status))
+    return (
+      <div className="w-3 h-3 rounded-full border-[1.5px] border-status-error bg-status-error/20" />
+    );
+  return (
+    <Circle size={13} weight="light" className="text-muted-foreground/40" />
+  );
+}
+
+function LinearRow({
+  room,
+  members,
+}: {
+  room: TranslationRoomDto;
+  members: WorkspaceMemberDto[];
+}) {
+  const t = useTranslations("rooms");
+  const params = useParams();
+  const workspaceSlug = params?.workspaceSlug as string;
+  const user = useAuthStore((state) => state.user);
+  // The raw store value, not useWorkspaceRole(): that hook reads "not loaded yet" as "member",
+  // which is the one role that would let isInvitedToRoom stamp "Invited" on a room.
+  const workspaceRole = useWorkspaceStore((state) => state.role);
+  const isCurrentUserHost = room.hostId === user?.id || Boolean(room.isHost);
+  // WT-274: same hook the room detail page reads, so a row and the page it links to cannot
+  // report different occupancy. The list has no per-room roster, so for every room except the
+  // one the viewer is currently in this resolves to the server's aggregate — see the PR's
+  // BACKEND note: that aggregate is `TranslationRoomParticipants.Count`, not the seat rule.
+  const occupancy = useRoomOccupancy(room);
+  const host = resolveRoomHost(room, members, user);
+
+  // WT-327: a grouped row opens the meeting it stands for — the one live now, or the next due,
+  // which is what the server picked as the row's representative. There is no separate booking
+  // page: the booking has one code and one next date, and both belong on the meeting itself.
+  const href = `/${workspaceSlug}/rooms/${room.id}`;
+
+  return (
+    <Link
+      href={href}
+      // @container, not a viewport breakpoint: what squeezes this row is the Properties panel
+      // opening beside it, which takes 260px away while the window stays exactly the same size.
+      // A `lg:` rule cannot see that and would keep every chip at a width the row no longer has.
+      className="@container flex items-center min-h-[44px] py-1 text-[13px] hover:bg-accent/50 border-b border-border/40 px-4 group cursor-pointer transition-colors"
+    >
+      <div className="flex items-center w-6 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground">
+        {isCurrentUserHost && (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              const inviteLink = `${window.location.origin}/join?code=${room.translationRoomCode}`;
+              navigator.clipboard.writeText(inviteLink);
+              toast.success(t("row.inviteLinkCopied"));
+            }}
+            className="hover:text-foreground transition-colors p-1"
+            title={t("row.copyInviteLink")}
+          >
+            <Copy size={14} weight="bold" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center w-8 shrink-0">
+        <StatusIcon status={room.status} />
+      </div>
+
+      <div className="hidden @[560px]:block w-[80px] shrink-0 font-mono text-[11px] text-muted-foreground tracking-tight">
+        {room.translationRoomCode}
+      </div>
+      {/* overflow-hidden, not just min-w-0. min-w-0 lets this column shrink to nothing, which is
+          what has to happen when the Properties panel opens — but the badges after the title are
+          shrink-0, so with nothing clipping them they simply drew on top of the status column.
+          The title truncates first and the badges clip only once there is genuinely no room. */}
+      <div className="flex-1 min-w-0 overflow-hidden pr-4 flex items-center gap-2">
+        <span className="text-foreground font-medium truncate block">
+          {room.title}
+        </span>
+        {room.seriesId && <RepeatBadge series={room.series} />}
+        {room.series && room.series.occurrenceCount > 1 && (
+          <span
+            className="hidden @[560px]:inline shrink-0 text-[11px] text-muted-foreground"
+            title={t("row.occurrenceCount", { count: room.series.occurrenceCount })}
+          >
+            {t("row.occurrenceCountShort", { count: room.series.occurrenceCount })}
+          </span>
+        )}
+        {/* The viewer's relation to the room, not "someone else booked it" — see
+            isInvitedToRoom for why an Owner/Admin never gets this badge from the list. */}
+        {isInvitedToRoom(room, user?.id, workspaceRole) && (
+          <span className="shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 border border-amber-500/20">
+            {t("row.invited")}
+          </span>
+        )}
+      </div>
+
+      {/* WT-321(4): every cell in this trailing group is a fixed-width column. It used to be a
+          row of shrink-wrapped pills, so each one started wherever the pill before it happened
+          to end — a longer host name or a third target language shifted the occupancy and date
+          columns sideways, and no two rows lined up. Widths here, not content-derived widths.
+
+          The CELL is what holds that width; the pill inside it is not. Making the pill fill the
+          column drew a border around the reservation rather than around the content, so a
+          two-flag room and a fourteen-character name both rendered as the same wide capsule
+          with the meaning huddled in the middle of it. The pill hugs what it contains and is
+          capped at the column, so the columns still line up and nothing can overflow them. */}
+      <div className="flex items-center gap-2.5 shrink-0 text-muted-foreground text-[11px]">
+        <div className="flex shrink-0 items-center">
+          <StatusPanel status={room.status} />
+        </div>
+
+        {/* The host pill is now the host CHIP: same capsule, but it opens their card instead of
+            being a label you can only look at. The row is a <Link>, so the chip renders a span
+            rather than a button and swallows the click — opening the card must not also open the
+            meeting. */}
+        <div className="hidden @[700px]:flex shrink-0 items-center">
+          <UserChip user={host} size="md" className="border-border/60" />
+        </div>
+
+        <div className="flex shrink-0 items-center">
+          <div className="flex h-[26px] max-w-full items-center gap-1.5 overflow-hidden rounded-full bg-surface-1 border border-border/60 px-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+            {/* Reads "EN · VI · JA" — the languages this meeting is held in, and nothing else.
+
+                It used to read "English → VI · JA", which asserted a relationship the product
+                does not have: every participant picks their own speak and listen language, so
+                there is no meeting-wide source and no direction to point an arrow at. A room
+                only ever declares a SET. The named source was the loudest thing in the chip and
+                it was the one part that meant nothing.
+
+                The trailing "+" is gone too. It was a permanent icon, not an overflow count —
+                it sat after every multi-language room whether or not anything had been hidden,
+                so it punctuated a gap that was never there.
+
+                Codes only, no names: the column is 176px and two language names do not fit.
+                LanguageLabel keeps the name as the title and aria-label, so the code is not the
+                only thing carrying the meaning. WT-661 retired the flags these used to be —
+                Windows renders no flag glyph, and a country is not a language. A room can declare any number of languages —
+                nothing client-side caps the set — so the pill is capped at the column and clips
+                rather than pushing the occupancy and date columns out of line. */}
+            {meetingLanguageSet(room.sourceLanguage, room.targetLanguages).map(
+              (language, index) => (
+                <div key={language} className="flex items-center">
+                  {index > 0 && (
+                    <span className="text-muted-foreground/40 px-1 text-[13px] font-bold">
+                      ·
+                    </span>
+                  )}
+                  <LanguageLabel value={language} showName={false} />
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+
+        {/* WT-321(3): the bare "0/100" was read as an error code, a progress bar, anything but
+            what it is. It is unchanged in meaning — `useRoomOccupancy` still returns
+            seats-taken over the meeting type's seat cap (WT-274) — it just says so now. A
+            people icon and a title are the whole fix; the number itself was never wrong. */}
+        <div
+          className="hidden @[820px]:flex h-[26px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-surface-1 border border-border/60 px-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.02)]"
+          title={t("row.occupancyTitle", { seats: occupancy.seatCount, capacity: occupancy.capacity })}
+        >
+          <Users size={13} weight="regular" aria-hidden />
+          <span className="tabular-nums">{occupancy.label}</span>
+          <span className="sr-only">
+            {t("row.occupancySr", { capacity: occupancy.capacity })}
+          </span>
+        </div>
+
+        <div className="hidden @[900px]:flex h-[26px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-surface-1 border border-border/60 px-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <CalendarIcon size={13} weight="regular" />
+          <span className="tabular-nums">
+            {formatTimeShort(room.scheduledAt ?? room.createdAt, t("row.noDate"))}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+
+import { useUIStore } from "@/stores/ui-store";
+
+export default function MeetingsPageLinear() {
+  const t = useTranslations("rooms");
+  const locale = useLocale();
+  const router = useRouter();
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
+  const membersQuery = useWorkspaceMembers(
+    activeWorkspaceId ?? undefined,
+    1,
+    100,
+  );
+  const members = membersQuery.data?.items ?? [];
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  function handleJoin(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = joinCode.trim();
+    if (!trimmed) return;
+    setJoinModalOpen(false);
+    router.push(`/join?code=${encodeURIComponent(trimmed)}`);
+  }
+  const [isGroupOpen, setIsGroupOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<"active" | "history" | "all">(
+    "active",
+  );
+  // Which week the strip is showing — where the user last picked or paged to. Deliberately NOT
+  // the selected day: clearing the day must not throw the strip back to this week, so the two
+  // are separate state, and only `dayFilter` is ever drawn as selected.
+  const [weekAnchor, setWeekAnchor] = useState<Date>(new Date());
+  const [today] = useState<Date>(() => new Date());
+  // Opens on today, and the list is filtered by it from the first render.
+  //
+  // This used to start null — "no day chosen" — while the strip still drew today as selected.
+  // So the page opened showing a highlighted SAT 15 above a list that was ignoring it, and the
+  // only way to see a day's meetings was to click the day that already looked clicked. A
+  // control that is drawn as active has to be active.
+  //
+  // Still nullable, and "Clear day" still clears it: a day narrows the tab, and there has to be
+  // a way to ask the tab's own question. Picking the selected day again also clears it. This is
+  // what the strip highlights, so a cleared day leaves no chip lit — the strip used to highlight
+  // its own copy of the date, and went on drawing the cleared day as active above a list that
+  // had stopped filtering by it: the same lie as the null start above, arrived at the other way.
+  const [dayFilter, setDayFilter] = useState<Date | null>(() => new Date());
+  // workspaceId is what lets the server answer this question for a workspace Owner/Admin at all:
+  // without it the list falls back to host-or-participant-or-invitee and an Admin sees an empty
+  // page for a workspace that has meetings in it. It also stops this workspace-scoped screen from
+  // listing another workspace's rooms.
+  //
+  // Every status the server has, from the one list in meeting-day — both queries below read it,
+  // and the tab filters read its terminal half through `isMeetingOver`. Sent explicitly because
+  // the server's default is the four unfinished statuses only, and a hand-written list here used
+  // to ask for a TIMEOUT that does not exist while leaving EXPIRED and FAILED rooms out of every
+  // tab.
+  const roomList = useTranslationRooms({
+    pageSize: 100,
+    status: ALL_ROOM_STATUSES_FILTER,
+    workspaceId: activeWorkspaceId ?? undefined,
+  });
+
+  // WT-327: the same meetings, asked for as BOOKINGS — a daily standup collapses to the one
+  // meeting the user booked, carrying its rule and how many occurrences it stands for.
+  //
+  // A second query rather than a replacement, because the two answers are both needed on this
+  // page and neither can be derived from the other. The day strip has to mark every day that
+  // holds a meeting, and a collapsed row knows only its own date; the list wants one row, and an
+  // ungrouped payload has no rule to render. React Query caches both, and the grouped one is only
+  // fetched by the tabs that show it.
+  const groupedList = useTranslationRooms({
+    pageSize: 100,
+    status: ALL_ROOM_STATUSES_FILTER,
+    workspaceId: activeWorkspaceId ?? undefined,
+    groupBySeries: true,
+    enabled: activeTab !== "active",
+  });
+  const setCreateRoomModalOpen = useUIStore(
+    (state) => state.setCreateRoomModalOpen,
+  );
+  const canCreateMeetings = useCanCreateMeetings();
+
+  const rooms = useMemo(() => {
+    return roomList.data?.rooms ?? [];
+  }, [roomList.data?.rooms]);
+
+  // WT-251/WT-232: the calendar gave no hint which days hold anything, and it opens on today,
+  // so a meeting booked for any other day was invisible in this tab — findable only under
+  // "All". Marking the days that have meetings is what makes the tab navigable at all.
+
+  // The next day after the one being viewed that actually holds something, so an empty day can
+  // point somewhere instead of being a dead end.
+  //
+  // Measured against the selected day rather than against the clock: reading the current time
+  // during render is impure, and "next after where you are" is the more useful answer anyway —
+  // it works the same whether the user has paged backwards or forwards.
+
+  /**
+   * WT-327: which of the two answers this view is showing.
+   *
+   * Grouped when the question is "what meetings do I have?" — the booking is the answer, and
+   * fourteen rows for one standup was the defect. Ungrouped when the question is about a moment:
+   * the Active tab is "what is live or starting now", and a day off the strip is "what is on
+   * Thursday". Neither of those has a booking as an answer; both have a meeting.
+   */
+  /**
+   * All is not grouped, and is not filtered by a day.
+   *
+   * It used to be both, and that is what made it meaningless: the booking view collapsed a daily
+   * standup into ONE row, the day strip then narrowed that to a single date, and a tab labelled
+   * "All" showed one line. "All" has to mean every meeting this person has — running, scheduled,
+   * ended or cancelled — with each occurrence its own row. History keeps the grouped view,
+   * because "what did we run?" is still answered by the booking.
+   */
+  const isAllView = activeTab === "all";
+  const isGroupedView = activeTab === "history" && !dayFilter;
+  const rowSource = useMemo(
+    () => (isGroupedView ? (groupedList.data?.rooms ?? []) : rooms),
+    [isGroupedView, groupedList.data?.rooms, rooms],
+  );
+
+  const filteredRooms = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const matchesSearch = (room: TranslationRoomDto) => {
+      if (!normalizedQuery) return true;
+
+      return [
+        room.title,
+        room.description,
+        room.translationRoomCode,
+        room.status,
+        room.sourceLanguage,
+        ...(room.targetLanguages ?? []),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(normalizedQuery));
+    };
+
+    // A day picked off the strip wins over the tab, in EVERY tab.
+    //
+    // This used to sit after the Active branch, which returned first — so on Active, the tab the
+    // page opens on, clicking a day did nothing at all and the strip was decoration. Picking a
+    // date is the more specific question ("what is on Tuesday?") and the tab is the general one;
+    // the specific one has to be answered.
+    // Except on All, which has no strip to pick from: "everything I have" and "what is on
+    // Tuesday" are contradictory questions, and answering the second under a tab labelled All is
+    // how that tab came to show one row.
+    if (dayFilter && !isAllView) {
+      // The day NARROWS the tab; it does not replace it. Returning here with only the date
+      // predicate dropped the tab's status rule entirely, so picking a day on Active listed
+      // every room booked that day — including cancelled and ended ones — under a heading that
+      // still read "Active Meetings". A daily series whose schedule had been stopped showed its
+      // future occurrences there as "Cancelled", which reads as the UI reporting the wrong
+      // thing about a meeting that looks perfectly fine.
+      //
+      // Active and History ask opposite questions about the same day, so each keeps its own
+      // half: Active is what is still to come or still running, History is what is over. A
+      // future date under Active is not "nothing is live right now" — it is "here is what is
+      // booked" — which is why this is a terminal-status exclusion rather than the tab's
+      // now-relative window.
+      //
+      // belongsToDay, not isScheduledOn: an instant meeting has no `scheduledAt` and so belongs
+      // to no scheduled day at all. Filtering on the booked date alone erased every ad-hoc room
+      // the moment a day was selected — including a meeting that was live right then.
+      return (activeTab === "history" ? rowSource : rooms).filter(
+        (r) =>
+          matchesSearch(r) &&
+          belongsToDay(r, dayFilter) &&
+          (activeTab === "history" ? isMeetingOver(r.status) : !isMeetingOver(r.status)),
+      );
+    }
+
+    if (activeTab === "active") {
+      const now = new Date();
+      const fifteenMinsFromNow = new Date(now.getTime() + 15 * 60000);
+      // A scheduled room needs a window on BOTH sides. The check used to be "starts within the
+      // next fifteen minutes" with no lower bound, so `scheduledAt <= now + 15min` was also true
+      // for every meeting whose time had already passed — a room booked for last week sat in
+      // Active forever, which is most of what made the tab meaningless. Two hours of grace after
+      // the hour keeps a meeting that is running late; older than that it was never started, and
+      // it belongs to its own day under Scheduled, not here.
+      const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60000);
+      // Paused is live. The meeting is still running with people in it — it has only stopped
+      // listening — and the server's own admin directory counts IN_PROGRESS and PAUSED together
+      // as "live" for exactly that reason. It was missing here while the day-picked branch above
+      // (anything not over) kept it, so pressing "Clear day" — the button that is supposed to
+      // widen the tab — made a paused meeting disappear from it.
+      return rooms.filter(
+        (r) =>
+          matchesSearch(r) &&
+          (r.status === "in_progress" ||
+            r.status === "paused" ||
+            r.status === "waiting" ||
+            // WT-612 / WT-621: open is live. The clock unlocked the room at its slot and the
+            // meeting is enterable right now — and it must NOT fall through to the `scheduled`
+            // clause below, whose two-hour window would drop an open room off the tab while its
+            // door was still open.
+            r.status === "open" ||
+            (r.status === "scheduled" &&
+              (!r.scheduledAt ||
+                (new Date(r.scheduledAt) <= fifteenMinsFromNow &&
+                  new Date(r.scheduledAt) >= twoHoursAgo)))),
+      );
+    }
+    // The same `isMeetingOver` the day-picked branch asks. This one used to list its own three
+    // statuses — one of which (`timeout`) no server sends — beside a helper that listed the same
+    // wrong three; neither knew `expired` or `failed`. One predicate is what makes "History with
+    // a day picked" and "History" agree about which meetings are finished.
+    if (activeTab === "history")
+      return rowSource.filter((r) => matchesSearch(r) && isMeetingOver(r.status));
+    // All: every room this person can see, in every status, one row per occurrence. No status
+    // filter and no grouping — the two things that were hiding meetings from a tab named All.
+    return rooms.filter(matchesSearch);
+  }, [rooms, rowSource, activeTab, dayFilter, isAllView, searchQuery]);
+
+  return (
+    <div className="flex flex-col h-full bg-panel">
+      {/* View Tabs & Actions */}
+      <div className="flex items-center justify-between px-4 py-3 shrink-0">
+        {/* The chip style this page defined now lives in FilterChip, so Knowledge, Documents and
+            the admin pages render the same control instead of four near-copies of it. */}
+        <FilterChipGroup label={t("filterMeetingsAria")}>
+          {(["active", "history", "all"] as const).map((tab) => (
+            <FilterChip
+              key={tab}
+              selected={activeTab === tab}
+              onClick={() => {
+                setActiveTab(tab);
+                // Leaving a day selected while moving to All would silently narrow the one tab
+                // whose whole point is that it narrows nothing.
+                if (tab === "all") setDayFilter(null);
+              }}
+            >
+              {t(`tabs.${tab}`)}
+            </FilterChip>
+          ))}
+        </FilterChipGroup>
+
+        <div className="flex items-center gap-2 pl-4 shrink-0">
+          <ExpandingSearchDock
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+            placeholder={t("search.placeholder")}
+            ariaLabel={t("search.ariaLabel")}
+            collapsedWidth={28}
+            expandedWidth={220}
+            className="h-[28px] border-border/60 bg-surface-2 text-ink shadow-sm backdrop-blur-md focus-within:bg-surface-1"
+            iconButtonClassName="ml-0 size-[26px] hover:bg-surface-3"
+            clearButtonClassName="mr-0.5 size-5 hover:bg-surface-3"
+            inputClassName="h-[26px] text-[12px]"
+          />
+          <button
+            className="flex items-center justify-center w-[28px] h-[28px] rounded-full border border-border/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors shadow-sm"
+            title={t("toolbar.filter")}
+          >
+            <Funnel weight="bold" size={13} />
+          </button>
+          <button
+            className="flex items-center justify-center w-[28px] h-[28px] rounded-full border border-border/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors shadow-sm"
+            title={t("toolbar.displayOptions")}
+          >
+            <SlidersHorizontal weight="bold" size={13} />
+          </button>
+
+          <div className="h-4 w-[1px] bg-border mx-1" />
+
+          <div className="flex items-center gap-1">
+            {canCreateMeetings && (
+              <button
+                onClick={() => setCreateRoomModalOpen(true)}
+                className="flex items-center gap-1.5 h-[28px] pl-2.5 pr-3 rounded-full bg-foreground text-background hover:opacity-90 transition-opacity text-[13px] font-medium shadow-sm"
+              >
+                <Plus weight="bold" size={12} />
+                {t("toolbar.newMeeting")}
+              </button>
+            )}
+            <button
+              onClick={() => setJoinModalOpen(true)}
+              className="flex items-center justify-center w-[28px] h-[28px] rounded-full bg-surface-2 hover:bg-surface-3 text-ink transition-colors shadow-sm border border-border/60"
+              title={t("toolbar.joinViaCode")}
+            >
+              <Keyboard weight="fill" size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Replaces the Scheduled tab. A permanent strip says which days have anything on them
+          without costing a click, which a tab could never do — and it is the same component the
+          home panel renders, so the two cannot disagree about which days are marked. */}
+      {/* Hidden on All — see isAllView. */}
+      <div
+        className={`items-center gap-3 border-b border-border/40 px-4 pb-3 shrink-0 ${isAllView ? "hidden" : "flex"}`}
+      >
+        <MeetingDayStrip
+          rooms={rooms}
+          selectedDate={dayFilter}
+          weekAnchor={weekAnchor}
+          today={today}
+          onSelectDate={(day) => {
+            setWeekAnchor(day);
+            setDayFilter((current) =>
+              current && startOfDay(current) === startOfDay(day) ? null : day,
+            );
+          }}
+        />
+        {dayFilter ? (
+          <button
+            type="button"
+            onClick={() => setDayFilter(null)}
+            className="text-[12px] font-medium text-primary hover:text-primary-hover"
+          >
+            {t("dayStrip.clearDay")}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {(
+          <div className="flex-1 overflow-y-auto">
+            {/* Group Header */}
+            <div
+              className="flex items-center gap-1.5 px-4 h-[30px] hover:bg-accent/40 cursor-pointer text-[12px] text-muted-foreground select-none transition-colors sticky top-0 bg-surface-1/90 backdrop-blur-sm z-10 border-b border-border/40"
+              onClick={() => setIsGroupOpen(!isGroupOpen)}
+            >
+              {isGroupOpen ? (
+                <CaretDown size={12} weight="bold" />
+              ) : (
+                <CaretRight size={12} weight="bold" />
+              )}
+              {/* The heading has to name the day when one is applied. "Active Meetings 2" over a
+                  list narrowed to Saturday reads as the count of everything active, and that is
+                  precisely the mismatch that made the strip look broken. */}
+              <span className="font-medium text-foreground">
+                {t("group.heading", { tab: t(`tabs.${activeTab}`) })}
+              </span>
+              {dayFilter && !isAllView ? (
+                <span className="normal-case text-muted-foreground">
+                  ·{" "}
+                  {new Intl.DateTimeFormat(locale, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                  }).format(dayFilter)}
+                </span>
+              ) : null}
+              <span className="tabular-nums">{filteredRooms.length}</span>
+            </div>
+
+            {/* Group Content */}
+            {isGroupOpen && (
+              <div className="flex flex-col pb-8">
+                {filteredRooms.length > 0 ? (
+                  filteredRooms.map((room) => (
+                    <LinearRow key={room.id} room={room} members={members} />
+                  ))
+                ) : (
+                  /* Say WHY it is empty. "No active meetings found." under a day filter is
+                     the empty state claiming the workspace has nothing, when what is true is
+                     that this one day has nothing — and the fix is one click away. */
+                  <PagePlaceholder
+                    kind="meetings"
+                    className="min-h-[300px]"
+                    title={
+                      dayFilter && !isAllView
+                        ? t("empty.noneOnDay", {
+                            tab: t(`tabs.${activeTab}`),
+                            date: new Intl.DateTimeFormat(locale, {
+                              weekday: "long",
+                              month: "short",
+                              day: "numeric",
+                            }).format(dayFilter),
+                          })
+                        : t("empty.noneFound", { tab: t(`tabs.${activeTab}`) })
+                    }
+                    description={
+                      dayFilter && !isAllView
+                        ? t("empty.clearDayHint")
+                        : t("empty.getStartedHint")
+                    }
+                    action={
+                      dayFilter && !isAllView ? (
+                        <button
+                          type="button"
+                          onClick={() => setDayFilter(null)}
+                          className="text-[12px] font-medium text-primary hover:text-primary-hover"
+                        >
+                          {t("group.showEvery", { tab: t(`tabs.${activeTab}`) })}
+                        </button>
+                      ) : undefined
+                    }
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Dialog open={joinModalOpen} onOpenChange={setJoinModalOpen}>
+        <DialogContent className="sm:max-w-[425px] !top-[25%] !translate-y-[-25%]">
+          <DialogHeader>
+            <DialogTitle>{t("joinDialog.title")}</DialogTitle>
+            <DialogDescription>
+              {t("joinDialog.description")}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleJoin} className="grid gap-4 pt-2">
+            <div className="grid gap-2">
+              <Label
+                htmlFor="code"
+                className="text-foreground font-medium text-[13px]"
+              >
+                {t("joinDialog.codeLabel")}
+              </Label>
+              <Input
+                id="code"
+                placeholder={t("joinDialog.codePlaceholder")}
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                autoComplete="off"
+                autoFocus
+                className="bg-surface-1"
+              />
+            </div>
+            <div className="flex justify-end pt-2">
+              <Button
+                type="submit"
+                disabled={!joinCode.trim()}
+                className="disabled:bg-surface-2 disabled:text-ink-muted disabled:opacity-100 min-w-[80px] text-white"
+              >
+                {t("joinDialog.join")}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

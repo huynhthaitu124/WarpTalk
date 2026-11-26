@@ -8,8 +8,9 @@ use warptalk_kernel::{AppError, Clock, UserId};
 use warptalk_web::JwtKeys;
 
 use super::ports::{
-    GoogleIdVerifier, GoogleProfile, IdentityRepository, NewGoogleUser, NewRefreshToken, NewUser,
-    RotateOutcome, Throttle, UserAuthRecord, VerificationMailer,
+    ClientInfo, GoogleIdVerifier, GoogleProfile, IdentityRepository, NewGoogleUser,
+    NewRefreshToken, NewUser, RotateOutcome, SessionRecord, Throttle, UserAuthRecord,
+    VerificationMailer,
 };
 use super::tokens::{generate_token, hash_token};
 use crate::domain::password::{hash_password, verify_password};
@@ -152,7 +153,12 @@ impl AuthService {
         }
     }
 
-    pub async fn login(&self, email: &str, password: &str) -> Result<AuthSession> {
+    pub async fn login(
+        &self,
+        email: &str,
+        password: &str,
+        client: ClientInfo,
+    ) -> Result<AuthSession> {
         let now = self.clock.now();
         let rec = match validation::normalize_email(email) {
             Ok(e) => self.repo.find_auth_by_email(&e).await?,
@@ -192,10 +198,11 @@ impl AuthService {
             return Err(account_refused(code));
         }
         self.repo.record_login_success(rec.id, now).await?;
-        self.issue_session(&rec, Uuid::now_v7(), now, None).await
+        self.issue_session(&rec, Uuid::now_v7(), now, None, client)
+            .await
     }
 
-    pub async fn refresh(&self, refresh_token: &str) -> Result<AuthSession> {
+    pub async fn refresh(&self, refresh_token: &str, client: ClientInfo) -> Result<AuthSession> {
         let now = self.clock.now();
         let new_token = generate_token();
         let outcome = self
@@ -205,6 +212,7 @@ impl AuthService {
                 &hash_token(&new_token),
                 now + self.policy.refresh_ttl,
                 now,
+                &client,
             )
             .await?;
         let (user_id, family_id) = match outcome {
@@ -244,7 +252,7 @@ impl AuthService {
             self.repo.revoke_family(family_id, now).await?;
             return Err(account_refused(code));
         }
-        self.issue_session(&rec, family_id, now, Some(new_token))
+        self.issue_session(&rec, family_id, now, Some(new_token), client)
             .await
     }
 
@@ -255,6 +263,36 @@ impl AuthService {
         Ok(())
     }
 
+    /// The user's signed-in sessions (one per live refresh-token family), newest activity first.
+    pub async fn sessions(&self, user: UserId) -> Result<Vec<SessionRecord>> {
+        self.repo.list_sessions(user, self.clock.now()).await
+    }
+
+    /// Signs out one of the user's sessions. 404 when it is not theirs or has already ended,
+    /// so a session id from another account is indistinguishable from an unknown one.
+    pub async fn revoke_session(&self, user: UserId, family_id: Uuid) -> Result<()> {
+        if self
+            .repo
+            .revoke_user_family(user, family_id, self.clock.now())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::coded(
+                404,
+                "SESSION_NOT_FOUND",
+                "session not found",
+            ))
+        }
+    }
+
+    /// Signs out every session of the user except `current`. Returns the revoked token count.
+    pub async fn revoke_other_sessions(&self, user: UserId, current: Uuid) -> Result<u64> {
+        self.repo
+            .revoke_other_families(user, current, self.clock.now())
+            .await
+    }
+
     /// `existing_refresh`: already-persisted token (refresh flow); otherwise a new one is stored.
     async fn issue_session(
         &self,
@@ -262,6 +300,7 @@ impl AuthService {
         family: Uuid,
         now: DateTime<Utc>,
         existing_refresh: Option<String>,
+        client: ClientInfo,
     ) -> Result<AuthSession> {
         let refresh_token = match existing_refresh {
             Some(t) => t,
@@ -274,6 +313,7 @@ impl AuthService {
                         token_hash: hash_token(&t),
                         expires_at: now + self.policy.refresh_ttl,
                         now,
+                        client,
                     })
                     .await?;
                 t
@@ -464,19 +504,19 @@ impl AuthService {
 
     /// `POST /auth/google` (BR-04/05): sign in with a Google ID token. Creates the account when
     /// new; links to an existing local account only when that account's email is verified.
-    pub async fn google_login(&self, id_token: &str) -> Result<AuthSession> {
+    pub async fn google_login(&self, id_token: &str, client: ClientInfo) -> Result<AuthSession> {
         let g = self.google()?.verify(id_token).await?;
         let now = self.clock.now();
 
         if let Some(rec) = self.repo.find_auth_by_google_id(&g.sub).await? {
-            return self.google_session(&rec, now).await;
+            return self.google_session(&rec, now, client.clone()).await;
         }
         let email = validation::normalize_email(&g.email)
             .map_err(|_| AppError::coded(401, "INVALID_GOOGLE_TOKEN", "invalid google id token"))?;
         for attempt in 0..2 {
             let Some(rec) = self.repo.find_auth_by_email(&email).await? else {
                 match self.create_google_user(&g, &email, now).await {
-                    Ok(rec) => return self.google_session(&rec, now).await,
+                    Ok(rec) => return self.google_session(&rec, now, client.clone()).await,
                     // Lost a registration race: re-read and take the link path.
                     Err(AppError::Conflict { code, .. })
                         if code == "EMAIL_TAKEN" && attempt == 0 =>
@@ -508,7 +548,7 @@ impl AuthService {
                         ));
                     }
                     self.repo.link_google(rec.id, &g.sub, now).await?;
-                    self.google_session(&rec, now).await
+                    self.google_session(&rec, now, client.clone()).await
                 }
             };
         }
@@ -552,12 +592,14 @@ impl AuthService {
         &self,
         rec: &UserAuthRecord,
         now: DateTime<Utc>,
+        client: ClientInfo,
     ) -> Result<AuthSession> {
         if let Some(code) = rec.flags.status(now).refusal_code() {
             return Err(account_refused(code));
         }
         self.repo.record_login_success(rec.id, now).await?;
-        self.issue_session(rec, Uuid::now_v7(), now, None).await
+        self.issue_session(rec, Uuid::now_v7(), now, None, client)
+            .await
     }
 
     /// `POST /me/google/link` (BR-05): the Google email must equal the account email.

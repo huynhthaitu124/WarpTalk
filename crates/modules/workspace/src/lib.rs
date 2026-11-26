@@ -37,6 +37,7 @@ pub use application::ports::{
     NoopUserDirectory, SettingsObserver as WorkspaceSettingsObserver, UserSummary,
 };
 pub use domain::AiPolicy;
+pub use domain::entitlements::{EntitlementKind, EntitlementSnapshot, EntitlementValue};
 pub use infrastructure::mailers::{
     DevInvitationMailCapture, EmailInvitationMailer, LogInvitationMailer,
 };
@@ -61,6 +62,11 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             version: 3,
             name: "documents",
             sql: include_str!("../migrations/0003_documents.sql"),
+        },
+        Migration {
+            version: 4,
+            name: "entitlement_snapshots",
+            sql: include_str!("../migrations/0004_entitlement_snapshots.sql"),
         },
     ],
 };
@@ -172,12 +178,41 @@ impl WorkspaceModule {
         })
     }
 
+    /// Write side of the entitlement read model, for the consumer of billing's entitlement events.
+    pub fn entitlement_projector(&self) -> EntitlementProjector {
+        EntitlementProjector {
+            repo: self.repo.clone(),
+            clock: self.clock.clone(),
+        }
+    }
+
     /// Read-only facade for other modules.
     pub fn queries(&self) -> WorkspaceQueries {
         WorkspaceQueries {
             repo: self.repo.clone(),
             documents: self.doc_repo.clone(),
         }
+    }
+}
+
+/// Projects billing's resolved entitlements into `workspace_entitlement_snapshots`.
+#[derive(Clone)]
+pub struct EntitlementProjector {
+    repo: Arc<dyn WorkspaceRepo>,
+    clock: Arc<dyn Clock>,
+}
+
+impl EntitlementProjector {
+    /// Idempotent per `event_id`; an older snapshot never replaces a newer one. True when stored.
+    pub async fn apply(
+        &self,
+        ws: WorkspaceId,
+        snapshot: &EntitlementSnapshot,
+        event_id: uuid::Uuid,
+    ) -> AppResult<bool> {
+        self.repo
+            .apply_entitlement_snapshot(ws, snapshot, event_id, self.clock.now())
+            .await
     }
 }
 

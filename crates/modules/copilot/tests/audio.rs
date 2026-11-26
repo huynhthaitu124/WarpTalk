@@ -219,6 +219,7 @@ impl Env {
         b["id"].as_str().unwrap().to_owned()
     }
 
+    #[allow(clippy::result_large_err)]
     async fn connect_bearer(
         &self,
         session: &str,
@@ -234,6 +235,7 @@ impl Env {
             .map(|(w, _)| Ws(w))
     }
 
+    #[allow(clippy::result_large_err)]
     async fn connect_ticket(
         &self,
         session: &str,

@@ -38,11 +38,10 @@ final class SettingsStore: ObservableObject {
     init() {
         let d = UserDefaults.standard
         var web = d.string(forKey: "webURL") ?? Self.defaultWebURL
-        // One-time migration: the old default pointed at Vite; the web app moved to Next.js (port 3000).
-        if !d.bool(forKey: "webURLMigratedToNext") {
-            if web == Self.legacyViteURL { web = Self.defaultWebURL; d.set(web, forKey: "webURL") }
-            d.set(true, forKey: "webURLMigratedToNext")
-        }
+        // The old default pointed at Vite (5173), which no longer serves anything; the web app moved
+        // to Next.js (port 3000). Always replace it, even if an earlier build already set the flag.
+        if web == Self.legacyViteURL { web = Self.defaultWebURL; d.set(web, forKey: "webURL") }
+        d.set(true, forKey: "webURLMigratedToNext")
         webURL = web
         webFallbackURLs = d.string(forKey: "webFallbackURLs") ?? Self.defaultWebFallbackURLs
         backendURL = d.string(forKey: "backendURL") ?? Self.defaultBackendURL

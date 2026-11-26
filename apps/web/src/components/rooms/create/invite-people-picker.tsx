@@ -1,0 +1,241 @@
+import React, { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useTranslations } from "next-intl";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Users, X, Plus } from "@phosphor-icons/react/dist/ssr";
+import { PillButton } from "./pill-button";
+import { useWorkspaceMembers } from "@/hooks/use-workspace";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useAuthStore } from "@/stores/auth-store";
+import { matchesSearchText } from "@/lib/ui/search-text";
+import { AvatarPresenceDot } from "@/components/presence/presence-dot";
+import { usePresence } from "@/hooks/use-presence";
+
+export function isValidInviteEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
+}
+
+export function InvitePeoplePicker({
+  emails,
+  onChange,
+}: {
+  emails: string[];
+  onChange: (val: string[]) => void;
+}) {
+  const t = useTranslations("rooms.create.invite");
+  const [input, setInput] = useState("");
+  const [inputError, setInputError] = useState("");
+  const user = useAuthStore((state) => state.user);
+  const active = emails.length > 0;
+
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
+
+  // The server holds the authoritative member list and only returns one page, so the typed
+  // term has to reach it — a workspace with more members than the page size would otherwise
+  // never surface anyone past the first page. Debounced so each keystroke is not a request.
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(input.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [input]);
+
+  const { data: membersData } = useWorkspaceMembers(
+    activeWorkspaceId || "",
+    1,
+    100,
+    search,
+  );
+  // Memoised so the effect below is not re-run by a fresh array on every render.
+  const members = useMemo(() => membersData?.items ?? [], [membersData?.items]);
+
+  // Resolves the dots for everyone in the fetched page in one request rather than one per row.
+  usePresence(members.map((member) => member.userId));
+
+  // Names for the invited chips have to survive the list narrowing: once a search term is in
+  // flight the fetched page no longer contains the members already added, so a chip looked up
+  // in the current page would fall back to the raw email.
+  //
+  // Captured when the member is picked rather than synced from the list in an effect — the
+  // click already knows the name, which makes this a plain event-handler write instead of a
+  // render-time cache that has to be kept in step.
+  const [pickedNames, setPickedNames] = useState<Record<string, string>>({});
+
+  const suggestedMembers = members.filter(
+    (m) =>
+      m.fullName &&
+      m.fullName !== "Unknown" &&
+      Boolean(m.email) &&
+      isValidInviteEmail(m.email ?? "") &&
+      m.userId !== user?.id &&
+      m.email?.toLowerCase() !== user?.email.toLowerCase() &&
+      !emails.includes((m.email ?? "").toLowerCase()) &&
+      // Narrow locally too: the debounced request lags the keystroke, and without this the
+      // list keeps showing everyone until it lands (WT-231).
+      matchesSearchText(input, m.fullName, m.email),
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && input.trim()) {
+      e.preventDefault();
+      const email = input.trim().toLowerCase();
+      if (!isValidInviteEmail(email)) {
+        setInputError(t("invalidEmail"));
+        return;
+      }
+      if (emails.includes(email)) {
+        setInputError(t("alreadyInvited"));
+        return;
+      }
+      onChange([...emails, email]);
+      setInput("");
+      setInputError("");
+    }
+  };
+
+  const removeEmail = (email: string) => {
+    onChange(emails.filter((e) => e !== email));
+  };
+
+  const addEmail = (email: string, fullName?: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidInviteEmail(normalizedEmail)) {
+      setInputError(t("memberNoValidEmail"));
+      return;
+    }
+    if (!emails.includes(normalizedEmail)) {
+      onChange([...emails, normalizedEmail]);
+    }
+    if (fullName && fullName !== "Unknown") {
+      setPickedNames((current) => ({ ...current, [normalizedEmail]: fullName }));
+    }
+    setInputError("");
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <PillButton
+            icon={Users}
+            label={active ? t("peopleCount", { count: emails.length }) : t("people")}
+            active={active}
+          />
+        }
+      />
+      <PopoverContent
+        align="start"
+        className="w-[280px] p-2 bg-surface-1 rounded-xl shadow-xl border border-border/20"
+      >
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-ink-muted px-1">
+            {t("inviteByEmail")}
+          </label>
+          <div className="relative">
+            <Users
+              weight="duotone"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted/70 h-3.5 w-3.5 pointer-events-none"
+            />
+            <input
+              type="email"
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setInputError("");
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder={t("emailPlaceholder")}
+              className="w-full h-8 pl-8 pr-3 text-[13px] bg-surface-1 border border-border/20 rounded-md focus:outline-none focus:ring-0 focus:border-border/20 text-ink"
+              autoFocus
+            />
+          </div>
+          {inputError ? (
+            <p className="px-1 text-[11px] text-destructive">{inputError}</p>
+          ) : null}
+          {emails.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1 max-h-[120px] overflow-y-auto">
+              {emails.map((email) => {
+                const displayText =
+                  pickedNames[email] ||
+                  members.find((m) => m.email?.toLowerCase() === email)
+                    ?.fullName ||
+                  email;
+                return (
+                  <div
+                    key={email}
+                    className="flex items-center justify-between text-[12px] bg-surface-2 px-2 py-1 rounded"
+                  >
+                    <span className="truncate max-w-[180px] text-ink">
+                      {displayText}
+                    </span>
+                    <button
+                      onClick={() => removeEmail(email)}
+                      className="text-ink-muted hover:text-red-500"
+                    >
+                      <X size={12} weight="bold" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {suggestedMembers.length > 0 && (
+            <div className="mt-3">
+              <label className="text-[11px] font-medium text-ink-muted px-1 mb-1 block">
+                {t("suggestedMembers")}
+              </label>
+              <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto">
+                {suggestedMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    onClick={() => addEmail(member.email ?? "", member.fullName)}
+                    className="flex items-center gap-2 text-[12px] hover:bg-surface-2 px-2 py-1.5 rounded transition-colors text-left"
+                  >
+                    <div className="relative h-6 w-6 shrink-0">
+                      <div className="h-full w-full rounded-full bg-surface-3 flex items-center justify-center overflow-hidden text-ink-muted font-medium text-[10px] relative">
+                        {member.avatarUrl ? (
+                          <Image
+                            src={member.avatarUrl}
+                            alt={member.fullName || "User"}
+                            fill
+                            sizes="24px"
+                            className="object-cover"
+                          />
+                        ) : (
+                          (member.fullName || member.email || "U")
+                            .charAt(0)
+                            .toUpperCase()
+                        )}
+                      </div>
+                      <AvatarPresenceDot userId={member.userId} />
+                    </div>
+                    <div className="flex flex-col overflow-hidden">
+                      <span className="truncate font-medium text-ink leading-tight">
+                        {member.fullName}
+                      </span>
+                      {member.email && (
+                        <span className="truncate text-ink-muted text-[10px] leading-tight">
+                          {member.email}
+                        </span>
+                      )}
+                    </div>
+                    <Plus
+                      size={12}
+                      weight="bold"
+                      className="ml-auto text-ink-muted"
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

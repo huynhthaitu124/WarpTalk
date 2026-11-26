@@ -1,0 +1,215 @@
+{
+  "accessDenied": {
+    "title": "Access Denied",
+    "description": "Only workspace Owners and Administrators can view billing and subscription configurations."
+  },
+  "errorState": {
+    "title": "Could not load billing data",
+    "description": "Your balance and usage are unavailable right now, so nothing is shown rather than a figure that could be wrong. {message}",
+    "httpError": "The billing service responded with HTTP {status}.",
+    "unexpected": "An unexpected error occurred.",
+    "retry": "Retry"
+  },
+  "overages": {
+    "title": "Allow overages",
+    "badge": "Recommended",
+    "descriptionOn": "Meetings keep translating past zero credits, up to {cap} credits this cycle.",
+    "descriptionOff": "Meetings stop the moment the credits run out. Turn this on to let them continue up to the allowance your plan already grants.",
+    "manage": "Manage",
+    "enable": "Enable"
+  },
+  "stats": {
+    "creditsRemaining": {
+      "label": "Credits Remaining",
+      "granted": "{total} available this cycle.",
+      "noAllowance": "No allowance on this cycle.",
+      "spent": "{used} spent since the cycle began.",
+      "cycleEnds": "Cycle ends {date}."
+    },
+    "currentPlan": {
+      "label": "Current Plan",
+      "noPlan": "No active plan",
+      "pricePerCycle": "{price} per cycle.",
+      "billedMonthly": "Billed monthly.",
+      "billedYearly": "Billed yearly.",
+      "noBalance": "Meetings translate against a credit balance.",
+      "limits": "{participants} participants · {languages} languages per meeting.",
+      "limitsUnavailable": "Plan limits unavailable.",
+      "cancelled": "Auto-renew off — translation stops {date}. Resume it from Manage subscription.",
+      "renews": "Renews {date}."
+    }
+  },
+  "currentPlanRow": {
+    "label": "Current plan",
+    "renewsOn": "Renews on {date}",
+    "endsOn": "Ends on {date}"
+  },
+  "buyCredits": "Buy credits",
+  "manageSubscription": "Manage subscription",
+  "noSubscription": {
+    "title": "No active subscription",
+    "description": "This workspace has no billing plan yet, so there is no balance or usage to report. Choose a plan to start tracking credits and AI usage.",
+    "choosePlan": "Choose a plan"
+  },
+  "capabilities": {
+    "voiceCloning": "Voice cloning",
+    "aiAssistant": "AI assistant",
+    "customGlossary": "Custom glossary",
+    "dedicatedGpu": "Dedicated GPU"
+  },
+  "planGrid": {
+    "mostPopular": "Most popular",
+    "currentPlan": "Current plan",
+    "coveredByCurrentPlan": "Covered by current plan",
+    "upgrade": "Upgrade",
+    "choose": "Choose",
+    "creditsPerCycle": "{credits} credits/cycle",
+    "limits": "{participants} participants · {languages} languages",
+    "everythingInPlus": "Everything in {name}, plus",
+    "moreCreditsAndLimits": "More credits and higher limits",
+    "title": "Plans",
+    "description": "Plans published by WarpTalk. Open a plan to see what it includes.",
+    "yourPlan": "Your plan",
+    "seeMore": "See more",
+    "coreTranslation": "Core live translation",
+    "billedYearly": "Billed yearly: {total}",
+    "interval": {
+      "ariaLabel": "Billing period",
+      "monthly": "Monthly",
+      "yearly": "Yearly · Save {percent}%"
+    },
+    "plusVat": "+ {percent}% VAT · {total} at checkout"
+  },
+  "planPanel": {
+    "currentPlan": "Current plan",
+    "noPlan": "No active plan",
+    "noBalance": "Meetings translate against a credit balance.",
+    "pricePerYear": "{price} / year",
+    "pricePerMonth": "{price} / month",
+    "change": "Change",
+    "choose": "Choose",
+    "creditsPerCycle": "Credits per cycle",
+    "participantsPerMeeting": "Participants per meeting",
+    "languagesPerMeeting": "Languages per meeting",
+    "cycle": "Cycle",
+    "cancelled": "Cancelled. Translation stops for this workspace on {date}.",
+    "renewsAutomatically": "Renews automatically on {date}.",
+    "doesNotAutoRenew": "Does not auto-renew — credits stop on {date}."
+  },
+  "manageModal": {
+    "title": "Manage subscription",
+    "description": "The current plan, its cycle, and the settings that change it.",
+    "currentPlan": "Current plan",
+    "noPlan": "No active plan",
+    "planType": "Plan type",
+    "overageCreditsUsed": "Overage credits used",
+    "cappedThisCycle": "Capped at {cap} this cycle",
+    "nextCreditRefresh": "Next credit refresh",
+    "nextBillingDate": "Next billing date",
+    "cancelledNoRenew": "Auto-renew is off — this plan will not renew",
+    "nextPaymentAmount": "Next payment amount",
+    "enableOverages": "Enable overages",
+    "recommended": "Recommended",
+    "modifyPlan": "Modify plan",
+    "changePlan": "Change plan",
+    "reactivating": "Resuming…",
+    "resubscribe": "Resume auto-renew",
+    "cancelling": "Turning off…",
+    "confirmCancel": "Confirm — stop renewal",
+    "cancelPlan": "Cancel renewal",
+    "managePayments": "Manage payments",
+    "invoices": "Invoices",
+    "cancelledNotice": "Auto-renew is off, so translation stops for this workspace on {date}. Turn it back on before then to keep the plan running — nothing is charged until the next period starts.",
+    "billingCycle": {
+      "yearly": "Yearly",
+      "semiannual": "Semiannual",
+      "monthly": "Monthly",
+      "unknown": "—"
+    },
+    "toasts": {
+      "overageOn": "Meetings will keep running past zero credits, up to the plan's cap.",
+      "overageOff": "Meetings will stop when the credits run out.",
+      "overageFailed": "Could not change the overage setting.",
+      "cancelled": "Subscription cancelled. It stays active until the period ends.",
+      "cancelFailed": "Could not cancel the subscription.",
+      "reactivated": "Renewal is back on. This plan will continue past the current period.",
+      "reactivateFailed": "Could not reactivate the subscription."
+    }
+  },
+  "frozen": {
+    "kept": "{credits} credits kept — renew to use them",
+    "keptDetail": "Your subscription ended on {date}. These credits are kept for you and come back as soon as you renew.",
+    "dormant": "They have been waiting since {date}; they are still yours and still come back when you renew.",
+    "pendingTitle": "Credits from your previous plan",
+    "pendingDescription": "{credits} credits kept from your previous subscription are being added to this plan."
+  },
+  "purchaseGate": {
+    "title": "Subscribe to a plan to buy extra credits",
+    "description": "Top-ups and credit packs are added on top of a plan. Choose a plan first, then come back to add credits.",
+    "cta": "See plans",
+    "refused": "Subscribe to a plan to buy extra credits."
+  },
+  "renew": {
+    "title": "{workspaceName}'s plan has ended",
+    "ownerDescription": "The {planName} plan ended on {date}. Everything in this workspace is exactly where you left it — renew to open it again for the whole team.",
+    "memberDescription": "The {planName} plan ended on {date}. Everything in this workspace is kept. Ask the workspace owner to renew — it opens for everyone as soon as they do.",
+    "memberNotice": "Only an owner or admin of {workspaceName} can renew. Here is what it costs — send it to them.",
+    "kept": "{credits} credits kept — renew to use them",
+    "keptMember": "{credits} credits are kept for this workspace and come back when the plan is renewed.",
+    "renewWith": "Renew with {planName}"
+  },
+  "autoRenew": {
+    "title": "Auto-renew",
+    "on": "On",
+    "off": "Off",
+    "nextCharge": "Your card will be charged {amount} on {date}.",
+    "renewsOn": "Renews automatically on {date}.",
+    "invoiceNext": "An invoice for the next period is issued on {date}.",
+    "endsOn": "Your plan stays active until {date} and will not renew.",
+    "card": "{brand} ending in {last4}",
+    "cardGeneric": "Card",
+    "cardExpires": "expires {month}/{year}",
+    "cardUnavailable": "Card details are unavailable right now.",
+    "manageCard": "Manage card",
+    "oneOffHint": "This plan was paid once, so there is no card on file to renew it with.",
+    "choosePlan": "Choose a plan with auto-renew",
+    "turnedOn": "Auto-renew is on. Your card will be charged at the end of each period.",
+    "turnedOff": "Auto-renew is off. Your plan stays active until {date}.",
+    "requiresCheckout": "Turning auto-renew on needs a card on file. Choose your plan again with auto-renew on.",
+    "toggleFailed": "We could not change auto-renew. Please try again.",
+    "portalFailed": "We could not open the card settings. Please try again.",
+    "failedTitle": "Payment failed — update your card",
+    "failedBadge": "Payment failed",
+    "failedDescription": "We could not charge your card for this plan's renewal. Your plan stays active until {date} while we retry. Update your card to keep it."
+  },
+  "meter": {
+    "level": {
+      "ok": "On track",
+      "warn": "Running low",
+      "critical": "Almost out",
+      "full": "Allowance used",
+      "unknown": "No allowance"
+    },
+    "ariaLabel": "Credits used this cycle",
+    "ariaValueText": "{percent}% of this cycle's credits used, {level}",
+    "paceTitle": "Share of the cycle that has passed",
+    "usedPercent": "{percent}% used",
+    "leftAmount": "{left} left",
+    "granted": "{total} available this cycle",
+    "noneGranted": "No credits on this cycle.",
+    "paceDay": "Cycle day {day} of {total} ({percent}% passed).",
+    "paceLasts": "At this pace the allowance lasts past the cycle end.",
+    "paceRunsOut": "At this pace it runs out in about {days, plural, one {# day} other {# days}}, {early, plural, one {# day} other {# days}} before the cycle ends.",
+    "paceRunsOutAtEnd": "At this pace it runs out in about {days, plural, one {# day} other {# days}}, right as the cycle ends.",
+    "paceRunsOutWithinDay": "At this pace it runs out within a day, {early, plural, one {# day} other {# days}} before the cycle ends.",
+    "paceRunsOutWithinDayAtEnd": "At this pace it runs out within a day, right as the cycle ends.",
+    "overageRunning": "Overage is running: {credits} credits beyond the allowance.",
+    "overageRunningNoAmount": "Overage is running.",
+    "allowanceUsedStopped": "The allowance is used up. Meetings stop until credits are added or the cycle renews."
+  },
+  "zone": {
+    "ariaLabel": "Section",
+    "plans": "Plans",
+    "extras": "Credit packs & add-ons"
+  }
+}

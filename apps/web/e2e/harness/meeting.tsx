@@ -5,12 +5,12 @@
 import { createRoot } from 'react-dom/client';
 import { useState, useSyncExternalStore } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ToastProvider, TooltipProvider } from '@/ui';
-import { useParticipants, useRoom } from '@/lib/queries';
-import { InMeeting } from '@/features/meeting/InMeeting';
-import { EndedView, OfflineRoom } from '@/features/meeting/Offline';
-import type { DataMessage, DataTopic, MeetingSession, SessionParticipant } from '@/features/meeting/types';
-import type { ConnectionLabel, QualityLabel } from '@/features/MeetingParts';
+import { ToastProvider, TooltipProvider } from '@v2/ui';
+import { useParticipants, useRoom } from '@v2/lib/queries';
+import { InMeeting } from '@v2/features/meeting/InMeeting';
+import { EndedView, OfflineRoom } from '@v2/features/meeting/Offline';
+import type { DataMessage, DataTopic, MeetingSession, SessionParticipant } from '@v2/features/meeting/types';
+import type { ConnectionLabel, QualityLabel } from '@v2/features/MeetingParts';
 
 export interface MockParticipantInit { identity: string; name: string; isLocal?: boolean; micOn?: boolean; camOn?: boolean }
 export interface HarnessOptions {

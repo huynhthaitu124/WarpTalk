@@ -117,11 +117,11 @@ impl Pcm16Decoder {
             }
         }
         let rest: Vec<u8> = it.collect();
-        let mut pairs = rest.chunks_exact(2);
-        for p in &mut pairs {
-            out.push(f32::from(i16::from_le_bytes([p[0], p[1]])) / 32768.0);
+        let (pairs, remainder) = rest.as_chunks::<2>();
+        for p in pairs {
+            out.push(f32::from(i16::from_le_bytes(*p)) / 32768.0);
         }
-        if let [b] = pairs.remainder() {
+        if let [b] = remainder {
             self.carry = Some(*b);
         }
         out
