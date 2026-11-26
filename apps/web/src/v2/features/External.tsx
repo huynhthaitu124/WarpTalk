@@ -334,11 +334,14 @@ export function ExternalPage() {
   const lineAt = useRef(new Map<string, number>());
   const overlayState = useMemo<OverlayState>(() => {
     const at = lineAt.current;
+    // Arrival stamps are cached per line id, so re-renders do not change them.
+    // eslint-disable-next-line react-hooks/purity
+    const now = Date.now();
     const out: OverlayLine[] = lines.slice(-200).map((l) => {
-      if (!at.has(l.id)) at.set(l.id, Date.now());
+      if (!at.has(l.id)) at.set(l.id, now);
       const self = !!userId && l.speakerUserId === userId;
       const tr = pickTranslation(l, listen);
-      return { id: l.id, speaker: self ? 'You' : l.speaker, self, text: l.text, ...(tr ? { translation: tr } : {}), ...(l.lang ? { lang: l.lang } : {}), final: l.final, at: at.get(l.id) ?? Date.now() };
+      return { id: l.id, speaker: self ? 'You' : l.speaker, self, text: l.text, ...(tr ? { translation: tr } : {}), ...(l.lang ? { lang: l.lang } : {}), final: l.final, at: at.get(l.id) ?? now };
     });
     const st = live.status.state;
     const status: OverlayState['status'] = roomTerminal ? 'ended'

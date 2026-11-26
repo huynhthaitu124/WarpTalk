@@ -4683,7 +4683,6 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
- "warptalk-bus",
  "warptalk-config",
  "warptalk-contracts",
  "warptalk-db",

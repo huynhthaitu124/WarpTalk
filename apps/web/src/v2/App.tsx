@@ -89,7 +89,7 @@ export function App() {
             <Route path="/meetings/:roomId" element={<FeatureRoute name="translationMeetings"><MeetingPage /></FeatureRoute>} />
             <Route path="/sessions" element={<FeatureRoute name="copilot"><ToWorkspace to="/sessions" /></FeatureRoute>} />
             <Route path="/sessions/:sessionId" element={<FeatureRoute name="copilot"><SessionDetailPage /></FeatureRoute>} />
-            <Route path="/external" element={<FeatureRoute name="externalBridge"><Padded><ExternalPage /></Padded></FeatureRoute>} />
+            <Route path="/external" element={<ExternalRoute />} />
             <Route path="/workspaces" element={<Padded><WorkspacesPage /></Padded>} />
             <Route path="/settings" element={<ToWorkspace to="/settings" />} />
           </Route>
@@ -98,4 +98,11 @@ export function App() {
       </Routes>
     </>
   );
+}
+
+/** `/external`: the translation bridge is flag-gated, but `auto=1` is the copilot pill (gated by `copilot`). */
+function ExternalRoute() {
+  const { search } = useLocation();
+  const copilot = new URLSearchParams(search).get('auto') === '1';
+  return <FeatureRoute name={copilot ? 'copilot' : 'externalBridge'}><Padded><ExternalPage /></Padded></FeatureRoute>;
 }

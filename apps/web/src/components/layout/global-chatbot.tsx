@@ -41,8 +41,6 @@ import {
 } from "@/components/ui/popover";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  assistantToolDoneLabel,
-  assistantToolLabel,
   withStepDetail,
   REASONING_STEP,
   THINKING_STEP,

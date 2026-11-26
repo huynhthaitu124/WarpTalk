@@ -15,23 +15,11 @@ import { MeetingTranscriptArtifact } from "@/components/rooms/meeting-transcript
 import { TranscriptSpeakerAvatar } from "@/components/rooms/transcript-speaker-avatar";
 import {
   useTranscriptByRoom,
-  useTranscriptCleanSentences,
   useTranscriptSegments,
   useTranscriptTranslations,
 } from "@/hooks/use-transcripts";
-import { formatCitationTime } from "@/lib/meeting/meeting-summary";
-import {
-  buildCleanTranscriptView,
-  type CleanTranscriptView,
-} from "@/lib/transcript/clean-transcript";
-import {
-  groupIntoSpeakerTurns,
-  groupSavedTranscriptSegments,
-} from "@/lib/transcript/transcript-display";
 import { type TranscriptSpeaker } from "@/lib/transcript/speaker-color";
 import type { LibraryEntry } from "@/lib/meeting/artifact-library";
-import type { TranscriptSegmentDto } from "@/types/transcript";
-import { cn } from "@/lib/utils";
 import { describeAbsence } from "@/lib/meeting/artifact-library";
 import { parseSavedTranscriptBody } from "@/lib/documents/saved-record-documents";
 import { downloadSavedTranscriptDocx } from "@/lib/documents/download-saved-record";
@@ -44,7 +32,6 @@ export function TranscriptTimelineReader({
   entry: LibraryEntry;
   roomId: string;
 }) {
-  const [viewMode, setViewMode] = useState<"clean" | "verbatim">("clean");
   const [searchQuery, setSearchQuery] = useState("");
   const [downloading, setDownloading] = useState(false);
   const viewerId = useAuthStore((state) => state.user?.id);
@@ -55,7 +42,6 @@ export function TranscriptTimelineReader({
 
   const segmentsQuery = useTranscriptSegments(transcriptId);
   const translationsQuery = useTranscriptTranslations(transcriptId);
-  const cleanSentencesQuery = useTranscriptCleanSentences(transcriptId);
 
   const rawSegments = segmentsQuery.data?.items ?? [];
 

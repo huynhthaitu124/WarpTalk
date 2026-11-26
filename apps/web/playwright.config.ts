@@ -89,7 +89,7 @@ export default defineConfig({
     {
       command: `NEXT_DIST_DIR=.next-export npx next build && API_PROXY_TARGET=${API} node scripts/serve-out.mjs --port ${EXPORT_PORT}`,
       url: exportURL,
-      timeout: 5 * 60_000,
+      timeout: 10 * 60_000, // a full `next build` of the ported legacy UI takes ~5 min on hosted runners
       reuseExistingServer: !process.env.CI,
       stdout: 'ignore',
       stderr: 'pipe',

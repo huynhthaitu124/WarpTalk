@@ -104,7 +104,7 @@ async fn setup() -> Option<Env> {
         .await
         .unwrap();
     let jwt = JwtKeys::from_config(&JwtConfig {
-        secret: "0123456789abcdef0123456789abcdef".to_owned(),
+        secret: "test-secret-test-secret-test-secret-1234".to_owned(),
         issuer: "warptalk-test".to_owned(),
         audience: "warptalk".to_owned(),
         access_ttl_seconds: 900,

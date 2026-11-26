@@ -31,7 +31,7 @@ final class OverlayModel: ObservableObject {
     @Published private(set) var mode: OverlayMode = .captions
     @Published private(set) var copilotLines: [CopilotOverlayLine] = []
     @Published private(set) var suggestions: [OverlaySuggestion] = []
-    private(set) var speakerNames: [CopilotChannel: String] = Self.defaultNames
+    private(set) var speakerNames: [CopilotChannel: String] = OverlayModel.defaultNames
     static let defaultNames: [CopilotChannel: String] = [.me: "Tôi", .others: "Người khác"]
     static let maxCopilotLines = 30
     static let maxSuggestions = 6
@@ -63,7 +63,7 @@ final class OverlayModel: ObservableObject {
 
     func exitCopilotMode() {
         mode = .captions
-        speakerNames = Self.defaultNames
+        speakerNames = OverlayModel.defaultNames
         copilotLines = []
         suggestions = []
     }
