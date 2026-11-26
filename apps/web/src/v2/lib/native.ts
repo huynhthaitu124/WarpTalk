@@ -111,10 +111,16 @@ export interface OverlayState {
   suggestionsAvailable: boolean;
   /** Dev test mode: the API runs with a suggestion test script, so the copilot shows a box to type script lines. */
   testMode?: boolean;
+  /** WarpBot conversation for this meeting (the main page runs it; the copilot sends `ask` / `askStop`). */
+  ask?: OverlayAsk;
   error?: string;
 }
+export interface OverlayAskMessage {
+  key: string; role: 'user' | 'assistant'; content: string; status?: 'streaming' | 'done' | 'error'; error?: string; incomplete?: boolean;
+}
+export interface OverlayAsk { messages: OverlayAskMessage[]; busy: boolean }
 /** `expand` / `collapse` / `hide` / `resize` (value `WxH`) / `hitrect` (value `x,y,w,h`) only affect the native window and never reach the main page. */
-export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'testLine';
+export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'testLine' | 'ask' | 'askStop';
 
 export type NativeEvent =
   | ({ type: 'status'; ts: string } & CaptureStatus)

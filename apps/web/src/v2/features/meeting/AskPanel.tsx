@@ -72,7 +72,7 @@ function Bubble({ m, onCitation }: { m: AskMessage; onCitation(c: Citation): voi
   );
 }
 
-function historyToMessages(pages: { items: { id: string; role: string; kind: string; content: string; citations: { kind: string; ref: string; label: string; tMs?: number | null; page?: number | null }[]; model?: string | null; createdAt: string }[] }[]): AskMessage[] {
+export function historyToMessages(pages: { items: { id: string; role: string; kind: string; content: string; citations: { kind: string; ref: string; label: string; tMs?: number | null; page?: number | null }[]; model?: string | null; createdAt: string }[] }[]): AskMessage[] {
   const seen = new Set<string>();
   const out: AskMessage[] = [];
   for (const p of pages) for (const it of p.items) {

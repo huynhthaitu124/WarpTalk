@@ -16,7 +16,7 @@ import {
 } from '@v2/lib/bridge';
 import {
   nativeErrorCode, nativeErrorMessage, useCaptureLive, useNative,
-  type AudioApp, type Capabilities, type CaptureMode, type NativeError, type NativeEvent, type OverlayLine, type OverlayState, type PermissionKind, type Permissions,
+  type AudioApp, type Capabilities, type CaptureMode, type NativeError, type NativeEvent, type OverlayAsk, type OverlayLine, type OverlayState, type PermissionKind, type Permissions,
 } from '@v2/lib/native';
 import { mergeCaption, pickTranslation, type CaptionLine } from '@v2/lib/captions';
 import { session } from '@v2/lib/session';
@@ -26,6 +26,8 @@ import {
   AppRow, BrowserFallback, ErrorRow, KeyValue, LevelMeter, PermissionsPanel, StepCard, ago, useNow, type Recovery,
 } from './ExternalParts';
 import { errCode, errMsg } from './errors';
+import { historyToMessages } from './meeting/AskPanel';
+import { ASK_MAX_CHARS, useAskHistory, useAssistant } from '@v2/lib/ask';
 
 const ExternalCaptions = lazy(() => import('./ExternalCaptions'));
 
@@ -331,6 +333,16 @@ export function ExternalPage() {
   const suggestionStream = useSuggestionStream(roomId ?? undefined, listen, !!roomId);
   const followUps = useFollowUps(roomId ?? undefined, !!roomId);
   const testMode = useSuggestionTestMode();
+  // WarpBot for the copilot window: persisted conversation + the turn in flight, relayed as plain messages.
+  const askHistory = useAskHistory(roomId ?? undefined);
+  const assistant = useAssistant(roomId ?? '');
+  const askState = useMemo<OverlayAsk>(() => ({
+    busy: assistant.busy,
+    messages: [...historyToMessages(askHistory.data?.pages ?? []), ...assistant.local].slice(-60).map((m) => ({
+      key: m.key, role: m.role, content: m.content,
+      ...(m.status ? { status: m.status } : {}), ...(m.error ? { error: m.error } : {}), ...(m.incomplete ? { incomplete: true } : {}),
+    })),
+  }), [askHistory.data, assistant.local, assistant.busy]);
   const lineAt = useRef(new Map<string, number>());
   const overlayState = useMemo<OverlayState>(() => {
     const at = lineAt.current;
@@ -356,9 +368,10 @@ export function ExternalPage() {
       followUps: (followUps.data ?? []).map((f) => ({ id: f.id, text: f.text, ...(f.owner ? { owner: f.owner } : {}) })),
       suggestionsAvailable: suggestionStream.status !== 'unavailable',
       ...(testMode ? { testMode: true } : {}),
+      ...(roomId ? { ask: askState } : {}),
       ...(err ? { error: err } : {}),
     };
-  }, [testMode, lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
+  }, [askState, testMode, lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
   const overlayStateRef = useRef(overlayState);
   overlayStateRef.current = overlayState;
   useEffect(() => { void native?.pushOverlayState?.(overlayState).catch(() => undefined); }, [native, overlayState]);
@@ -422,6 +435,14 @@ export function ExternalPage() {
       case 'ready': void native?.pushOverlayState?.(overlayStateRef.current).catch(() => undefined); break;
       case 'closed': setOverlayClosed(true); break;
       case 'end': void endSession(); break;
+      case 'ask': {
+        // Suggestion actions carry the hint's context and may run long: the server caps questions at ASK_MAX_CHARS.
+        const q = value?.trim().slice(0, ASK_MAX_CHARS);
+        if (!roomId || !q) break;
+        void assistant.ask(q, 'meeting+docs');
+        break;
+      }
+      case 'askStop': assistant.stop(); break;
       case 'testLine': {
         if (!roomId || !testMode || !value?.trim()) break;
         // Dev test mode: the line goes into the meeting as a final transcript segment; the scripted engine answers it

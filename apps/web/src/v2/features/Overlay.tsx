@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  ArrowDown, CaretDown, Check, ClosedCaptioning, Globe, Lightbulb, Microphone, MicrophoneSlash, Stop, CheckSquare, X,
+  ArrowDown, CaretDown, ChatCircleDots, Check, ClosedCaptioning, Globe, Lightbulb, Microphone, MicrophoneSlash, PaperPlaneRight, Sparkle,
+  Stop, CheckSquare, X,
 } from '@phosphor-icons/react';
+import { actionsFor } from '@/lib/meeting/suggestion-actions';
 import { cn } from '@v2/lib/cn';
 import { LANGUAGES, languageLabel } from '@v2/lib/languages';
-import { getNative, type OverlayCommand, type OverlayLine, type OverlayState } from '@v2/lib/native';
+import { Markdown } from '@v2/lib/markdown';
+import { getNative, type OverlayAsk, type OverlayCommand, type OverlayLine, type OverlayState } from '@v2/lib/native';
 
 /**
  * Copilot window for external meetings (macOS `OverlayWebController`), modelled on the upstream desktop widget.
@@ -67,6 +70,15 @@ export function OverlayPage() {
   const [tipAt, setTipAt] = useState(0);
   const lastTips = useRef(-1);
   const [now, setNow] = useState(() => Date.now());
+  /** Card view: the live transcript (with tips) or the WarpBot chat. */
+  const [tab, setTab] = useState<'live' | 'warpbot'>('live');
+  /** A WarpBot answer finished while the transcript tab was showing. */
+  const [unread, setUnread] = useState(false);
+  const tabRef = useRef(tab);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+  const lastAnswer = useRef('');
+  /** Ask WarpBot from the composer or a suggestion's action; the answer shows on the WarpBot tab. */
+  const ask = (q: string) => { send('ask', q); setTab('warpbot'); setUnread(false); };
 
   function wake() {
     setActive(true);
@@ -102,6 +114,9 @@ export function OverlayPage() {
       const n = d.suggestions.length + d.followUps.length;
       if (lastTips.current >= 0 && n > lastTips.current) setTipAt(Date.now());
       lastTips.current = n;
+      const done = d.ask?.messages.filter((m) => m.role === 'assistant' && m.status !== 'streaming').at(-1)?.key ?? '';
+      if (lastAnswer.current && done && done !== lastAnswer.current && tabRef.current !== 'warpbot') setUnread(true);
+      lastAnswer.current = done || lastAnswer.current;
       const l = d.lines[d.lines.length - 1];
       const lineSig = `${l?.id ?? ''}|${l?.text.length ?? 0}`;
       if (l && lineSig !== lastSig.current.split('#')[0]) setSpeechAt(Date.now());
@@ -277,8 +292,18 @@ export function OverlayPage() {
                 <LangPicker value={state.myLang} onChange={(v) => send('listen', v)} />
               </>
             )}
+            {state.ask && (
+              <div role="tablist" aria-label="Copilot view" className="ml-auto flex shrink-0 rounded-full bg-white/5 p-0.5">
+                <TabButton active={tab === 'live'} onClick={() => setTab('live')} label="Live">
+                  <ClosedCaptioning size={13} weight="bold" />
+                </TabButton>
+                <TabButton active={tab === 'warpbot'} onClick={() => { setTab('warpbot'); setUnread(false); }} label="WarpBot" dot={unread} testId="copilot-tab-warpbot">
+                  <Sparkle size={13} weight="fill" />
+                </TabButton>
+              </div>
+            )}
             <button type="button" aria-label="Hide copilot" title="Hide copilot" onClick={hideOverlay}
-              className="ml-auto grid size-7 place-items-center rounded-full text-ink-muted hover:bg-surface-3 hover:text-ink">
+              className={cn(!state.ask && 'ml-auto', 'grid size-7 place-items-center rounded-full text-ink-muted hover:bg-surface-3 hover:text-ink')}>
               <X size={14} weight="bold" />
             </button>
           </div>
@@ -291,11 +316,13 @@ export function OverlayPage() {
                 <p className="mt-1 text-[12px] text-ink-muted">You can close this window.</p>
               </div>
             </div>
+          ) : tab === 'warpbot' && state.ask ? (
+            <WarpBotChat ask={state.ask} onAsk={ask} />
           ) : (
-            <Transcript lines={state.lines} myLang={state.myLang} tips={stamped(state)} />
+            <Transcript lines={state.lines} myLang={state.myLang} tips={stamped(state)} onAsk={state.ask ? ask : undefined} />
           )}
 
-          {state.testMode && !ended && <TestLineBox />}
+          {state.testMode && !ended && tab === 'live' && <TestLineBox />}
 
           {state.error && <div className="shrink-0 border-t border-border bg-danger/10 px-3 py-1.5 text-[12px] text-danger-text">{state.error}</div>}
 
@@ -383,12 +410,12 @@ function stamped(state: OverlayState): Tip[] {
   ];
 }
 
-function Transcript({ lines, myLang, tips }: { lines: OverlayLine[]; myLang: string; tips: Tip[] }) {
+function Transcript({ lines, myLang, tips, onAsk }: { lines: OverlayLine[]; myLang: string; tips: Tip[]; onAsk?: (q: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const items = [
     ...lines.map((l) => ({ at: l.at, key: `l:${l.id}`, node: <Bubble line={l} myLang={myLang} /> })),
-    ...tips.map((t) => ({ at: t.at, key: `t:${t.kind}:${t.id}`, node: <TipCard tip={t} /> })),
+    ...tips.map((t) => ({ at: t.at, key: `t:${t.kind}:${t.id}`, node: <TipCard tip={t} myLang={myLang} onAsk={onAsk} /> })),
   ].sort((a, b) => a.at - b.at);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -458,8 +485,10 @@ function Bubble({ line: l, myLang }: { line: OverlayLine; myLang: string }) {
 }
 
 /** A suggestion / follow-up shown inline, right under the transcript line that prompted it. */
-function TipCard({ tip }: { tip: Tip }) {
+function TipCard({ tip, myLang, onAsk }: { tip: Tip; myLang: string; onAsk?: (q: string) => void }) {
   const isSuggestion = tip.kind === 'suggestion';
+  // Same next steps as the meeting page's suggestion badge (Ask WarpBot, Research this, ...).
+  const actions = onAsk ? (isSuggestion ? actionsFor(tip, myLang) : actionsFor({ category: 'action', content: tip.text }, myLang)).slice(0, 3) : [];
   return (
     <div className="ml-9 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2">
       <div className={cn('mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide', isSuggestion ? 'text-primary' : 'text-ink-muted')}>
@@ -474,7 +503,100 @@ function TipCard({ tip }: { tip: Tip }) {
       ) : (
         <p className="text-[12.5px] leading-snug">{tip.text}{tip.owner && <span className="text-ink-muted"> · {tip.owner}</span>}</p>
       )}
+      {actions.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {actions.map((a) => (
+            <button key={a.id} type="button" onClick={() => onAsk?.(a.prompt)} data-testid="tip-action"
+              className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-ink-muted ring-1 ring-white/10 hover:bg-white/10 hover:text-ink">
+              {a.id.startsWith('research') || a.id === 'verifyOnline' ? <Globe size={11} /> : <ChatCircleDots size={11} />}{a.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function TabButton({ active, onClick, label, dot, testId, children }: { active: boolean; onClick(): void; label: string; dot?: boolean; testId?: string; children: React.ReactNode }) {
+  return (
+    <button type="button" role="tab" aria-selected={active} onClick={onClick} data-testid={testId}
+      className={cn('relative flex h-6 items-center gap-1 rounded-full px-2 text-[11px] font-semibold transition-colors',
+        active ? 'bg-white/15 text-ink' : 'text-ink-muted hover:text-ink')}>
+      {children}{label}
+      {dot && <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary" />}
+    </button>
+  );
+}
+
+const QUICK_ASKS = ['Tóm tắt cuộc họp đến giờ', 'Đã chốt những gì?', 'Còn câu hỏi nào chưa được trả lời?'];
+
+/** WarpBot chat for this meeting. The main page runs the conversation; this only renders it and sends questions. */
+function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }) {
+  const [text, setText] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(true);
+  const last = ask.messages[ask.messages.length - 1];
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && stuck) el.scrollTop = el.scrollHeight;
+  }, [ask.messages.length, last?.content, stuck]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+  };
+  const submit = () => {
+    const q = text.trim();
+    if (!q || ask.busy) return;
+    setText('');
+    setStuck(true);
+    onAsk(q);
+  };
+  return (
+    <>
+      <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" data-testid="warpbot-log">
+        {ask.messages.length === 0 ? (
+          <div className="grid h-full place-items-center text-center">
+            <div>
+              <Sparkle size={26} weight="fill" className="mx-auto mb-2 text-primary" />
+              <p className="text-[13px] font-medium">Hỏi WarpBot về cuộc họp này</p>
+              <p className="mt-0.5 text-[11.5px] text-ink-muted">WarpBot đọc transcript và tài liệu workspace.</p>
+              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                {QUICK_ASKS.map((q) => (
+                  <button key={q} type="button" onClick={() => onAsk(q)}
+                    className="rounded-full bg-white/5 px-2.5 py-1 text-[11.5px] text-ink-muted ring-1 ring-white/10 hover:bg-white/10 hover:text-ink">{q}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : ask.messages.map((m) => (m.role === 'user' ? (
+          <div key={m.key} className="flex justify-end">
+            <p className="line-clamp-4 max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-primary px-3 py-1.5 text-[12.5px] text-white">{m.content}</p>
+          </div>
+        ) : (
+          <div key={m.key} className="flex gap-2" data-testid="warpbot-answer" data-status={m.status ?? 'done'}>
+            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/20 text-primary"><Sparkle size={12} weight="fill" /></span>
+            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm border border-border bg-surface-2/60 px-3 py-2 text-[12.5px] leading-relaxed">
+              {m.content ? <Markdown text={m.content} className="space-y-1.5" /> : m.status === 'streaming' ? <span className="wt-shimmer">Đang suy nghĩ…</span> : null}
+              {m.incomplete && <p className="mt-1 text-[11px] text-ink-subtle">(câu trả lời bị ngắt)</p>}
+              {m.error && <p className="mt-1 text-[11.5px] text-danger-text">{m.error}</p>}
+            </div>
+          </div>
+        )))}
+      </div>
+      <form className="flex shrink-0 items-end gap-1.5 border-t border-border px-3 py-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} maxLength={1000} aria-label="Ask WarpBot" data-testid="warpbot-input"
+          placeholder="Hỏi WarpBot…"
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
+          className="max-h-24 min-h-[30px] min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent" />
+        {ask.busy ? (
+          <button type="button" aria-label="Stop answer" title="Stop" onClick={() => send('askStop')}
+            className="grid size-[30px] shrink-0 place-items-center rounded-lg bg-white/10 text-ink hover:bg-white/15"><Stop size={13} weight="fill" /></button>
+        ) : (
+          <button type="submit" aria-label="Send to WarpBot" title="Send" disabled={!text.trim()}
+            className="grid size-[30px] shrink-0 place-items-center rounded-lg bg-primary text-white disabled:opacity-40"><PaperPlaneRight size={13} weight="fill" /></button>
+        )}
+      </form>
+    </>
   );
 }
 
