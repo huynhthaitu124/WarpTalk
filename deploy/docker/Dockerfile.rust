@@ -36,18 +36,36 @@ ARG WITH_PIPELINE=0
 # Smaller binaries (the workspace release profile already sets thin LTO + codegen-units=1).
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
     CARGO_PROFILE_RELEASE_DEBUG=0
+# The pipeline's LiveKit transport (feature livekit-rtc) builds webrtc-sys: clang >= 21 plus X11/GL
+# headers (linked even for audio-only use), see apps/pipeline/LIVEKIT.md.
+# hadolint ignore=DL3008
+RUN set -eux; \
+    if [ "$WITH_PIPELINE" = "1" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends wget gnupg; \
+      wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc https://apt.llvm.org/llvm-snapshot.gpg.key; \
+      echo "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-21 main" > /etc/apt/sources.list.d/llvm.list; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends clang-21 libclang-21-dev lld-21 pkg-config libssl-dev \
+        libx11-dev libgl1-mesa-dev libxext-dev; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 COPY --from=planner /src/recipe.json recipe.json
 # Dependency layer: rebuilt only when Cargo.toml/Cargo.lock/recipe change. PKGS/BINS rely on word splitting.
 # hadolint ignore=SC2086
 RUN set -eux; \
     PKGS="-p warptalk-api -p warptalk-worker -p warptalk-migrator"; \
-    if [ "$WITH_PIPELINE" = "1" ]; then PKGS="$PKGS -p warptalk-pipeline"; fi; \
+    if [ "$WITH_PIPELINE" = "1" ]; then \
+      PKGS="$PKGS -p warptalk-pipeline --features warptalk-pipeline/livekit-rtc"; export CC=clang-21 CXX=clang++-21; \
+    fi; \
     cargo chef cook --release --locked --recipe-path recipe.json $PKGS
 COPY . .
 # hadolint ignore=SC2086
 RUN set -eux; \
     BINS="--bin warptalk-api --bin warptalk-worker --bin warptalk-migrator"; \
-    if [ "$WITH_PIPELINE" = "1" ]; then BINS="$BINS --bin warptalk-pipeline"; fi; \
+    if [ "$WITH_PIPELINE" = "1" ]; then \
+      BINS="$BINS --bin warptalk-pipeline --features warptalk-pipeline/livekit-rtc"; export CC=clang-21 CXX=clang++-21; \
+    fi; \
     cargo build --release --locked $BINS; \
     mkdir -p /out; \
     for b in warptalk-api warptalk-worker warptalk-migrator warptalk-pipeline; do \
@@ -118,6 +136,14 @@ ENTRYPOINT ["/usr/local/bin/warptalk-migrator"]
 FROM runtime-base AS pipeline
 LABEL org.opencontainers.image.title="warptalk-pipeline" \
       org.opencontainers.image.description="WarpTalk realtime translation pipeline (disabled by default, ADR 0001)"
+USER root
+# Shared libs webrtc-sys links against (X11/GL, even for audio-only use).
+# hadolint ignore=DL3008
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libx11-6 libxext6 libgl1 libglib2.0-0; \
+    rm -rf /var/lib/apt/lists/*
+USER 10001:10001
 COPY --from=builder --chown=10001:10001 /out/warptalk-pipeline /usr/local/bin/warptalk-pipeline
 ENV MEDIA_TRANSPORT=simulated
 ENTRYPOINT ["/usr/local/bin/warptalk-pipeline"]

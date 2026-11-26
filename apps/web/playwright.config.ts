@@ -8,6 +8,10 @@ const baseURL = `http://127.0.0.1:${WEB_PORT}`;
 // Static export smoke test: `next build` -> out/ served by scripts/serve-out.mjs.
 const EXPORT_PORT = Number(process.env.E2E_EXPORT_PORT ?? 3198);
 const exportURL = `http://127.0.0.1:${EXPORT_PORT}`;
+// The export server runs a full `next build`; start it only when the `export` project runs (or no --project filter).
+const argv = process.argv.slice(2);
+const projects = argv.flatMap((a, i) => (a.startsWith('--project=') ? [a.slice(10)] : a === '--project' ? [argv[i + 1] ?? ''] : []));
+const needsExport = projects.length === 0 || projects.includes('export');
 
 // Optional override when the bundled browser build does not match the installed Playwright:
 //   PW_CHROMIUM=/opt/pw-browsers/chromium npx playwright test
@@ -86,13 +90,17 @@ export default defineConfig({
       stdout: 'ignore',
       stderr: 'pipe',
     },
-    {
-      command: `NEXT_DIST_DIR=.next-export npx next build && API_PROXY_TARGET=${API} node scripts/serve-out.mjs --port ${EXPORT_PORT}`,
-      url: exportURL,
-      timeout: 10 * 60_000, // a full `next build` of the ported legacy UI takes ~5 min on hosted runners
-      reuseExistingServer: !process.env.CI,
-      stdout: 'ignore',
-      stderr: 'pipe',
-    },
+    ...(needsExport
+      ? [
+          {
+            command: `NEXT_DIST_DIR=.next-export npx next build && API_PROXY_TARGET=${API} node scripts/serve-out.mjs --port ${EXPORT_PORT}`,
+            url: exportURL,
+            timeout: 10 * 60_000, // a full `next build` of the ported legacy UI takes ~5 min on hosted runners
+            reuseExistingServer: !process.env.CI,
+            stdout: 'ignore' as const,
+            stderr: 'pipe' as const,
+          },
+        ]
+      : []),
   ],
 });

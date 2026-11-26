@@ -168,8 +168,7 @@ impl MediaTransport for LiveKitTransport {
 
 /// Pulls 16 kHz mono blocks from one remote track until it ends.
 async fn read_track(track: RemoteAudioTrack, participant: String, tx: mpsc::Sender<MediaEvent>) {
-    // UNVERIFIED: `queue_size_frames: None` selects the default queue size.
-    let mut stream = NativeAudioStream::new(track.rtc_track(), SUBSCRIBE_RATE_HZ, 1, None);
+    let mut stream = NativeAudioStream::new(track.rtc_track(), SUBSCRIBE_RATE_HZ, 1);
     while let Some(frame) = stream.next().await {
         let samples: Vec<f32> = frame.data.iter().map(|s| f32::from(*s) / 32768.0).collect();
         let ev = MediaEvent::Audio(ParticipantAudio {
