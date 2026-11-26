@@ -485,6 +485,20 @@ impl LiveKitSettings {
     }
 }
 
+/// The config the API itself uses to call LiveKit (Twirp). `LIVEKIT_URL` is the address handed to
+/// clients; inside Docker that is the host's `localhost`, which the API container cannot reach, so
+/// `LIVEKIT_API_URL` (e.g. `http://livekit:7880`) overrides it for server calls when set.
+fn server_side_livekit(cfg: &LiveKitConfig) -> LiveKitConfig {
+    let mut c = cfg.clone();
+    if let Some(u) = std::env::var("LIVEKIT_API_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        c.url = u;
+    }
+    c
+}
+
 /// Optional wiring inputs beyond the core dependencies.
 #[derive(Default)]
 pub struct ApiOptions {
@@ -690,7 +704,7 @@ pub async fn build(
     });
     let room_service: Arc<dyn RoomService> = match (opts.room_service, configured) {
         (Some(rs), _) => rs,
-        (None, true) => match RoomServiceClient::new(livekit_cfg.clone()) {
+        (None, true) => match RoomServiceClient::new(server_side_livekit(&livekit_cfg)) {
             Ok(c) => Arc::new(c),
             Err(e) => {
                 tracing::error!(error = %e, "livekit room service client unavailable");
