@@ -163,6 +163,7 @@
     },
     "externalLink": {
       "label": "Meeting link",
+      "clear": "Clear link",
       "placeholder": "Paste a Google Meet, Zoom or Teams link",
       "detected": "{provider} meeting",
       "hint": "WarpTalk joins beside your call and translates it. The call itself stays on {provider}.",

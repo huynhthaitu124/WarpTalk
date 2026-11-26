@@ -163,6 +163,7 @@
     },
     "externalLink": {
       "label": "Link cuộc họp",
+      "clear": "Xoá link",
       "placeholder": "Dán link Google Meet, Zoom hoặc Teams",
       "detected": "Cuộc họp {provider}",
       "hint": "WarpTalk chạy bên cạnh cuộc gọi và dịch nó. Cuộc gọi vẫn diễn ra trên {provider}.",

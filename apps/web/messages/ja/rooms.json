@@ -163,6 +163,7 @@
     },
     "externalLink": {
       "label": "会議リンク",
+      "clear": "リンクをクリア",
       "placeholder": "Google Meet、Zoom、Teams のリンクを貼り付け",
       "detected": "{provider} 会議",
       "hint": "WarpTalk は通話の横で翻訳します。通話自体は {provider} で行われます。",

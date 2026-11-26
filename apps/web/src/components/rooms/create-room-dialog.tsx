@@ -5,6 +5,7 @@ import {
   ArrowsOutSimple,
   CalendarCheck,
   CheckCircle,
+  LinkSimple,
   Copy,
   Repeat,
   SlidersHorizontal,
@@ -632,28 +633,56 @@ export function CreateRoomDialog() {
                 />
 
                 {isExternalMeeting && (
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <label htmlFor="external-meeting-link" className="text-[12px] font-medium text-ink-muted">
+                  <div className="flex flex-col gap-1.5 shrink-0 pt-1">
+                    <label htmlFor="external-meeting-link" className="sr-only">
                       {t("externalLink.label")}
                     </label>
-                    <input
-                      id="external-meeting-link"
-                      type="url"
-                      inputMode="url"
-                      value={externalLink}
-                      onChange={(e) => setExternalLink(e.target.value)}
-                      placeholder={t("externalLink.placeholder")}
-                      aria-invalid={Boolean(externalLink.trim()) && parsedExternalLink?.ok === false}
-                      aria-describedby="external-meeting-link-hint"
-                      className="w-full rounded-lg border border-line bg-transparent px-3 py-2 text-[14px] text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-ring"
-                    />
-                    <p id="external-meeting-link-hint" className="text-[12px] text-ink-muted">
-                      {parsedExternalLink?.ok
-                        ? t("externalLink.hint", { provider: EXTERNAL_PROVIDER_LABEL[parsedExternalLink.provider] })
-                        : externalLink.trim() && parsedExternalLink
-                          ? <span className="text-red-600 dark:text-red-400">{t(`externalLink.errors.${parsedExternalLink.error}`)}</span>
-                          : null}
-                    </p>
+                    <div
+                      className={cn(
+                        "group flex items-center gap-2 rounded-xl border bg-surface-2/60 px-3 h-10 transition-colors",
+                        "focus-within:bg-surface-1 focus-within:border-ink-muted/40 focus-within:ring-2 focus-within:ring-ring/30",
+                        externalLink.trim() && parsedExternalLink?.ok === false
+                          ? "border-red-500/50"
+                          : "border-border/60",
+                      )}
+                    >
+                      {parsedExternalLink?.ok ? (
+                        <CheckCircle weight="fill" size={16} className="shrink-0 text-emerald-500" />
+                      ) : (
+                        <LinkSimple weight="bold" size={15} className="shrink-0 text-ink-muted" />
+                      )}
+                      <input
+                        id="external-meeting-link"
+                        type="url"
+                        inputMode="url"
+                        value={externalLink}
+                        onChange={(e) => setExternalLink(e.target.value)}
+                        placeholder={t("externalLink.placeholder")}
+                        aria-invalid={Boolean(externalLink.trim()) && parsedExternalLink?.ok === false}
+                        aria-describedby="external-meeting-link-hint"
+                        className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-muted/60 outline-none border-none focus:ring-0 p-0"
+                      />
+                      {parsedExternalLink?.ok && (
+                        <span className="shrink-0 rounded-md bg-surface-1 border border-border/60 px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
+                          {EXTERNAL_PROVIDER_LABEL[parsedExternalLink.provider]}
+                        </span>
+                      )}
+                      {externalLink && (
+                        <button
+                          type="button"
+                          onClick={() => setExternalLink("")}
+                          className="shrink-0 rounded-md p-0.5 text-ink-muted hover:text-ink hover:bg-surface-2"
+                          aria-label={t("externalLink.clear")}
+                        >
+                          <X weight="bold" size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {externalLink.trim() && parsedExternalLink?.ok === false && (
+                      <p id="external-meeting-link-hint" className="px-1 text-[12px] text-red-600 dark:text-red-400">
+                        {t(`externalLink.errors.${parsedExternalLink.error}`)}
+                      </p>
+                    )}
                   </div>
                 )}
 
