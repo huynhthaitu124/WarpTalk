@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "@/lib/next-shim/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -128,15 +128,9 @@ export default function ArtifactsPage() {
   }
 
   // Counted before the search narrows anything: a tab says how much is behind it.
-  const counts = useMemo(
-    () => libraryCounts(library.entries, kind, viewerId),
-    [kind, library.entries, viewerId],
-  );
+  const counts = libraryCounts(library.entries, kind, viewerId);
 
-  const entries = useMemo(
-    () => listLibrary(library.entries, { kind, scope, query, viewerId }),
-    [kind, library.entries, query, scope, viewerId],
-  );
+  const entries = listLibrary(library.entries, { kind, scope, query, viewerId });
 
   /**
    * No ambient context from the LIST.

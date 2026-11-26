@@ -35,7 +35,6 @@ import {
   Quote,
   StopCircle,
   Strikethrough,
-  Repeat,
   Underline as UnderlineIcon,
 } from "lucide-react";
 // Aliased: this file already imports Tiptap's `Link` extension, and the editor's Link and the

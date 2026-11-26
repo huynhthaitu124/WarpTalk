@@ -39,7 +39,7 @@ export { ALLOWED_REACTION_EMOJIS };
 
 export type MeetingLayoutMode = "auto" | "grid" | "spotlight" | "sidebar";
 
-import { motion, AnimatePresence } from "motion/react";
+import { AnimatePresence } from "motion/react";
 
 /**
  * WT-272: close a control-bar flyout on Escape or a click outside it.

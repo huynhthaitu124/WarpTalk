@@ -149,7 +149,7 @@ export function SetupRoomModal() {
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState("");
   const [selectedSpeakerId, setSelectedSpeakerId] = useState("");
   const [mediaError, setMediaError] = useState("");
-  const [micLevel, setMicLevel] = useState(0);
+  const [, setMicLevel] = useState(0);
 
   useEffect(() => {
     if (!videoRef.current?.setSinkId || !selectedSpeakerId) return;

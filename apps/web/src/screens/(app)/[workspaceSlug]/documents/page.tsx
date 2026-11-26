@@ -28,7 +28,6 @@ import {
   Funnel,
   Info,
   List,
-  Lock,
   LockSimple,
   ShieldWarning,
   SlidersHorizontal,
@@ -61,7 +60,6 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import {
-  useApproveWorkspaceDocument,
   useArchiveWorkspaceDocument,
   useDeleteWorkspaceDocument,
   useRestoreWorkspaceDocument,

@@ -212,7 +212,7 @@ function ChunkEditor({
               <div className="pt-1">
                 <input
                   type="text"
-                  value={category && !FACT_CATEGORIES.includes(category as any) ? category : ""}
+                  value={category && !FACT_CATEGORIES.includes(category as (typeof FACT_CATEGORIES)[number]) ? category : ""}
                   onChange={(e) => setCategory(e.target.value ? e.target.value : null)}
                   placeholder={t("customCategoryPlaceholder")}
                   disabled={!nextFact}

@@ -91,7 +91,6 @@ export function suggestLanguageProfile(
     historySpeak = [],
     locales = [],
     roomSpeak,
-    roomListen,
     available,
   } = signals;
 

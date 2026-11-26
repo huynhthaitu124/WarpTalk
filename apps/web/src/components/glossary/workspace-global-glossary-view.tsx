@@ -10,7 +10,6 @@ import {
 } from "@phosphor-icons/react";
 
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { usePublishedGlobalGlossaryTerms } from "@/hooks/use-workspace";
 import type { GlobalGlossaryTermDto } from "@/types/global-glossary";
 import {
