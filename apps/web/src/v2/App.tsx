@@ -53,9 +53,41 @@ function ToWorkspace({ to }: { to: string }) {
   return loading ? <div className="p-8"><Skeleton className="h-8 w-48" /></div> : null;
 }
 
+/**
+ * Only `/external` (and `/overlay`, its own page) still run on this router; the product UI is the ported legacy
+ * app. Any other location the v2 shell navigates to (Home, Copilot, Settings, Back to app...) is handed to the
+ * legacy UI with a full page load, mapped to its matching legacy address.
+ */
+export function legacyPathFor(pathname: string): string {
+  const m = /^\/([^/]+)\/(meetings|sessions|tasks|quality|settings\/[^/]+)\/?$/.exec(pathname);
+  if (m) {
+    const legacy: Record<string, string> = { meetings: 'rooms', sessions: 'rooms', tasks: 'home', quality: 'insights' };
+    return `/${m[1]}/${legacy[m[2]!] ?? 'settings'}`;
+  }
+  if (/^\/(meetings|sessions)\/[^/]+/.test(pathname)) return pathname.replace(/^\/(meetings|sessions)/, '/rooms');
+  if (pathname === '/workspaces') return '/workspace';
+  if (pathname === '/meetings' || pathname === '/sessions') return '/';
+  return pathname;
+}
+
+function LeaveToLegacy() {
+  const { pathname, search, hash, state } = useLocation();
+  const stay = pathname === '/external' || pathname === '/overlay';
+  const from = (state as { from?: string } | null)?.from;
+  useEffect(() => {
+    if (stay) return;
+    // Signed out on /external: the legacy login returns to it through `?redirect=`.
+    const target = pathname === '/login' && from ? `/login?redirect=${encodeURIComponent(from)}` : `${legacyPathFor(pathname)}${search}${hash}`;
+    // A full load on purpose: the legacy UI is a different root, not a route of this router.
+    window.location.assign(target);
+  }, [stay, pathname, search, hash, from]);
+  return null;
+}
+
 export function App() {
   return (
     <>
+      <LeaveToLegacy />
       <SkipLink />
       <Routes>
         <Route path="/login" element={<LoginPage />} />

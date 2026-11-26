@@ -152,7 +152,10 @@ export function leaseIsStale(bridge: { leaseExpiresAt?: string | null; serverTim
 export function externalMeetingHref(r: { title: string; sourceLanguage: string; targetLanguages: string[]; bridge?: { joinUrl?: string | null } | undefined }): string | null {
   const link = r.bridge?.joinUrl;
   if (!link) return null;
-  const q = new URLSearchParams({ link, far: r.sourceLanguage, listen: r.targetLanguages[0] ?? r.sourceLanguage, auto: '1' });
+  // Rooms may list the source among their targets (["en-US", "vi-VN"]); /external refuses to claim when far == listen.
+  const base = (l: string) => l.split('-')[0]!.toLowerCase();
+  const listen = r.targetLanguages.find((l) => base(l) !== base(r.sourceLanguage)) ?? r.targetLanguages[0] ?? r.sourceLanguage;
+  const q = new URLSearchParams({ link, far: r.sourceLanguage, listen, auto: '1' });
   if (r.title) q.set('title', r.title);
   return `/external?${q.toString()}`;
 }

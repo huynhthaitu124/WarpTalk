@@ -974,7 +974,7 @@ export default function RoomInformationPage() {
   // WT-273: the CTA is one decision, taken with the viewer's host identity in hand. It used to
   // be derived from room.status alone, three lines above where `isHost` was computed, so the
   // host was offered the lobby CTA and told to wait for himself.
-  const entryIntent = resolveRoomEntryIntent({
+  const resolvedEntryIntent = resolveRoomEntryIntent({
     status: room.status,
     isHost,
     statusLabel: statusLabels[room.status],
@@ -987,6 +987,18 @@ export default function RoomInformationPage() {
     isExternalBridge: isExternalBridge(room.translationRoomType),
     externalMeetingUrl: room.externalMeetingUrl,
   });
+  // In the macOS app an External Meeting is entered through the copilot pill (/external), not the room.
+  const entryIntent =
+    getNative() &&
+    isExternalBridge(room.translationRoomType) &&
+    room.externalMeetingUrl &&
+    (resolvedEntryIntent.mode === "host_start" || resolvedEntryIntent.mode === "join")
+      ? {
+          ...resolvedEntryIntent,
+          label: "Join & open copilot",
+          helpText: "Opens the WarpTalk pill and captures the Google Meet audio from this Mac.",
+        }
+      : resolvedEntryIntent;
 
   async function handleRoomEntry() {
     if (!room) return;

@@ -118,6 +118,8 @@ function addLegacyAliases(data: unknown): unknown {
   if ("roomCode" in o && "hostId" in o) {
     o.translationRoomCode ??= o.roomCode;
     o.translationRoomType ??= o.roomType;
+    // External rooms carry the call link under `bridge`; the old screens read it flat.
+    o.externalMeetingUrl ??= (o.bridge as { joinUrl?: string | null } | null | undefined)?.joinUrl ?? null;
     o.maxParticipants ??= 50;
     o.settings ??= { requiresApproval: Boolean(o.requiresApproval) };
   }
