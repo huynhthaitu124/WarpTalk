@@ -55,6 +55,8 @@ import { Markdown } from "tiptap-markdown";
 import { Button } from "@/components/ui/button";
 import { liveMeetingPath } from "@/lib/workspace/workspace-routes";
 import { isDesktopApp, openDesktopTranscriptWindow } from "@/lib/desktop/bridge";
+import { externalMeetingHref } from "@v2/lib/bridge";
+import { getNative } from "@v2/lib/native";
 import { isRecordFinalizing } from "@/lib/meeting/room-history-mapping";
 import { LumidotSpinner } from "@/components/ui/lumidot-spinner";
 import {
@@ -995,6 +997,19 @@ export default function RoomInformationPage() {
       isExternalBridge(room.translationRoomType) &&
       (entryIntent.mode === "host_start" || entryIntent.mode === "join")
     ) {
+      // The macOS app (warptalkNative) runs the copilot pill from /external; it re-claims this room by its link.
+      const copilotHref = getNative()
+        ? externalMeetingHref({
+            title: room.title,
+            sourceLanguage: room.sourceLanguage ?? room.targetLanguages[0] ?? "en",
+            targetLanguages: room.targetLanguages,
+            bridge: { joinUrl: room.externalMeetingUrl },
+          })
+        : null;
+      if (copilotHref) {
+        window.location.assign(copilotHref);
+        return;
+      }
       const opened = await openDesktopTranscriptWindow(room.id);
       if (!opened) toast.info(t("bridgeDesktopOnly"));
       return;

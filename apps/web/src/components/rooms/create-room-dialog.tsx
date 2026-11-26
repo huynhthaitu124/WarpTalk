@@ -65,6 +65,8 @@ import { PillButton } from "./create/pill-button";
 import { OptionsMenu } from "./create/options-menu";
 import { StartTimePicker } from "./create/start-time-picker";
 import { TemplatePicker } from "./create/template-picker";
+import { externalMeetingHref } from "@v2/lib/bridge";
+import { getNative } from "@v2/lib/native";
 
 function getDefaultStartTime() {
   const parsed = new Date();
@@ -419,6 +421,19 @@ export function CreateRoomDialog() {
           setCreatedRoomCode(claim.room.translationRoomCode);
           setCreatedRoomAt(null);
           toast.success(t(claim.created ? "externalLink.created" : "externalLink.joined"));
+          // macOS app: the copilot pill is the meeting UI, so open it right away (/external auto-starts capture).
+          const copilotHref = getNative()
+            ? externalMeetingHref({
+                title: claim.room.title,
+                sourceLanguage: claim.room.sourceLanguage ?? sourceLanguage,
+                targetLanguages: claim.room.targetLanguages ?? targetLanguages,
+                bridge: { joinUrl: parsedExternalLink.url ?? externalLink.trim() },
+              })
+            : null;
+          if (copilotHref) {
+            window.location.assign(copilotHref);
+            return;
+          }
           return;
         }
 
