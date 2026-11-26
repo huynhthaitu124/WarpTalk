@@ -176,6 +176,14 @@
       },
       "created": "外部会議の準備ができました。",
       "joined": "この通話には既に WarpTalk ルームがあり、参加しました。"
+    },
+    "quick": {
+      "title": "WarpBot を会議に追加",
+      "label": "会議リンクを貼り付け",
+      "placeholder": "https://meet.google.com/abc-defg-hij",
+      "submit": "WarpBot を追加",
+      "titleWithProvider": "{provider} の会議",
+      "titleDefault": "翻訳セッション"
     }
   },
   "startedBanner": {

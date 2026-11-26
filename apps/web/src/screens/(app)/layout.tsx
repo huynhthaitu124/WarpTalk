@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import { useUIStore } from "@/stores/ui-store";
 import { CreateRoomDialog } from "@/components/rooms/create-room-dialog";
+import { AddWarpBotDialog } from "@/components/rooms/add-warpbot-dialog";
 import { SearchMeetingDialog } from "@/components/rooms/search-meeting-dialog";
 import { GlobalChatbot } from "@/components/layout/global-chatbot";
 import { NotificationPopover } from "@/components/notifications/notification-popover";
@@ -712,6 +713,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <CreateRoomDialog />
+      <AddWarpBotDialog />
       {/* One palette per shell, never both: each owns ⌘K, and two would answer the same keypress. */}
       {isAdminRoute ? <AdminCommandPalette /> : <SearchMeetingDialog />}
     </div>

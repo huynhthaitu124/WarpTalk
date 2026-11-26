@@ -68,6 +68,11 @@ export function TemplatePicker({ value, onChange }: { value: string; onChange: (
     ? t(`types.${MEETING_TYPE_I18N_KEYS[selectedType.value]}`)
     : value;
 
+  // One creatable type (External Meeting): show it as a label, a one-item menu is noise.
+  if (CREATABLE_MEETING_TYPES.length <= 1) {
+    return <span className="px-1.5 py-0.5 text-ink">{selectedLabel}</span>;
+  }
+
   return (
     <Popover>
       <PopoverTrigger className="flex items-center gap-1 hover:bg-surface-2 px-1.5 py-0.5 rounded transition-colors text-ink cursor-pointer">

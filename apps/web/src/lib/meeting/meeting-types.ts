@@ -105,12 +105,14 @@ export function isExternalBridgeStandIn(userId?: string | null): boolean {
 }
 
 /**
- * The types the Create Room dialog offers: all of them. External Meeting is created from the
- * call's link (the dialog asks for it and claims the room through `POST /translation-rooms/bridge/claim`,
- * which finds the call's existing room or makes one), so it never produces a room with no call
- * behind it. WarpBot and the desktop's Meet auto-detect claim the same way.
+ * The types the Create Room dialog offers: External Meeting only. The in-app video room is gone
+ * (translation runs in the desktop copilot), so every new room is claimed through
+ * `POST /translation-rooms/bridge/claim`, with or without the call's link. The other types stay
+ * in `MEETING_TYPES` so existing rooms still render their type.
  */
-export const CREATABLE_MEETING_TYPES: MeetingType[] = MEETING_TYPES;
+export const CREATABLE_MEETING_TYPES: MeetingType[] = MEETING_TYPES.filter(
+  (type) => type.value === "EXTERNAL_BRIDGE",
+);
 
 const BY_LABEL = new Map(MEETING_TYPES.map((type) => [type.label, type]));
 

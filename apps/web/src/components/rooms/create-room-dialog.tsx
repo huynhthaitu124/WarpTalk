@@ -16,7 +16,7 @@ import Link from "@/lib/next-shim/link";
 import { useRouter } from "@/lib/next-shim/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { MEETING_TYPES, isExternalBridge, meetingTypeByValue } from "@/lib/meeting/meeting-types";
+import { CREATABLE_MEETING_TYPES, MEETING_TYPES, isExternalBridge, meetingTypeByValue } from "@/lib/meeting/meeting-types";
 import { EXTERNAL_PROVIDER_LABEL, parseExternalMeetingLink } from "@/lib/meeting/external-meeting-link";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -126,7 +126,7 @@ export function CreateRoomDialog() {
   const [loadedAutoShareRecord, setLoadedAutoShareRecord] = useState<boolean | null>(null);
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [meetingTemplate, setMeetingTemplate] = useState(MEETING_TYPES[0].value);
+  const [meetingTemplate, setMeetingTemplate] = useState(CREATABLE_MEETING_TYPES[0]?.value ?? MEETING_TYPES[0].value);
   // External Meeting only: the Google Meet / Zoom / Teams link the room translates.
   const [externalLink, setExternalLink] = useState("");
   const [initializedEditRoomId, setInitializedEditRoomId] = useState<
@@ -580,7 +580,8 @@ export function CreateRoomDialog() {
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+    // Creating goes through AddWarpBotDialog (paste a link); this form only edits a room.
+    <Dialog open={isOpen && !!editRoomId} onOpenChange={handleOpenChange}>
       <DialogContent
         overlayClassName="!bg-black/40 !backdrop-blur-none"
         className={cn(

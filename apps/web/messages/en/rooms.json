@@ -176,6 +176,14 @@
       },
       "created": "External meeting ready.",
       "joined": "This call already has a WarpTalk room; you were added to it."
+    },
+    "quick": {
+      "title": "Add WarpBot to a meeting",
+      "label": "Paste a meeting link",
+      "placeholder": "https://meet.google.com/abc-defg-hij",
+      "submit": "Add WarpBot",
+      "titleWithProvider": "{provider} meeting",
+      "titleDefault": "Translation session"
     }
   },
   "startedBanner": {

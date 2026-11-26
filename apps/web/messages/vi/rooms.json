@@ -176,6 +176,14 @@
       },
       "created": "Cuộc họp bên ngoài đã sẵn sàng.",
       "joined": "Cuộc gọi này đã có phòng WarpTalk; bạn đã được thêm vào."
+    },
+    "quick": {
+      "title": "Thêm WarpBot vào cuộc họp",
+      "label": "Dán link cuộc họp",
+      "placeholder": "https://meet.google.com/abc-defg-hij",
+      "submit": "Thêm WarpBot",
+      "titleWithProvider": "Cuộc họp {provider}",
+      "titleDefault": "Phiên dịch"
     }
   },
   "startedBanner": {
