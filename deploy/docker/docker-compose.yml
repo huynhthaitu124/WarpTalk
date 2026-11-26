@@ -91,41 +91,93 @@ services:
       retries: 20
 
   # ---------------------------------------------------------------------------------------------
-  # App containers: KHONG co. Repo hien chua co Dockerfile (deploy/docker chi co file nay,
-  # .env.example, livekit.yaml). Khi co Dockerfile (vd deploy/docker/Dockerfile voi ARG BIN),
-  # bo comment cac khoi duoi day va chay: docker compose --profile apps up -d
-  #
-  # api:
-  #   profiles: ["apps"]
-  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-api } }
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
-  #     REDIS_URL: redis://redis:6379
-  #     QDRANT_URL: http://qdrant:6333
-  #     LIVEKIT_URL: ws://localhost:7880      # URL trinh duyet dung, KHONG phai ten service
-  #     HTTP_BIND: 0.0.0.0:8080
-  #   ports: ["8080:8080"]
-  #   depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
-  # worker:
-  #   profiles: ["apps"]
-  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-worker } }
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
-  #     REDIS_URL: redis://redis:6379
-  #     QDRANT_URL: http://qdrant:6333
-  # pipeline:   # dich/dub realtime: chi voi --profile translation (khong nam trong stack mac dinh)
-  #   profiles: ["translation"]
-  #   build: { context: ../.., dockerfile: deploy/docker/Dockerfile, args: { BIN: warptalk-pipeline } }
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgres://postgres@postgres:5432/warptalk
-  #     REDIS_URL: redis://redis:6379
-  #     LIVEKIT_URL: ws://livekit:7880        # pipeline noi tu trong mang compose
-  # migrator: chay mot lan truoc cac app (one-shot, restart: "no", cung image voi BIN=warptalk-migrator)
+  # App containers (profile "apps"): migrator -> api + worker, web (static export + Caddy, /api -> api).
+  #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env \
+  #     --profile apps --profile translation up -d --build
+  # Host ports: web http://localhost:3000 (macOS app dev UI), api http://localhost:8090.
+  # .env is shared with the cargo workflow, so every localhost URL is overridden with a service name.
+  migrator:
+    profiles: ["apps"]
+    image: warptalk-migrator:dev
+    build: &rust-build
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.rust
+      target: migrator
+      args: { WITH_PIPELINE: "1" }
+    restart: "no"
+    env_file: .env
+    environment: &app-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}@postgres:5432/${POSTGRES_DB:-warptalk}
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      LOG_FORMAT: pretty
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    profiles: ["apps"]
+    image: warptalk-api:dev
+    build: { <<: *rust-build, target: api }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *app-env
+      HTTP_BIND: 0.0.0.0:8080
+      LIVEKIT_URL: ws://localhost:7880      # URL the browser/app uses, not the service name
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173
+    ports: ["127.0.0.1:${API_PORT:-8090}:8080"]
+    volumes: ["objects:/data/objects"]
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_started }
+
+  worker:
+    profiles: ["apps"]
+    image: warptalk-worker:dev
+    build: { <<: *rust-build, target: worker }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *app-env
+      LIVEKIT_URL: ws://localhost:7880
+    volumes: ["objects:/data/objects"]
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    profiles: ["apps"]
+    image: warptalk-web:dev
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.web }
+    restart: unless-stopped
+    environment:
+      API_PROXY_TARGET: http://api:8080
+    ports: ["127.0.0.1:${WEB_PORT:-3000}:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+
+  # Realtime pipeline (LiveKit transport, real providers). Shares livekit's network namespace because
+  # livekit.yaml advertises node_ip 127.0.0.1: media only works on that loopback.
+  pipeline:
+    profiles: ["translation"]
+    image: warptalk-pipeline:dev
+    build: { <<: *rust-build, target: pipeline }
+    restart: unless-stopped
+    network_mode: "service:livekit"
+    env_file: .env
+    environment:
+      <<: *app-env
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      MEDIA_TRANSPORT: livekit
+      PIPELINE_FAKE_PROVIDERS: ""
+    depends_on:
+      livekit: { condition: service_started }
+      redis: { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
 
 volumes:
+  objects:
   pgdata:
   redisdata:
   qdrantdata:

@@ -24,4 +24,4 @@ keys:
 webhook:
   api_key: devkey
   urls:
-    - http://host.docker.internal:8080/api/v1/meetings/webhooks/livekit
+    - http://api:8080/api/v1/meetings/webhooks/livekit
