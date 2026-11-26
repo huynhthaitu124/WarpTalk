@@ -1,0 +1,247 @@
+import type { TranslationRoomDto, TranslationRoomStatus } from "@/types/translationRoom";
+
+/**
+ * Calendar-day arithmetic for meetings, in one place.
+ *
+ * `startOfDay` and `isScheduledOn` were written inline in the meetings list. The home page needs
+ * exactly the same two answers, and this codebase has a long history of the same rule being
+ * spelled out twice and then drifting — the meeting-language chip punctuated the same room two
+ * different ways for months. So they move here before the second caller exists, not after.
+ */
+
+/** Midnight of the given date as a timestamp, for comparing days without comparing times. */
+export function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function isSameDay(a: Date, b: Date): boolean {
+  return startOfDay(a) === startOfDay(b);
+}
+
+/**
+ * Whether this room was booked for the given calendar day.
+ *
+ * Status is deliberately not part of the question (WT-247): a meeting that has started, or has
+ * already ended, still belongs on the day it was scheduled for. Rooms with no `scheduledAt` are
+ * instant meetings and belong to no day at all.
+ */
+export function isScheduledOn(room: TranslationRoomDto, day: Date): boolean {
+  if (!room.scheduledAt) return false;
+  return isSameDay(new Date(room.scheduledAt), day);
+}
+
+/**
+ * The day this meeting belongs to on a calendar.
+ *
+ * `isScheduledOn` answers "was it BOOKED for this day", and returns false for an instant
+ * meeting because an instant meeting was never booked for anything. That is the right answer
+ * to that question and the wrong one for "what happened on Saturday": an instant meeting is
+ * still a meeting, it still has a transcript, and it still happened on a specific day.
+ * Filtering the meetings list by `isScheduledOn` alone made every ad-hoc room vanish the
+ * moment a day was selected — including the live one the user was looking at.
+ *
+ * `scheduledAt` first, because a meeting booked for Tuesday belongs to Tuesday even if it
+ * actually ran late on Wednesday — that is the day everyone has in their calendar. Then
+ * `startedAt` for an instant meeting, and `createdAt` for one that was never started.
+ */
+export function meetingDayOf(room: TranslationRoomDto): Date | null {
+  const stamp = room.scheduledAt ?? room.startedAt ?? room.createdAt;
+  if (!stamp) return null;
+  const date = new Date(stamp);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Whether this meeting belongs to the given calendar day — booked for it, or held on it. */
+export function belongsToDay(room: TranslationRoomDto, day: Date): boolean {
+  const at = meetingDayOf(room);
+  return at ? isSameDay(at, day) : false;
+}
+
+/** Monday. The strip is a working week, and a week that starts on Sunday reads wrong here. */
+const WEEK_STARTS_ON = 1;
+
+/**
+ * The seven days of the week `anchor` falls in, Monday first.
+ *
+ * Built by adding days to a local midnight rather than by adding 24h to a timestamp: the two
+ * disagree on a DST boundary, and the one that breaks is the one that would silently drop or
+ * duplicate a day twice a year.
+ */
+export function weekOf(anchor: Date): Date[] {
+  const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  const offset = (start.getDay() - WEEK_STARTS_ON + 7) % 7;
+  start.setDate(start.getDate() - offset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
+}
+
+/** The same weekday, `weeks` weeks away. Negative goes back. */
+export function shiftWeeks(anchor: Date, weeks: number): Date {
+  const shifted = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  shifted.setDate(shifted.getDate() + weeks * 7);
+  return shifted;
+}
+
+/**
+ * The set of day keys that hold at least one meeting.
+ *
+ * WT-251 is the reason this exists rather than the panel simply listing the selected day: the
+ * meetings calendar gave no hint which days held anything, it opens on today, and a meeting
+ * booked for any other day was effectively invisible. A day strip with no marks would repeat
+ * that exactly.
+ */
+export function daysWithMeetings(rooms: readonly TranslationRoomDto[]): Set<number> {
+  const days = new Set<number>();
+  for (const room of rooms) {
+    // meetingDayOf, not scheduledAt: a mark the list cannot honour is worse than no mark. The
+    // strip and the list have to be asking the same question, or a day marked as busy opens
+    // onto "No meetings found."
+    const at = meetingDayOf(room);
+    if (at) days.add(startOfDay(at));
+  }
+  return days;
+}
+
+/** The meetings belonging to `day`, earliest first. */
+export function meetingsOn(
+  rooms: readonly TranslationRoomDto[],
+  day: Date,
+): TranslationRoomDto[] {
+  return rooms
+    .filter((room) => belongsToDay(room, day))
+    .sort(
+      (a, b) =>
+        (meetingDayOf(a)?.getTime() ?? 0) - (meetingDayOf(b)?.getTime() ?? 0),
+    );
+}
+
+/**
+ * Local-time month bounds, deliberately. The server filters on an instant, but the user is asking
+ * about a month on their own wall clock — deriving these in UTC would push a meeting late on the
+ * 31st into the next month for anyone east of Greenwich.
+ */
+export function startOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0, 0);
+}
+
+export function endOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+/** `2026-08`. The cache key for one month's worth of meetings. */
+export function monthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Every month a visible range touches, oldest first.
+ *
+ * A week is not contained by a month. The week of 31 August spans two of them, and a week view
+ * that fetched only its anchor's month would show the August half and silently hide the September
+ * half — an empty Thursday that is not empty. That is the same class of bug as the day filter
+ * that dropped its tab's status rule, so the week view waited for this rather than shipping on a
+ * month-scoped fetch.
+ *
+ * Lives here beside `weekOf` because the two are always used together: one says which days are on
+ * screen, this says which requests that costs.
+ */
+export function monthsSpanning(from: Date, to: Date): Date[] {
+  const months: Date[] = [];
+  const cursor = startOfMonth(from);
+  const last = startOfMonth(to);
+
+  while (cursor <= last) {
+    months.push(new Date(cursor));
+    // Safe on the 1st of the month — `setMonth` only overflows from a day the target month is too
+    // short to hold, which is how "31 January + 1 month" becomes 3 March.
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  // A range whose end precedes its start still asks for one month rather than nothing: an empty
+  // list would render as "you have no meetings", which is a claim, not an absence of one.
+  return months.length ? months : [startOfMonth(from)];
+}
+
+/**
+ * Every status a room can actually be in — the backend `RoomStatus` enum
+ * (TranslationRoomService.Domain.Enums.RoomStatus, and the Postgres `room_status` type behind it),
+ * lowercased the way `normalizeStatus` hands it to the client.
+ *
+ * One list, because the meetings page asks the server for its rooms twice (flat and grouped by
+ * series) and then sorts them into tabs, and each of those used to spell the statuses out by
+ * hand. They spelled them wrong the same way: they asked for `TIMEOUT`, which is not a status —
+ * the server drops a name it cannot parse, silently — and never asked for `EXPIRED` or `FAILED`,
+ * so a scheduled meeting nobody started, or one that failed, appeared in no tab at all, not even
+ * the one labelled All.
+ *
+ * `timeout` is in the client's `TranslationRoomStatus` union but not here: no server writes it,
+ * and asking for it is exactly the mistake above.
+ */
+export const ROOM_STATUSES = [
+  "scheduled",
+  "waiting",
+  // WT-612 / WT-621. A room the clock opened is the one a user is most likely to be looking for,
+  // and a status the server does not hear about is a status whose rooms come back in no tab at
+  // all — the `EXPIRED`/`FAILED` omission above, repeated on a live meeting.
+  "open",
+  "in_progress",
+  "paused",
+  "ended",
+  "cancelled",
+  "expired",
+  "failed",
+] as const satisfies readonly TranslationRoomStatus[];
+
+/**
+ * The statuses a room never leaves — the meeting is over and will not run again.
+ *
+ * `expired` (booked, never started, and its window closed) and `failed` are as over as `ended`:
+ * none of the three can be joined, and all of them belong to History, never to Active.
+ */
+const OVER_ROOM_STATUSES: ReadonlySet<string> = new Set<(typeof ROOM_STATUSES)[number]>([
+  "ended",
+  "cancelled",
+  "expired",
+  "failed",
+]);
+
+/** `ROOM_STATUSES` as the list endpoint's `status` filter: the enum names, comma-separated. */
+export const ALL_ROOM_STATUSES_FILTER = ROOM_STATUSES.map((status) => status.toUpperCase()).join(",");
+
+/**
+ * Whether a meeting is over — ended, cancelled, expired or failed.
+ *
+ * Lives here beside `isScheduledOn` because the two are always asked together. Picking a day on
+ * the meetings list used to answer with the date alone, which dropped the tab's status rule and
+ * listed cancelled occurrences under "Active Meetings" — a stopped daily series showed its future
+ * dates as Cancelled, which reads as the UI reporting the wrong status for a healthy meeting.
+ *
+ * Every History filter on the meetings list asks this, with or without a day picked, so the two
+ * cannot disagree about which rooms are finished.
+ */
+export function isMeetingOver(status: string): boolean {
+  return OVER_ROOM_STATUSES.has(status);
+}
+
+/**
+ * The list endpoint's `status` filter for a surface that only wants meetings which can still
+ * happen — the home page's day panel and the dashboard's "up next" list.
+ *
+ * Derived from `ROOM_STATUSES` rather than typed out, because typing it out is what this whole
+ * section of the file is about: both callers spelled `SCHEDULED,WAITING,IN_PROGRESS,PAUSED` by
+ * hand (the dashboard by sending nothing at all and inheriting the server's default, which is the
+ * same four), and a status added to the enum — `OPEN`, WT-612 / WT-621 — would have been missing
+ * from both without either of them looking wrong.
+ *
+ * Declared after `isMeetingOver` on purpose: it runs the predicate at module load, and
+ * `OVER_ROOM_STATUSES` is a `const` that would still be in its temporal dead zone higher up.
+ */
+export const UNFINISHED_ROOM_STATUSES_FILTER = ROOM_STATUSES.filter(
+  (status) => !isMeetingOver(status),
+)
+  .map((status) => status.toUpperCase())
+  .join(",");

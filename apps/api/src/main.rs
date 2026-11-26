@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         cartesia_api_key: std::env::var("CARTESIA_API_KEY").ok(),
         voice_cloner: None,
         voice_admin: None,
+        test_mode: warptalk_config::TestModeConfig::from_env()?.enabled(),
     };
     let (verification_mailer, invitation_mailer): (
         Arc<dyn VerificationMailer>,

@@ -1,0 +1,302 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { ElementType } from "react";
+import { useRouter } from "@/lib/next-shim/navigation";
+import { format } from "date-fns";
+import { motion } from "motion/react";
+import { useTranslations } from "next-intl";
+import {
+  CalendarBlank,
+  FileText,
+  Keyboard,
+  MagnifyingGlass,
+  Plus,
+  SquaresFour,
+  Users,
+  VideoCamera,
+} from "@phosphor-icons/react/dist/ssr";
+import {
+  Command,
+  CommandDialog,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { LumidotSpinner } from "@/components/ui/lumidot-spinner";
+import { looksLikeRoomCode } from "@/lib/meeting/room-code-guess";
+import { canJoinTranslationRoom } from "@/lib/meeting/translation-room-access";
+import { useUIStore } from "@/stores/ui-store";
+import { useTranslationRooms } from "@/hooks/use-translationRooms";
+import { useCanCreateMeetings, useWorkspaceStore } from "@/stores/workspace-store";
+import { liveMeetingPath, roomDetailPath } from "@/lib/workspace/workspace-routes";
+import type { TranslationRoomDto } from "@/types/translationRoom";
+
+type QuickSearchAction = {
+  title: string;
+  description: string;
+  icon: ElementType;
+  onSelect: () => void;
+};
+
+export function SearchMeetingDialog() {
+  const t = useTranslations("rooms.searchDialog");
+  const router = useRouter();
+  const searchMeetingModalOpen = useUIStore((state) => state.searchMeetingModalOpen);
+  const setSearchMeetingModalOpen = useUIStore((state) => state.setSearchMeetingModalOpen);
+  const setCreateRoomModalOpen = useUIStore((state) => state.setCreateRoomModalOpen);
+  const canCreateMeetings = useCanCreateMeetings();
+  const activeWorkspaceSlug = useWorkspaceStore((state) => state.activeWorkspaceSlug);
+  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
+  const [searchQuery, setSearchQuery] = useState("");
+  const slug = activeWorkspaceSlug || "workspace";
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchMeetingModalOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [setSearchMeetingModalOpen]);
+
+  // Reopening must not resume the last search. Left as-is, a code typed earlier is still in
+  // the box on the next ⌘K with "Join meeting <that code>" selected, so Enter — the one key
+  // someone reaches for — sends them into a room they did not ask for.
+  //
+  // Keyed off the open flag rather than cleared inside onOpenChange, because selecting a
+  // result closes the dialog by calling the store setter directly; that path never reaches
+  // onOpenChange, and it is the path most likely to leave a code behind. Adjusting during
+  // render rather than in an effect is React's own answer to "reset state when a value
+  // changes" — an effect would paint the stale query for a frame first.
+  const [wasOpen, setWasOpen] = useState(searchMeetingModalOpen);
+  if (wasOpen !== searchMeetingModalOpen) {
+    setWasOpen(searchMeetingModalOpen);
+    if (!searchMeetingModalOpen) setSearchQuery("");
+  }
+
+  // Two omissions here made ⌘K unable to find a meeting that had happened.
+  //
+  // `status`: the server defaults an absent status to SCHEDULED,WAITING,IN_PROGRESS,PAUSED
+  // (TranslationRoomService.GetTranslationRoomsAsync). A meeting that has ENDED — which is
+  // every meeting anyone is searching for after the fact — could therefore never come back,
+  // and the palette answered "No meetings found." for a room that ran an hour ago.
+  //
+  // `workspaceId`: without it the server can only match rooms this user hosted, attended or
+  // was invited to. A workspace Owner searching for a colleague's meeting got nothing, which
+  // is the same empty result and the same wrong conclusion. The meetings list already sends
+  // both for exactly these reasons.
+  const { data, isLoading } = useTranslationRooms({
+    search: searchQuery,
+    pageSize: 10,
+    // OPEN is WT-612 / WT-621: a room the clock opened at its slot. Left out, ⌘K could not find
+    // the one meeting whose door is standing open — the likeliest thing anyone is searching for.
+    status: "SCHEDULED,WAITING,OPEN,IN_PROGRESS,PAUSED,ENDED,CANCELLED,TIMEOUT",
+    workspaceId: activeWorkspaceId ?? undefined,
+  });
+
+  const meetings = data?.rooms || [];
+
+  // Now that finished meetings are findable, they must not be sent through the live-meeting
+  // door. A meeting is searched for AFTER it happened at least as often as before, and what
+  // the person wants then is its transcript and summary — which live on the room page, not in
+  // a call that ended.
+  const handleSelect = (room: Pick<TranslationRoomDto, "id" | "status">) => {
+    const path = canJoinTranslationRoom(room.status)
+      ? liveMeetingPath(activeWorkspaceSlug, room.id)
+      : roomDetailPath(slug, room.id);
+    router.push(path);
+    setSearchMeetingModalOpen(false);
+  };
+
+  const closeAndRun = (action: () => void) => {
+    setSearchMeetingModalOpen(false);
+    action();
+  };
+
+  const quickActions: QuickSearchAction[] = [
+    // WT-371 #2: the command palette is a second door to the same dialog. Leaving it open for a
+    // member who cannot create meetings would mean the buttons are hidden and Ctrl-K still works.
+    ...(canCreateMeetings
+      ? [
+          {
+            title: t("quickActions.createRoom.title"),
+            description: t("quickActions.createRoom.description"),
+            icon: Plus,
+            onSelect: () => closeAndRun(() => setCreateRoomModalOpen(true)),
+          } satisfies QuickSearchAction,
+        ]
+      : []),
+    {
+      title: t("quickActions.joinByCode.title"),
+      description: t("quickActions.joinByCode.description"),
+      icon: Keyboard,
+      onSelect: () => closeAndRun(() => router.push("/join")),
+    },
+    {
+      title: t("quickActions.openMeetings.title"),
+      // Not "scheduled and live rooms": that page lists finished and cancelled meetings too,
+      // and the old wording was itself an argument that search could not reach them.
+      description: t("quickActions.openMeetings.description"),
+      icon: VideoCamera,
+      onSelect: () => closeAndRun(() => router.push(`/${slug}/rooms`)),
+    },
+    {
+      title: t("quickActions.documents.title"),
+      description: t("quickActions.documents.description"),
+      icon: FileText,
+      onSelect: () => closeAndRun(() => router.push(`/${slug}/documents`)),
+    },
+    {
+      title: t("quickActions.members.title"),
+      description: t("quickActions.members.description"),
+      icon: Users,
+      onSelect: () => closeAndRun(() => router.push(`/${slug}/members`)),
+    },
+  ];
+
+  const hasQuery = searchQuery.trim().length > 0;
+
+  // Someone who has just pasted a code wants one thing, so it goes above the quick actions
+  // rather than below the meeting results — the room may not be in this workspace's list at
+  // all, and waiting for that search to come back empty is not a useful answer.
+  const pastedCode = searchQuery.trim();
+  const showQuickJoin = looksLikeRoomCode(pastedCode);
+
+  return (
+    <CommandDialog
+      open={searchMeetingModalOpen}
+      onOpenChange={setSearchMeetingModalOpen}
+      className="top-1/2 !max-w-[640px] -translate-y-1/2 overflow-visible border-0 bg-transparent p-0 ring-0 shadow-none sm:max-w-[640px]"
+      showCloseButton={false}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="overflow-hidden rounded-[22px] border border-border bg-popover/96 text-popover-foreground shadow-[0_24px_80px_rgba(0,0,0,0.22)] backdrop-blur-xl dark:shadow-[0_24px_90px_rgba(0,0,0,0.65)]"
+      >
+        <Command className="rounded-[22px] bg-transparent p-0" shouldFilter={false}>
+          <div className="p-3">
+            <div className="flex h-12 items-center gap-3 rounded-full border border-border bg-surface-1 px-4 shadow-[0_16px_50px_rgba(0,0,0,0.10)]">
+              <MagnifyingGlass size={18} weight="regular" className="shrink-0 text-ink-muted" />
+              <CommandInput
+                placeholder={t("placeholder")}
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                autoFocus
+                wrapperClassName="flex-1 p-0"
+                inputGroupClassName="h-full! border-0 bg-transparent p-0 shadow-none! ring-0"
+                showIcon={false}
+                className="h-full text-[15px] placeholder:text-ink-muted"
+              />
+              <kbd className="ml-auto shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-ink-subtle">
+                ⌘K
+              </kbd>
+            </div>
+          </div>
+
+          <CommandList className="max-h-[460px] border-t border-border/70 px-2 pb-2 pt-1">
+            {showQuickJoin && (
+              <CommandGroup heading={t("group.joinMeeting")}>
+                <CommandItem
+                  value={`join-${pastedCode}`}
+                  onSelect={() =>
+                    closeAndRun(() => router.push(`/join?code=${encodeURIComponent(pastedCode)}`))
+                  }
+                  className="gap-3 rounded-[10px] px-3 py-2.5"
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-surface-2 text-ink-muted group-data-selected/command-item:bg-primary/10 group-data-selected/command-item:text-primary">
+                    <VideoCamera size={19} weight="duotone" />
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-semibold text-foreground">
+                      {t("joinCode.title", { code: pastedCode })}
+                    </span>
+                    <span className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                      {t("joinCode.description")}
+                    </span>
+                  </span>
+                </CommandItem>
+              </CommandGroup>
+            )}
+
+            <CommandGroup heading={t("group.quickActions")}>
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <CommandItem
+                  key={action.title}
+                  value={`action-${action.title}`}
+                  onSelect={action.onSelect}
+                  className="gap-3 rounded-[10px] px-3 py-2.5"
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-surface-2 text-ink-muted group-data-selected/command-item:bg-primary/10 group-data-selected/command-item:text-primary">
+                    <Icon size={19} weight="duotone" />
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-semibold text-foreground">{action.title}</span>
+                    <span className="mt-0.5 truncate text-[12px] text-muted-foreground">{action.description}</span>
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+
+          {isLoading && (
+            <div className="flex items-center justify-center gap-3 p-4 text-sm text-muted-foreground">
+              <LumidotSpinner />
+              <span>{t("searching")}</span>
+            </div>
+          )}
+
+          {!isLoading && meetings.length > 0 && (
+            <CommandGroup
+              heading={hasQuery ? t("group.meetings") : t("group.recentMeetings")}
+              className="mt-1"
+            >
+              {meetings.map((meeting) => (
+                <CommandItem
+                  key={meeting.id}
+                  value={meeting.id}
+                  onSelect={() => handleSelect(meeting)}
+                  className="gap-3 rounded-[10px] px-3 py-2.5"
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-surface-2 text-ink-muted">
+                    <SquaresFour size={18} weight="duotone" />
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-semibold text-foreground">{meeting.title}</span>
+                    <span className="mt-0.5 flex items-center gap-2 truncate text-[12px] text-muted-foreground">
+                      <span className="bg-surface-2 border border-border px-1 rounded text-[10px] font-mono">{meeting.translationRoomCode}</span>
+                      <span className="flex items-center gap-1"><CalendarBlank className="w-3 h-3" />{format(new Date(meeting.createdAt), "MMM d, yyyy")}</span>
+                      {/* Results now span every status, so the row has to say which one it is:
+                          otherwise a finished meeting and a live one look identical and the
+                          only way to tell them apart is to open one. */}
+                      {!canJoinTranslationRoom(meeting.status) && (
+                        <span className="shrink-0 rounded-full bg-surface-2 px-1.5 text-[10px] capitalize">
+                          {meeting.status}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+
+          {!isLoading && hasQuery && meetings.length === 0 && (
+            <div className="py-8 text-center text-[13px] text-muted-foreground">
+              {t("empty")}
+            </div>
+          )}
+          </CommandList>
+        </Command>
+      </motion.div>
+    </CommandDialog>
+  );
+}

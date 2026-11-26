@@ -78,6 +78,16 @@ impl WorkspaceService {
         self.repo.get_for_member(ws, user).await
     }
 
+    /// Any member may read the workspace's entitlements; non-members get the same 404 as `get`.
+    pub async fn entitlements(
+        &self,
+        ws: WorkspaceId,
+        user: UserId,
+    ) -> AppResult<Option<crate::domain::entitlements::EntitlementSnapshot>> {
+        self.repo.get_for_member(ws, user).await?;
+        self.repo.entitlement_snapshot(ws).await
+    }
+
     pub async fn delete(&self, ws: WorkspaceId, actor: UserId) -> AppResult<()> {
         self.repo.delete(ws, actor, self.clock.now()).await
     }

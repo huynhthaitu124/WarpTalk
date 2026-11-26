@@ -9,8 +9,9 @@ mod store;
 mod validate;
 
 pub use namespaces::{
-    AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_RAG, NS_SUGGESTION, PipelineSettings,
-    ProviderChoice, RagSettings, SuggestionCategory, SuggestionSettings, register_defaults,
+    AiProvidersSettings, MaintenanceNotice, NS_AI_PROVIDERS, NS_PIPELINE, NS_PLATFORM_STATUS,
+    NS_RAG, NS_SUGGESTION, PipelineSettings, PlatformStatusSettings, ProviderChoice, RagSettings,
+    SuggestionCategory, SuggestionSettings, register_defaults,
 };
 pub use scope::{Scope, ScopeChain};
 pub use store::{CHANNEL, ChangeEvent, DEFAULT_TTL, PutOutcome, SettingsStore};

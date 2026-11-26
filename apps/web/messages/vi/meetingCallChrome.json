@@ -1,0 +1,33 @@
+{
+  "readyCard": {
+    "dismissAria": "Đóng",
+    "title": "Cuộc họp của bạn đã sẵn sàng",
+    "description": "Chia sẻ liên kết này với những người bạn muốn mời vào cuộc họp.",
+    "addOthers": "Mời thêm người"
+  },
+  "captions": {
+    "collapse": "Ẩn phụ đề",
+    "expand": "Hiện phụ đề",
+    "latest": "Mới nhất",
+    "liveRegionAria": "Phụ đề trực tiếp",
+    "emptyState": "Phụ đề sẽ hiện ở đây khi có người nói."
+  },
+  "stage": {
+    "cameraOff": "Camera đang tắt",
+    "presenting": "Bạn đang trình chiếu",
+    "retryConnection": "Thử kết nối lại",
+    "spotlightedByHost": "Được người tổ chức làm nổi bật",
+    "pinned": "Đã ghim",
+    "connectionState": {
+      "connected": "Đã kết nối",
+      "connecting": "Đang kết nối…",
+      "reconnecting": "Đang kết nối lại…",
+      "waiting": "Đang chờ LiveKit"
+    }
+  },
+  "displaced": {
+    "title": "Bạn đã tham gia cuộc họp này từ thiết bị hoặc tab khác.",
+    "description": "Tài khoản này đang ở trong cuộc họp ở nơi khác, nên cửa sổ này đã ngừng kết nối để không đẩy phiên kia ra. Hãy tiếp tục ở nơi kia, hoặc chuyển cuộc họp về đây.",
+    "takeOver": "Dùng thiết bị này"
+  }
+}

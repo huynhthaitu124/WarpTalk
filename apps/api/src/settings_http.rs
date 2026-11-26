@@ -11,8 +11,9 @@ use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, RoomId, UserId, WorkspaceId, WorkspaceRole};
 use warptalk_room::RoomQueries;
 use warptalk_settings::{
-    AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_RAG, NS_SUGGESTION, PipelineSettings,
-    RagSettings, Scope, ScopeChain, SettingsStore, SuggestionSettings,
+    AiProvidersSettings, NS_AI_PROVIDERS, NS_PIPELINE, NS_PLATFORM_STATUS, NS_RAG, NS_SUGGESTION,
+    PipelineSettings, PlatformStatusSettings, RagSettings, Scope, ScopeChain, SettingsStore,
+    SuggestionSettings,
 };
 use warptalk_web::extract::{Json, Path, Query};
 use warptalk_web::{AuthUser, JwtKeys};
@@ -40,7 +41,39 @@ pub fn router(state: SettingsHttpState) -> Router {
             "/settings/{namespace}",
             get(get_settings).put(put_settings).delete(delete_settings),
         )
+        .route("/platform/status", get(platform_status))
         .with_state(state)
+}
+
+/// Public (no auth): what every visitor's client shows in the platform banner. Read from the
+/// platform scope of `platform_status`, which only a system admin can write.
+async fn platform_status(State(st): State<SettingsHttpState>) -> AppResult<Json<Value>> {
+    let s: PlatformStatusSettings = st
+        .store
+        .get(NS_PLATFORM_STATUS, ScopeChain::platform())
+        .await?;
+    let message = s
+        .maintenance
+        .message
+        .map(|m| m.trim().to_owned())
+        .filter(|m| !m.is_empty());
+    Ok(Json(json!({
+        "maintenance": { "enabled": s.maintenance.enabled, "message": message },
+        "supportEmail": s.support_email.trim(),
+        // This backend has no Google OAuth flow; the client hides the button while false.
+        "googleSignInEnabled": false,
+    })))
+}
+
+/// Namespaces that only exist at platform scope (no workspace/room overrides).
+fn platform_only(ns: &str, scope: Scope) -> AppResult<()> {
+    if ns == NS_PLATFORM_STATUS && scope != Scope::Platform {
+        return Err(AppError::validation(
+            "SETTINGS_SCOPE_INVALID",
+            format!("`{ns}` is set at platform scope only"),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +88,15 @@ struct ScopeQuery {
 }
 
 fn known_namespace(ns: &str) -> AppResult<()> {
-    if [NS_PIPELINE, NS_SUGGESTION, NS_RAG, NS_AI_PROVIDERS].contains(&ns) {
+    if [
+        NS_PIPELINE,
+        NS_SUGGESTION,
+        NS_RAG,
+        NS_AI_PROVIDERS,
+        NS_PLATFORM_STATUS,
+    ]
+    .contains(&ns)
+    {
         Ok(())
     } else {
         Err(AppError::not_found(format!("unknown namespace `{ns}`")))
@@ -173,6 +214,9 @@ async fn effective_value(store: &SettingsStore, ns: &str, chain: ScopeChain) -> 
         NS_SUGGESTION => ser(store.get::<SuggestionSettings>(ns, chain).await?),
         NS_RAG => ser(store.get::<RagSettings>(ns, chain).await?),
         NS_AI_PROVIDERS => ser(store.get::<AiProvidersSettings>(ns, chain).await?),
+        NS_PLATFORM_STATUS => ser(store
+            .get::<PlatformStatusSettings>(ns, ScopeChain::platform())
+            .await?),
         _ => Err(AppError::not_found(format!("unknown namespace `{ns}`"))),
     }
 }
@@ -241,6 +285,7 @@ async fn put_settings(
 ) -> AppResult<Json<Value>> {
     known_namespace(&ns)?;
     let scope = parse_scope(&q)?;
+    platform_only(&ns, scope)?;
     authorize_admin(&st, claims.sub, claims.sa, scope).await?;
     let out = st.store.put(scope, &ns, body, Some(claims.sub)).await?;
     Ok(Json(json!({
@@ -256,6 +301,7 @@ async fn delete_settings(
 ) -> AppResult<StatusCode> {
     known_namespace(&ns)?;
     let scope = parse_scope(&q)?;
+    platform_only(&ns, scope)?;
     authorize_admin(&st, claims.sub, claims.sa, scope).await?;
     st.store.delete(scope, &ns, Some(claims.sub)).await?;
     Ok(StatusCode::NO_CONTENT)

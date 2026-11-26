@@ -1,24 +1,27 @@
-//! HTTP surface: `GET knowledge/search`.
+//! HTTP surface: `GET knowledge/search` and chunk management under `workspaces/{id}/knowledge`.
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{FromRef, State};
-use axum::routing::get;
+use axum::http::StatusCode;
+use axum::routing::{get, patch};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warptalk_kernel::{AppError, AppResult, WorkspaceId};
-use warptalk_web::extract::{Json, Query};
+use warptalk_web::extract::{Json, Path, Query};
 use warptalk_web::{AuthUser, JwtKeys};
 
 use crate::application::{
-    AccessContext, DocumentAccess, KnowledgeService, SearchFilters, SearchMetrics,
+    AccessContext, AccessScope, ChunkPage, ChunkService, ChunkView, DocumentAccess,
+    KnowledgeService, ListChunks, PatchChunk, SearchFilters, SearchMetrics,
 };
 use crate::domain::{Citation, SourceType};
 
 #[derive(Clone)]
 pub(crate) struct HttpState {
     pub service: Arc<KnowledgeService>,
+    pub chunks: Arc<ChunkService>,
     pub access: Arc<dyn DocumentAccess>,
     pub jwt: JwtKeys,
 }
@@ -32,6 +35,11 @@ impl FromRef<HttpState> for JwtKeys {
 pub(crate) fn router(state: HttpState) -> Router {
     Router::new()
         .route("/knowledge/search", get(search))
+        .route("/workspaces/{workspace_id}/knowledge", get(list_chunks))
+        .route(
+            "/workspaces/{workspace_id}/knowledge/{chunk_id}",
+            patch(patch_chunk).delete(delete_chunk),
+        )
         .with_state(state)
 }
 
@@ -129,4 +137,110 @@ async fn search(
             .collect(),
         metrics: r.metrics,
     }))
+}
+
+fn is_admin(scope: &AccessScope) -> bool {
+    scope.role.rank() >= warptalk_kernel::WorkspaceRole::Admin.rank()
+}
+
+/// Membership is enforced by the access port (fails closed); editing needs owner/admin.
+async fn require_admin(s: &HttpState, workspace: Uuid, user: &AuthUser) -> AppResult<()> {
+    let scope = s
+        .access
+        .access_scope(WorkspaceId::from_uuid(workspace), user.user_id())
+        .await?;
+    if is_admin(&scope) {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "only workspace owners and admins can manage knowledge",
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListQuery {
+    source_type: Option<String>,
+    fact_category: Option<String>,
+    cursor: Option<String>,
+    page_size: Option<u32>,
+}
+
+async fn list_chunks(
+    State(s): State<HttpState>,
+    user: AuthUser,
+    Path(workspace_id): Path<Uuid>,
+    Query(q): Query<ListQuery>,
+) -> AppResult<Json<ChunkPage>> {
+    let scope = s
+        .access
+        .access_scope(WorkspaceId::from_uuid(workspace_id), user.user_id())
+        .await?;
+    // Owner/Admin see the whole workspace; members only what their allowlists admit.
+    let unscoped = is_admin(&scope);
+    let page = s
+        .chunks
+        .list(
+            workspace_id,
+            ListChunks {
+                source_type: q.source_type,
+                fact_category: q.fact_category,
+                cursor: q.cursor,
+                page_size: q.page_size,
+                allowed_document_ids: (!unscoped).then_some(scope.allowed_document_ids),
+                allowed_meeting_ids: (!unscoped).then_some(scope.allowed_meeting_ids),
+            },
+        )
+        .await?;
+    Ok(Json(page))
+}
+
+/// Distinguishes an absent key (`None`) from an explicit `null` (`Some(None)`).
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatchBody {
+    #[serde(default, deserialize_with = "present")]
+    fact: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    fact_category: Option<Option<String>>,
+}
+
+async fn patch_chunk(
+    State(s): State<HttpState>,
+    user: AuthUser,
+    Path((workspace_id, chunk_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchBody>,
+) -> AppResult<Json<ChunkView>> {
+    require_admin(&s, workspace_id, &user).await?;
+    let v = s
+        .chunks
+        .patch(
+            workspace_id,
+            chunk_id,
+            PatchChunk {
+                fact: body.fact,
+                fact_category: body.fact_category,
+            },
+        )
+        .await?;
+    Ok(Json(v))
+}
+
+async fn delete_chunk(
+    State(s): State<HttpState>,
+    user: AuthUser,
+    Path((workspace_id, chunk_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<StatusCode> {
+    require_admin(&s, workspace_id, &user).await?;
+    s.chunks.delete(workspace_id, chunk_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

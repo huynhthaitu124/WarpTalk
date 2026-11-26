@@ -1,0 +1,519 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Calendar as CalendarIcon,
+  CheckCircle,
+  DotsThree,
+  FileText,
+  Repeat,
+  ShieldCheck,
+  Translate,
+  UsersThree,
+} from "@phosphor-icons/react/dist/ssr";
+
+import {
+  DEFAULT_DAILY_TIME,
+  type DailyRecurrenceDraft,
+  defaultEndDate,
+  describeDailyDraftProblem,
+  firstOccurrenceDate,
+  toLocalDateString,
+  validateDailyDraft,
+} from "@/lib/meeting/daily-recurrence";
+import { WEEKDAY_OPTIONS, isoWeekdayOf } from "@/lib/meeting/recurrence";
+import { DateField } from "./date-field";
+import { TimeField } from "./time-field";
+import type { RecurrenceType } from "@/types/translationRoom";
+
+/**
+ * The scheduling menu: a one-off date, or a daily rule.
+ *
+ * WT-327 required that choosing Daily ASK for the hour rather than commit one silently — the
+ * control it replaced was a dead switch whose check mark looked identical whether the setting
+ * reached the server or not. That was first met with a modal, then with a panel in the create
+ * dialog; both answered it by opening a second surface on top of the first, so choosing an
+ * hour meant looking at a popup over a panel over a dialog.
+ *
+ * The asking now happens in the row itself. Turning Daily on reveals the hour beside its own
+ * label, the end date under it, and the resulting occurrence count under that — so the hour is
+ * never hidden, never assumed without being shown, and never needs a surface of its own. The
+ * value commits as it is edited; there is no Save, because there is nothing to dismiss.
+ *
+ * Deliberately plain buttons rather than cmdk's Command/CommandItem: a text input inside a
+ * CommandItem fights the list for arrow keys and typing, and selects the row on click.
+ */
+export function OptionsMenu({
+  hasScheduledAt,
+  onAddScheduledAt,
+  daily,
+  onDailyChange,
+  requiresApproval,
+  participantsCanStartTranslation,
+  onRequiresApprovalChange,
+  onParticipantsCanStartTranslationChange,
+  saveTranscript,
+  onSaveTranscriptChange,
+  autoShareRecord,
+  onAutoShareRecordChange,
+}: {
+  hasScheduledAt?: boolean;
+  onAddScheduledAt?: () => void;
+  /** The rule in force, or null when Daily is off. */
+  daily?: DailyRecurrenceDraft | null;
+  /** null turns Daily off. The parent clears any one-off time when a rule arrives. */
+  onDailyChange?: (draft: DailyRecurrenceDraft | null) => void;
+  /** WT-341: whether joiners wait in the lobby for the host. */
+  requiresApproval?: boolean;
+  /** WT-371: whether anyone in the room may start translation. Omit to hide the row. */
+  participantsCanStartTranslation?: boolean;
+  onRequiresApprovalChange?: (next: boolean) => void;
+  onParticipantsCanStartTranslationChange?: (value: boolean) => void;
+  /** WT-587: whether the meeting is written down at all. Omit to hide the row. */
+  saveTranscript?: boolean;
+  onSaveTranscriptChange?: (value: boolean) => void;
+  /** WT-826: whether the record is shared with participants when the meeting ends. Omit to hide the row. */
+  autoShareRecord?: boolean;
+  onAutoShareRecordChange?: (value: boolean) => void;
+}) {
+  const t = useTranslations("rooms.create.options");
+  const now = new Date();
+  const isDaily = !!daily;
+  const problem = daily ? validateDailyDraft(daily, now) : null;
+  const cadence: RecurrenceType = daily?.type ?? "DAILY";
+
+  function toggleDaily() {
+    if (!onDailyChange) return;
+    if (daily) {
+      onDailyChange(null);
+      return;
+    }
+    // Turning it on shows the hour immediately, in an editable field one row down from the
+    // click. A default that is visible and adjustable on the spot is not a silent commit.
+    onDailyChange({
+      time: DEFAULT_DAILY_TIME,
+      endDate: defaultEndDate(DEFAULT_DAILY_TIME, now),
+    });
+  }
+
+  /**
+   * Switching cadence rewrites the rule's shape, and only the fields that belong to the new one
+   * survive. Carrying stale weekdays into a MONTHLY rule would send the server a field it refuses
+   * outright — and refusing rather than ignoring it is deliberate on both sides, because a rule
+   * the host can see but the server discards is the dead-switch failure this control replaced.
+   */
+  function changeCadence(next: RecurrenceType) {
+    if (!daily || !onDailyChange) return;
+
+    const firstDate = firstOccurrenceDate(daily.time, now);
+
+    onDailyChange({
+      time: daily.time,
+      endDate: daily.endDate,
+      type: next,
+      // Seeded from the start date so the panel opens on a rule that is already valid and already
+      // visible, rather than on an empty selection the host has to guess the meaning of.
+      byWeekdays: next === "WEEKLY" ? [isoWeekdayOf(firstDate)] : undefined,
+      byMonthDay: next === "MONTHLY" ? firstDate.getDate() : undefined,
+    });
+  }
+
+  function toggleWeekday(weekday: number) {
+    if (!daily || !onDailyChange) return;
+
+    const current = daily.byWeekdays ?? [];
+    const next = current.includes(weekday)
+      ? current.filter((day) => day !== weekday)
+      : [...current, weekday].sort((a, b) => a - b);
+
+    // Never down to nothing: an empty list means "the start date's weekday" to the server, so a
+    // host who unticked their last day would get a rule they did not choose and cannot see.
+    onDailyChange({ ...daily, byWeekdays: next.length > 0 ? next : current });
+  }
+
+  function changeMonthDay(value: string) {
+    if (!daily || !onDailyChange) return;
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+
+    onDailyChange({ ...daily, byMonthDay: Math.min(31, Math.max(1, Math.trunc(parsed))) });
+  }
+
+  function changeTime(next: string) {
+    if (!daily || !onDailyChange) return;
+    // Moving the hour can move the first occurrence by a day, stranding an end date behind the
+    // start. Re-default rather than leaving an invalid range the host did not create.
+    const endDate =
+      validateDailyDraft({ time: next, endDate: daily.endDate }, now)?.kind === "endBeforeStart"
+        ? defaultEndDate(next, now)
+        : daily.endDate;
+    onDailyChange({ time: next, endDate });
+  }
+
+  return (
+    <Popover>
+      {/* `bg-surface-1`, not a hardcoded white: this is a raised control and it has to follow the
+          theme. The hover moves to surface-2 because the old hover was surface-1, which is now the
+          resting colour — the button would have had no hover state at all. */}
+      <PopoverTrigger className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-full border border-border/60 bg-surface-1 text-ink-muted shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:border-border hover:bg-surface-2 hover:text-ink dark:bg-transparent">
+        <DotsThree weight="bold" size={16} />
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[262px] rounded-xl border-border/50 bg-surface-1 p-1.5 shadow-xl"
+      >
+        {!hasScheduledAt && (
+          <button
+            type="button"
+            onClick={onAddScheduledAt}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-ink hover:bg-surface-2"
+          >
+            <CalendarIcon weight="duotone" size={14} />
+            {t("dateAndTime")}
+          </button>
+        )}
+
+        {onDailyChange && (
+          <div className="rounded-md">
+            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+              <button
+                type="button"
+                onClick={toggleDaily}
+                aria-pressed={isDaily}
+                className="flex flex-1 cursor-pointer items-center gap-2 text-left text-[13px]"
+              >
+                <Repeat weight="duotone" size={16} className="shrink-0" />
+                <span className="font-medium whitespace-nowrap text-ink">{t("repeat")}</span>
+              </button>
+
+              {/* Beside the label, not behind a button that opens somewhere else. */}
+              {isDaily && (
+                <TimeField
+                  data-testid="daily-time-input"
+                  label={t("timeEachDay")}
+                  value={daily.time}
+                  onChange={changeTime}
+                />
+              )}
+
+              <button
+                type="button"
+                onClick={toggleDaily}
+                aria-label={isDaily ? t("turnOffDaily") : t("turnOnDaily")}
+                className="flex shrink-0 cursor-pointer items-center"
+              >
+                {isDaily ? (
+                  <CheckCircle weight="fill" size={16} color="#3b82f6" />
+                ) : (
+                  <div className="h-4 w-4 rounded-full border border-border/60 transition-colors" />
+                )}
+              </button>
+            </div>
+
+            {/* Expanded under Daily, so the rule reads top to bottom: how often, until when,
+                and how much that adds up to. */}
+            {isDaily && (
+              <div className="mt-0.5 flex flex-col gap-1.5 rounded-md bg-surface-1/60 px-2 py-2">
+                {/* How often, before until-when: the cadence changes what the rest of this panel
+                    even asks for, so it has to be the first thing decided. */}
+                <div className="flex items-center gap-1">
+                  {(["DAILY", "WEEKLY", "MONTHLY"] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      data-testid={`recurrence-type-${type.toLowerCase()}`}
+                      aria-pressed={cadence === type}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        changeCadence(type);
+                      }}
+                      className={`flex-1 cursor-pointer rounded-md border px-1.5 py-1 text-[11px] font-medium capitalize transition-colors ${
+                        cadence === type
+                          ? "border-transparent bg-ink text-canvas"
+                          : "border-border/60 bg-surface-2 text-ink-muted hover:text-ink"
+                      }`}
+                    >
+                      {t(`cadence.${type.toLowerCase()}` as never)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* WEEKLY: which days. Nothing selected is not an empty rule — the server reads it
+                    as "the weekday the series starts on" — but leaving the host with no selected
+                    chip would make a real rule look like an unfinished one, so turning WEEKLY on
+                    seeds the start date's own weekday. */}
+                {cadence === "WEEKLY" && (
+                  <div className="flex items-center gap-0.5" data-testid="recurrence-weekdays">
+                    {WEEKDAY_OPTIONS.map((option) => {
+                      const selected = (daily.byWeekdays ?? []).includes(option.value);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={selected}
+                          aria-label={option.full}
+                          title={option.full}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWeekday(option.value);
+                          }}
+                          className={`h-6 flex-1 cursor-pointer rounded border text-[10px] font-medium transition-colors ${
+                            selected
+                              ? "border-transparent bg-primary/15 text-primary"
+                              : "border-border/60 bg-surface-2 text-ink-muted hover:text-ink"
+                          }`}
+                        >
+                          {option.short.charAt(0)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* MONTHLY: which date. A month with fewer days simply has no meeting that month,
+                    which is what the line under it says — clamping the 31st to the 28th would move
+                    the meeting to a different day in every short month. */}
+                {cadence === "MONTHLY" && (
+                  <label className="flex items-center gap-2">
+                    <span className="flex-1 text-[12px] text-ink-muted">{t("dayOfMonth")}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      data-testid="recurrence-month-day-input"
+                      aria-label={t("dayOfMonthAria")}
+                      value={daily.byMonthDay ?? ""}
+                      placeholder="1–31"
+                      onChange={(e) => changeMonthDay(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-7 w-[124px] rounded-md border border-border/60 bg-surface-2 px-1.5 text-[12px] tabular-nums text-ink focus:ring-1 focus:ring-ink/20 focus:outline-none"
+                    />
+                  </label>
+                )}
+
+                {cadence === "MONTHLY" && (daily.byMonthDay ?? 0) > 28 && (
+                  <p className="text-[11px] leading-snug text-ink-muted">
+                    {t("monthSkipped", { day: daily.byMonthDay ?? 0 })}
+                  </p>
+                )}
+
+                <label className="flex items-center gap-2">
+                  <span className="flex-1 text-[12px] text-ink-muted">{t("repeatUntil")}</span>
+                  <DateField
+                    data-testid="daily-end-date-input"
+                    label={t("repeatUntil")}
+                    value={daily.endDate}
+                    min={toLocalDateString(now)}
+                    onChange={(endDate) => onDailyChange({ ...daily, endDate })}
+                  />
+                </label>
+
+                {/* Only when the rule cannot be built. The prose summary that used to sit here
+                    — "Every day at 09:00 · 31 meetings · Asia/Saigon" — restated the two fields
+                    directly above it and named a zone nobody had chosen to see. The dialog's
+                    own summary line still spells the rule out; this row is for setting it. */}
+                {problem ? (
+                  <p role="alert" className="text-[11px] leading-snug text-destructive">
+                    {describeDailyDraftProblem(problem)}
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* WT-341. This setting decides two things at once, and the second is the reason it is
+            here rather than buried in room settings after the fact: it gates the lobby, AND it
+            gates who may open the meeting. Leave it on and the meeting cannot start until the
+            host arrives — which is correct for an interview or a webinar, and was a trap for
+            every ordinary meeting whose host happened to be busy. */}
+        {onRequiresApprovalChange && (
+          <div className="rounded-md">
+            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+              <button
+                type="button"
+                onClick={() => onRequiresApprovalChange(!requiresApproval)}
+                aria-pressed={!!requiresApproval}
+                className="flex flex-1 cursor-pointer items-center gap-2 text-left text-[13px]"
+              >
+                <ShieldCheck weight="duotone" size={16} className="shrink-0" />
+                <span className="font-medium whitespace-nowrap text-ink">{t("requireApproval")}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onRequiresApprovalChange(!requiresApproval)}
+                aria-label={
+                  requiresApproval
+                    ? t("turnOffApproval")
+                    : t("turnOnApproval")
+                }
+                className="flex shrink-0 cursor-pointer items-center"
+              >
+                {requiresApproval ? (
+                  <CheckCircle weight="fill" size={16} color="#3b82f6" />
+                ) : (
+                  <div className="h-4 w-4 rounded-full border border-border/60 transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* WT-371. Starting translation was host-only, full stop, and a host who is late or
+            busy therefore blocks a meeting that is otherwise ready — the same trap "Require
+            approval" above was loosened to avoid. WT-371 asked for the opposite (host-only,
+            strictly), which is right for a customer demo and wrong for a standup, so the room
+            decides rather than the product.
+
+            Off by default: the permissive branch has to be something a host actually chose.
+            Only STARTING is opened up — stopping stays host-only, because letting anyone cut
+            translation off for everybody is a different thing entirely. */}
+        {onParticipantsCanStartTranslationChange && (
+          <div className="rounded-md">
+            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onParticipantsCanStartTranslationChange(!participantsCanStartTranslation)
+                }
+                aria-pressed={!!participantsCanStartTranslation}
+                className="flex flex-1 cursor-pointer items-center gap-2 text-left text-[13px]"
+              >
+                <Translate weight="duotone" size={16} className="shrink-0" />
+                <span className="font-medium whitespace-nowrap text-ink">
+                  {t("anyoneCanStartTranslation")}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onParticipantsCanStartTranslationChange(!participantsCanStartTranslation)
+                }
+                aria-label={
+                  participantsCanStartTranslation
+                    ? t("onlyHostCanStart")
+                    : t("letAnyoneStart")
+                }
+                className="flex shrink-0 cursor-pointer items-center"
+              >
+                {participantsCanStartTranslation ? (
+                  <CheckCircle weight="fill" size={16} color="#3b82f6" />
+                ) : (
+                  <div className="h-4 w-4 rounded-full border border-border/60 transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* WT-587. The one control in this menu that removes something rather than adjusting it,
+            so it is worded as what is LOST, not as what is switched off.
+
+            Turning it off does not touch captions, translation or the dubbed voice — those never
+            went through the database, and a participant reading subtitles will notice nothing.
+            What disappears is everything that exists AFTER the meeting: the transcript, the AI
+            summary, the minutes, and the meeting's entry in the workspace knowledge base. A row
+            labelled "Save transcript" alone would read as though it governed the subtitles the
+            user can see, which is the exact confusion WT-408 was raised about.
+
+            On by default, and only sent when switched off: an omitted field lets the server keep
+            its own default, and the direction that loses a meeting's record has to be chosen. */}
+        {onSaveTranscriptChange && (
+          <div className="rounded-md">
+            <div className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+              <button
+                type="button"
+                onClick={() => onSaveTranscriptChange(!saveTranscript)}
+                aria-pressed={!!saveTranscript}
+                className="flex flex-1 cursor-pointer items-start gap-2 text-left text-[13px]"
+              >
+                <FileText weight="duotone" size={16} className="mt-0.5 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block font-medium whitespace-nowrap text-ink">
+                    {t("saveTranscript")}
+                  </span>
+                  {!saveTranscript && (
+                    <span className="mt-0.5 block text-[11px] leading-snug text-ink-subtle">
+                      {t("saveTranscriptHint")}
+                    </span>
+                  )}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onSaveTranscriptChange(!saveTranscript)}
+                aria-label={
+                  saveTranscript
+                    ? t("dontKeepTranscript")
+                    : t("keepTranscript")
+                }
+                className="mt-0.5 flex shrink-0 cursor-pointer items-center"
+              >
+                {saveTranscript ? (
+                  <CheckCircle weight="fill" size={16} color="#3b82f6" />
+                ) : (
+                  <div className="h-4 w-4 rounded-full border border-border/60 transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* WT-826. What happens to the record when the meeting ENDS — the transcript, the AI
+            summary and the recording, which one room setting governs together. On by default:
+            participants who sat through a meeting used to open its Recap and be told the host had
+            not shared it, because sharing waited on a click after the meeting that nobody made.
+
+            Hidden while the meeting keeps no record at all: there is nothing to share, and a
+            second switch about a record that will not exist reads as though it might.
+
+            Turning it off does not lock anything in — the host can still publish from the
+            meeting record afterwards, and unpublish an auto-shared one the same way. */}
+        {onAutoShareRecordChange && saveTranscript !== false && (
+          <div className="rounded-md">
+            <div className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-2">
+              <button
+                type="button"
+                onClick={() => onAutoShareRecordChange(!autoShareRecord)}
+                aria-pressed={!!autoShareRecord}
+                className="flex flex-1 cursor-pointer items-start gap-2 text-left text-[13px]"
+              >
+                <UsersThree weight="duotone" size={16} className="mt-0.5 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block font-medium text-ink">
+                    {t("autoShareRecord")}
+                  </span>
+                  {!autoShareRecord && (
+                    <span className="mt-0.5 block text-[11px] leading-snug text-ink-subtle">
+                      {t("autoShareRecordOffHint")}
+                    </span>
+                  )}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onAutoShareRecordChange(!autoShareRecord)}
+                aria-label={
+                  autoShareRecord ? t("keepRecordPrivate") : t("shareRecordAutomatically")
+                }
+                className="mt-0.5 flex shrink-0 cursor-pointer items-center"
+              >
+                {autoShareRecord ? (
+                  <CheckCircle weight="fill" size={16} color="#3b82f6" />
+                ) : (
+                  <div className="h-4 w-4 rounded-full border border-border/60 transition-colors" />
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}

@@ -10,6 +10,7 @@ use warptalk_kernel::{
 };
 
 use crate::application::ports::{MemberRecord, NewWorkspace, WorkspaceRecord, WorkspaceRepo};
+use crate::domain::entitlements::{EntitlementSnapshot, EntitlementValue};
 use crate::domain::{self, AiPolicy, WorkspaceSettings, role_from_id, role_id};
 
 pub struct PgWorkspaceRepo {
@@ -331,8 +332,8 @@ impl WorkspaceRepo for PgWorkspaceRepo {
         .fetch_one(&mut *conn)
         .await
         .map_err(map_sqlx_error)?;
-        let rows: Vec<(Uuid, Uuid, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT user_id, role_id, joined_at FROM workspace.workspace_members \
+        let rows: Vec<(Uuid, Uuid, DateTime<Utc>, String)> = sqlx::query_as(
+            "SELECT user_id, role_id, joined_at, membership_type FROM workspace.workspace_members \
              WHERE workspace_id = $1 AND status = 'active' AND removed_at IS NULL \
              ORDER BY joined_at, id LIMIT $2 OFFSET $3",
         )
@@ -344,11 +345,12 @@ impl WorkspaceRepo for PgWorkspaceRepo {
         .map_err(map_sqlx_error)?;
         let items = rows
             .into_iter()
-            .map(|(u, r, joined_at)| {
+            .map(|(u, r, joined_at, membership_type)| {
                 Ok(MemberRecord {
                     user_id: u.into(),
                     role: to_role(r)?,
                     joined_at,
+                    membership_type,
                 })
             })
             .collect::<AppResult<Vec<_>>>()?;
@@ -446,5 +448,70 @@ impl WorkspaceRepo for PgWorkspaceRepo {
         .await
         .map_err(map_sqlx_error)?;
         Ok(row.is_some())
+    }
+
+    async fn entitlement_snapshot(
+        &self,
+        ws: WorkspaceId,
+    ) -> AppResult<Option<EntitlementSnapshot>> {
+        type Row = (serde_json::Value, Option<String>, bool, DateTime<Utc>);
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT entitlements, plan_slug, has_active_subscription, resolved_at \
+               FROM workspace.workspace_entitlement_snapshots WHERE workspace_id = $1",
+        )
+        .bind(ws.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let Some((json, plan_slug, has_active_subscription, resolved_at)) = row else {
+            return Ok(None);
+        };
+        let entitlements: std::collections::BTreeMap<String, EntitlementValue> =
+            serde_json::from_value(json).map_err(|e| {
+                AppError::internal(format!("corrupt entitlement snapshot for {ws}: {e}"))
+            })?;
+        Ok(Some(EntitlementSnapshot {
+            plan_slug,
+            has_active_subscription,
+            resolved_at,
+            entitlements,
+        }))
+    }
+
+    async fn apply_entitlement_snapshot(
+        &self,
+        ws: WorkspaceId,
+        snapshot: &EntitlementSnapshot,
+        event_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let json = serde_json::to_value(&snapshot.entitlements)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        let done = sqlx::query(
+            "INSERT INTO workspace.workspace_entitlement_snapshots \
+                    (workspace_id, entitlements, plan_slug, has_active_subscription, \
+                     resolved_at, last_event_id, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (workspace_id) DO UPDATE SET \
+                    entitlements = EXCLUDED.entitlements, \
+                    plan_slug = EXCLUDED.plan_slug, \
+                    has_active_subscription = EXCLUDED.has_active_subscription, \
+                    resolved_at = EXCLUDED.resolved_at, \
+                    last_event_id = EXCLUDED.last_event_id, \
+                    updated_at = EXCLUDED.updated_at \
+              WHERE workspace_entitlement_snapshots.resolved_at <= EXCLUDED.resolved_at \
+                AND workspace_entitlement_snapshots.last_event_id <> EXCLUDED.last_event_id",
+        )
+        .bind(ws.as_uuid())
+        .bind(json)
+        .bind(snapshot.plan_slug.as_deref())
+        .bind(snapshot.has_active_subscription)
+        .bind(snapshot.resolved_at)
+        .bind(event_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(done.rows_affected() > 0)
     }
 }

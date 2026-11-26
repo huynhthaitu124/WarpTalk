@@ -1006,3 +1006,96 @@ async fn malformed_input_is_invalid_request() {
         assert_eq!(v["code"], "INVALID_REQUEST", "{uri} {v}");
     }
 }
+
+#[tokio::test]
+async fn entitlements_unknown_until_projected_then_newest_wins() {
+    use std::collections::BTreeMap;
+    use warptalk_workspace::{EntitlementKind, EntitlementSnapshot, EntitlementValue};
+
+    let Some(c) = ctx().await else { return };
+    let (owner, member, outsider) = (UserId::new(), UserId::new(), UserId::new());
+    let id = c.create_ws(owner, &uniq("Ent")).await;
+    c.add_member(&id, member, WorkspaceRole::Member).await;
+    let path = format!("/workspaces/{id}/entitlements");
+
+    // No snapshot yet: unknown, nothing invented.
+    let (st, v) = c.call(Method::GET, &path, member, None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({"isKnown": false, "planSlug": null, "hasActiveSubscription": false,
+               "resolvedAt": null, "entitlements": []})
+    );
+    let (st, _) = c.call(Method::GET, &path, outsider, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let ws = WorkspaceId::from_uuid(id.parse().unwrap());
+    let t1 = chrono::Utc::now() - chrono::Duration::minutes(5);
+    let snap = |slug: &str, at, rooms: &str| EntitlementSnapshot {
+        plan_slug: Some(slug.into()),
+        has_active_subscription: true,
+        resolved_at: at,
+        entitlements: BTreeMap::from([
+            (
+                "max_concurrent_rooms".to_owned(),
+                EntitlementValue {
+                    kind: EntitlementKind::Limit,
+                    value: rooms.into(),
+                    source: format!("plan:{slug}"),
+                    ceiling: None,
+                    ceiling_source: None,
+                },
+            ),
+            (
+                "ai_suggestions".to_owned(),
+                EntitlementValue {
+                    kind: EntitlementKind::Flag,
+                    value: "true".into(),
+                    source: "workspace_override".into(),
+                    ceiling: Some("true".into()),
+                    ceiling_source: Some(format!("plan:{slug}")),
+                },
+            ),
+        ]),
+    };
+    let p = c.module.entitlement_projector();
+    let e1 = Uuid::now_v7();
+    assert!(p.apply(ws, &snap("team", t1, "5"), e1).await.unwrap());
+    // Redelivery of the same event is a no-op.
+    assert!(!p.apply(ws, &snap("team", t1, "5"), e1).await.unwrap());
+    // An older snapshot arriving late does not overwrite.
+    let stale = t1 - chrono::Duration::minutes(1);
+    assert!(
+        !p.apply(ws, &snap("free", stale, "1"), Uuid::now_v7())
+            .await
+            .unwrap()
+    );
+
+    let (st, v) = c.call(Method::GET, &path, member, None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["isKnown"], true);
+    assert_eq!(v["planSlug"], "team");
+    assert_eq!(v["hasActiveSubscription"], true);
+    assert!(v["resolvedAt"].is_string());
+    let ents = v["entitlements"].as_array().unwrap();
+    assert_eq!(ents.len(), 2);
+    assert_eq!(ents[0]["key"], "ai_suggestions", "sorted by key");
+    assert_eq!(ents[0]["kind"], "flag");
+    assert_eq!(ents[0]["ceilingSource"], "plan:team");
+    assert_eq!(ents[1]["kind"], "limit");
+    assert_eq!(ents[1]["value"], "5");
+
+    // A newer snapshot replaces it.
+    assert!(
+        p.apply(
+            ws,
+            &snap("business", chrono::Utc::now(), "20"),
+            Uuid::now_v7()
+        )
+        .await
+        .unwrap()
+    );
+    let (_, v) = c.call(Method::GET, &path, owner, None).await;
+    assert_eq!(v["planSlug"], "business");
+    assert_eq!(v["entitlements"][1]["value"], "20");
+}

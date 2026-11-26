@@ -1,0 +1,1842 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  /* Linear Palette */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-on-primary: var(--primary-foreground);
+  --color-primary-hover: #828fff;
+  --color-primary-focus: var(--ring);
+  --color-ink: var(--foreground);
+  --color-ink-muted: var(--muted-foreground);
+  --color-ink-subtle: #8a8f98;
+  --color-ink-tertiary: #62666d;
+  --color-canvas: var(--canvas);
+  /* The ground a page's content sits on, one step lighter than the canvas the shell paints.
+     Registering it here is what makes `bg-panel` exist at all — see the ladder under :root. */
+  --color-panel: var(--panel);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-hairline-tertiary: var(--hairline-tertiary);
+  --color-semantic-success: #27a644;
+  --color-semantic-overlay: #000000;
+
+  /* Status Colors */
+  --color-status-in-progress: #3b82f6;
+  --color-status-waiting: #f59e0b;
+  --color-status-scheduled: #10b981;
+  --color-status-ended: #6b7280;
+  --color-status-error: #ef4444;
+
+  /* Fonts */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Standard Shadcn Overrides mapped to Linear */
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  /* Registering these is what makes bg-/text-/border-destructive exist at all. In Tailwind v4 a
+     colour utility is generated only for a token declared in @theme; --destructive was defined
+     under :root and .dark but never registered here, so every one of the ~240 destructive
+     utilities in the app compiled to nothing. Danger buttons rendered white-on-white — present,
+     clickable and invisible — and no error text was red anywhere in the product. */
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  /* Status tones for figures: money in, cost, and good/bad movement (the admin Insights page's
+     delta chips and value colours). Theme-aware, unlike --color-semantic-success above, which is a
+     fixed hex. Danger is --destructive; there is deliberately no second red. */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-xxl: 24px;
+  --radius-pill: 9999px;
+  --radius: 8px;
+}
+
+:root {
+  /* The loading mark's ink — see .lumidot-mark below. */
+  --lumidot-ink: #000000;
+  --expo-out: linear(
+    0 0%,
+    0.1684 2.66%,
+    0.3165 5.49%,
+    0.446 8.52%,
+    0.5581 11.78%,
+    0.6535 15.29%,
+    0.7341 19.11%,
+    0.8011 23.3%,
+    0.8557 27.93%,
+    0.8962 32.68%,
+    0.9283 38.01%,
+    0.9529 44.08%,
+    0.9711 51.14%,
+    0.9833 59.06%,
+    0.9915 68.74%,
+    1 100%
+  );
+
+  /* Linear Light Mode */
+  /* Tracks --canvas: `bg-background` and `bg-canvas` both mean "the shell's ground", and the two
+     drifting is how a stray shadcn surface ends up a shade off the sidebar beside it. */
+  --background: #f1f2f4;
+  --foreground: #111214;
+  --card: #ffffff;
+  --card-foreground: #111214;
+  --popover: #ffffff;
+  --popover-foreground: #111214;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #111214;
+  /* Both track --surface-2, the fill for things nested inside a card. */
+  --muted: #f0f1f4;
+  --muted-foreground: #5E6470;
+  --accent: #f0f1f4;
+  --accent-foreground: #111214;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: #e3e5e9;
+  --input: #e3e5e9;
+  --ring: #5e6ad2;
+  /* THE THREE-LAYER GROUND (owner's call, 2026-09-16).
+     canvas — the shell: sidebar, top bar, whatever frames a page.
+     panel  — the page's own content area.
+     surface-1 — cards, inputs, anything raised ABOVE the content.
+
+     It used to be white-on-white: the page was surface-1 and so was every card on it, separated
+     by a hairline alone, and the owner's complaint was that the cards disappeared into the page
+     ("màu trắng làm các component khác bị chìm"). A card reads as a card because the ground
+     behind it is darker, so the ground is what moved — not the card. */
+  --canvas: #f1f2f4;
+  --panel: #f7f8f9;
+  --surface-1: #ffffff;
+  --surface-2: #f0f1f4;
+  --surface-3: #e4e6ea;
+  --surface-4: #d0d3da;
+  --hairline: #e3e5e9;
+  --hairline-strong: #d0d3da;
+  /* Barely there on purpose. The border and the ground do the separating; the shadow only says
+     which side is up. Anything heavier reads as a different product. */
+  --shadow-card: 0 1px 1px rgba(17, 18, 20, 0.035);
+  --hairline-tertiary: #9ca3af;
+  --radius: 8px;
+
+  /* The running step's travelling light — see .assistant-step-shimmer.
+     Two tokens rather than one gradient, because the two themes need opposite treatments of the
+     same idea: the light has to be BRIGHTER than the text it crosses, and on a white card a
+     literally white highlight would erase the letters it is meant to draw attention to. Here the
+     base is muted and the glow is a pale violet-white — light enough to read as a flash, dark
+     enough to stay a word. */
+  --step-shimmer-base: #6b7280;
+  --step-shimmer-glow: #b9b6ee;
+
+  /* Speaker colours — see src/lib/transcript/speaker-color.ts.
+     One meeting can hold a dozen voices and a transcript prints them as a wall of identical
+     rows; a person following a long stretch of talking had only a repeated name to go on. These
+     give each speaker a mark that runs the whole height of what they said.
+     Chosen against #ffffff and #f7f8f8, and kept clear of --primary (#5e6ad2), which already
+     means "this line is the one you were sent to". */
+  --speaker-1: #2f6fd0;
+  --speaker-2: #17916c;
+  --speaker-3: #b45d0c;
+  --speaker-4: #a8397a;
+  --speaker-5: #6d4bd8;
+  --speaker-6: #0b7f97;
+
+  /* Usage services — the stacked spend chart and its per-service cards
+     (Insights → Usage, lib/billing/usage-overview.ts serviceColorSlots). Five, because the
+     chart gives the five largest services a colour each and folds the rest into "Other", which
+     draws in --usage-service-other. Picked to stay apart from each other in both themes and to read
+     against a hairline grid; slot 1 sits near --primary on purpose, since the largest service is
+     the one the headline number is mostly about. */
+  --usage-service-1: #6b62e0;
+  --usage-service-2: #2f9e8f;
+  --usage-service-3: #d9913a;
+  --usage-service-4: #d0578f;
+  --usage-service-5: #4a8fdb;
+  --usage-service-other: #9ca3af;
+
+  /* Admin chart series — components/admin/charts. Slot 1 is every single-series chart; slot 2 is
+     the second line of a pair. Checked with the dataviz palette validator against --surface-1 in
+     each theme (lightness band, chroma, CVD and normal-vision separation, 3:1 contrast), which is
+     why dark mode has its own, lighter steps rather than the same hex. */
+  --viz-1: #5e6ad2;
+  --viz-2: #2f9e8f;
+  /* Slots 3–5 (profit and loss: providers, top workspaces), in this order. Validated as the 5-slot
+     sequence #5e6ad2,#2f9e8f,#eb6834,#b8448f,#c98500 on #ffffff: every check passes. */
+  --viz-3: #eb6834;
+  --viz-4: #b8448f;
+  --viz-5: #c98500;
+
+  /* Status tones — see --color-success in @theme. Picked to read on --surface-1 in each theme. */
+  --success: #27a644;
+  --warning: #d97706;
+  --info: #2f6fd0;
+}
+
+.dark {
+  --lumidot-ink: #ffffff;
+  /* Linear Dark Mode */
+  --background: #010102;
+  --foreground: #f7f8f8;
+  /* Kept in step with --surface-1: `bg-card` and `bg-surface-1` name the same level, and letting
+     them drift is how a shadcn Card ends up a different shade from the card beside it. */
+  --card: #131415;
+  --card-foreground: #f7f8f8;
+  --popover: #131415;
+  --popover-foreground: #f7f8f8;
+  --primary: #5e6ad2;
+  --primary-foreground: #ffffff;
+  --secondary: #131415;
+  --secondary-foreground: #f7f8f8;
+  --muted: #1c1d20;
+  --muted-foreground: #8a8f98;
+  --accent: #1c1d20;
+  --accent-foreground: #f7f8f8;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: #232428;
+  --input: #232428;
+  --ring: #5e69d1;
+  /* The same ladder as light, and it has to BE a ladder here too: the old dark mode put the page
+     at #010102 and every card at #0f1011, which worked, but the cards now need a third step above
+     a panel that is itself lifted off the shell. */
+  --canvas: #050506;
+  --panel: #0a0b0c;
+  --surface-1: #131415;
+  --surface-2: #1c1d20;
+  --surface-3: #25272a;
+  --surface-4: #2d2f33;
+  --hairline: #232428;
+  --hairline-strong: #313338;
+  --usage-service-1: #8c84ee;
+  --usage-service-2: #45b8a8;
+  --usage-service-3: #e6a553;
+  --usage-service-4: #e07aa8;
+  --usage-service-5: #6aa8ec;
+  --usage-service-other: #6b7079;
+  --viz-1: #7780e3;
+  --viz-2: #35a898;
+  /* 5-slot dark sequence validated on #131415: all checks pass. */
+  --viz-3: #d95926;
+  --viz-4: #c45aa8;
+  --viz-5: #c98500;
+  --success: #3fbf5f;
+  --warning: #f59e0b;
+  --info: #6ba4f0;
+  /* A cast shadow on a near-black ground is invisible; the step between panel and card is what
+     separates them. Kept non-none so the rule still resolves. */
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.4);
+
+  /* On a dark card the light can be what it actually is: white, with the accent in it. */
+  --step-shimmer-base: #8a8f98;
+  --step-shimmer-glow: #f2f0ff;
+  --hairline-tertiary: #3e3e44;
+  --radius: 8px;
+
+  /* Same six, lifted for #0f1011. The light values are unreadable here and the dark ones are
+     washed out on white, so this is a real second palette rather than the same hex reused. */
+  --speaker-1: #6ba4f0;
+  --speaker-2: #45c79b;
+  --speaker-3: #e0954a;
+  --speaker-4: #e57ab5;
+  --speaker-5: #a693ff;
+  --speaker-6: #4fc0d8;
+}
+
+/* The sweep that runs across WarpBot's steps while it is working.
+   Violet because that is --primary's family, and this is the product's own "we are on it" rather
+   than a generic loading bar. Behind the text and at low opacity: a step a person cannot read
+   while it passes is worse than no movement at all.
+   Honours prefers-reduced-motion — a repeating horizontal sweep is exactly the kind of thing that
+   setting exists for, and the list still says what is happening without it. */
+/* The light that says a step is the one currently running.
+ *
+ * IT TRAVELS THROUGH THE GLYPHS, NOT BEHIND THE LIST.
+ *   This was a band crossing the whole trail box: a moving highlight behind every row at once,
+ *   finished ones included, claiming "all of this is happening" about a list where exactly one
+ *   thing was. Clipped to the text of the running step, the movement is a statement about the
+ *   line it runs through — the only line it was ever true of.
+ *
+ * WHY THE BASE COLOUR IS A TOKEN AND NOT currentColor.
+ *   background-clip: text needs the text itself transparent, and currentColor resolves to
+ *   `color` — which by then IS transparent. A gradient built on currentColor therefore paints
+ *   nothing at all and the step vanishes. The base is an explicit token, so a browser that
+ *   ignores the clip still shows an ordinary step.
+ *
+ * THE POSITION RANGE IS 100%..0% AND NOTHING OUTSIDE IT.
+ *   With background-size: 200%, a percentage position maps to an offset of
+ *   (elementWidth - imageWidth) x percentage = -W x percentage. Inside 0..100% the image
+ *   always covers the element; a percentage OUTSIDE that range slides it clear of the box, and
+ *   with background-repeat: no-repeat the glyphs then have no paint at all — which, under
+ *   -webkit-text-fill-color: transparent, means the word is INVISIBLE.
+ *
+ *   The first version of this used 180% -> -80% and did exactly that: the running step lost its
+ *   first characters for most of every cycle. Caught by looking at it in dev/agent-steps-preview,
+ *   which is why that page exists.
+ */
+@keyframes assistant-step-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+.assistant-step-shimmer {
+  /* A WHITE light with the accent in it, crossing the word left to right.
+   *
+   * Two earlier passes got this wrong in opposite directions. The first put a near-pure
+   * --primary stop between two hard ink stops, which crossed a word as a violet BAR with
+   * visible edges — a highlighter, not light. The second softened it so far toward the ink that
+   * there was nothing to see. What reads as light is a bright core with a short falloff, over a
+   * base dimmer than the core: the word looks lit as the band passes, and the tint says which
+   * product is doing the lighting.
+   */
+  background-image: linear-gradient(
+    95deg,
+    var(--step-shimmer-base) 0%,
+    var(--step-shimmer-base) 38%,
+    color-mix(in oklab, var(--step-shimmer-glow) 55%, var(--step-shimmer-base)) 45%,
+    var(--step-shimmer-glow) 50%,
+    color-mix(in oklab, var(--step-shimmer-glow) 55%, var(--step-shimmer-base)) 55%,
+    var(--step-shimmer-base) 62%,
+    var(--step-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  /* Linear rather than eased: an eased sweep slows in the middle of the word, which reads as
+   * the animation snagging. */
+  animation: assistant-step-shimmer 1.9s linear infinite;
+}
+
+/* The running step's mark. Breathes rather than spins: a spinner beside a shimmering title is
+ * two different animations saying the same thing, and the eye reads the mismatch as two separate
+ * events. */
+@keyframes assistant-step-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+.assistant-step-pulse {
+  animation: assistant-step-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-step-shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: var(--step-shimmer-base);
+  }
+
+  .assistant-step-pulse {
+    animation: none;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-canvas text-ink antialiased;
+    letter-spacing: -0.015em;
+  }
+  html {
+    @apply bg-canvas font-sans;
+  }
+  html,
+  body {
+    min-height: 100%;
+    background: var(--canvas);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+}
+
+@layer utilities {
+  /* One token, two themes. This was a fixed two-layer shadow that sat on every card in the
+     product; against the new grey ground it read as a lifted slab. */
+  .shadow-linear {
+    box-shadow: var(--shadow-card);
+  }
+
+  @keyframes shiny {
+    0% {
+      background-position: -200% center;
+    }
+    100% {
+      background-position: 200% center;
+    }
+  }
+
+  .animate-shiny {
+    animation: shiny 6s linear infinite;
+  }
+
+  @keyframes sweep {
+    0% { transform: translateX(0%); }
+    100% { transform: translateX(60%); }
+  }
+
+  .animate-sweep {
+    animation: sweep 8s linear infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-15px); }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+  
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 1s ease-out forwards;
+  }
+}
+
+.liquid-glass {
+  background: rgba(0,0,0,0.4);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.1) 20%,
+    rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%,
+    rgba(255,255,255,0.1) 80%, rgba(255,255,255,0.3) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.glass-dashboard-scope {
+  --background: oklch(1 0 0 / 92%);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0 / 94%);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(0.985 0 0 / 96%);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.145 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(1 0 0 / 88%);
+  --secondary-foreground: oklch(0.145 0 0);
+  --muted: oklch(1 0 0 / 80%);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: oklch(1 0 0 / 90%);
+  --accent-foreground: oklch(0.145 0 0);
+  --border: oklch(0.145 0 0 / 10%);
+  --input: oklch(1 0 0 / 92%);
+  --ring: oklch(0.145 0 0 / 28%);
+}
+
+.glass-dashboard-scope [data-slot="card"] {
+  background: rgba(255,255,255,0.9);
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.78);
+  backdrop-filter: blur(10px) saturate(135%);
+  -webkit-backdrop-filter: blur(10px) saturate(135%);
+}
+
+.glass-dashboard-scope [data-slot="card"].workspace-dark-card {
+  background: rgb(10,10,10);
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: 0 16px 36px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+.glass-dashboard-scope [data-slot="input"],
+.glass-dashboard-scope textarea,
+.glass-dashboard-scope [data-slot="tabs-list"],
+.glass-dashboard-scope [data-slot="table-container"] {
+  background-color: rgba(255,255,255,0.92);
+  border-color: rgba(0,0,0,0.08);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.06);
+  backdrop-filter: blur(10px) saturate(135%);
+  -webkit-backdrop-filter: blur(10px) saturate(135%);
+}
+
+.glass-dashboard-scope [data-slot="table-row"] {
+  border-color: rgba(0,0,0,0.08);
+}
+
+.glass-dashboard-scope [data-slot="table-row"]:hover {
+  background-color: rgba(255,255,255,0.86);
+}
+
+.dashboard-glass-frame,
+.dashboard-glass-surface {
+  position: relative;
+  overflow: hidden;
+}
+
+.dashboard-glass-frame {
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(8px) saturate(135%);
+  -webkit-backdrop-filter: blur(8px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 0 rgba(255, 255, 255, 0);
+}
+
+.dashboard-glass-surface {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px) saturate(138%);
+  -webkit-backdrop-filter: blur(12px) saturate(138%);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 8px 4px rgba(255, 255, 255, 0.34);
+}
+
+.dashboard-glass-dark {
+  background: rgba(5, 5, 5, 0.92);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.dashboard-glass-frame::before,
+.dashboard-glass-surface::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  pointer-events: none;
+}
+
+.dashboard-glass-frame::after,
+.dashboard-glass-surface::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), transparent, rgba(255, 255, 255, 0.3));
+  pointer-events: none;
+}
+
+.feature-trace-section {
+  position: relative;
+  min-height: auto;
+  overflow: hidden;
+  background:
+    radial-gradient(900px circle at 70% 18%, rgba(164, 244, 253, 0.09), transparent 48%),
+    radial-gradient(680px circle at 20% 72%, rgba(255, 255, 255, 0.06), transparent 50%),
+    #000000;
+  color: #ffffff;
+  padding: 96px 24px 110px;
+}
+
+.feature-trace-section::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 120px 120px;
+  mask-image: radial-gradient(circle at 50% 20%, #000 0%, transparent 68%);
+  pointer-events: none;
+}
+
+.feature-trace-inner {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 1120px);
+  margin: 0 auto;
+}
+
+.feature-story-board {
+  position: relative;
+  height: 2740px;
+}
+
+.feature-story-map {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -42px;
+  z-index: 1;
+  width: calc(100% + 42px);
+  height: 100%;
+  overflow: visible;
+}
+
+.feature-story-spine-base,
+.feature-story-spine-live,
+.feature-story-branch {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feature-story-spine-base {
+  stroke: rgba(255, 255, 255, 0.055);
+  stroke-width: 1.45;
+}
+
+.feature-story-spine-live {
+  stroke: rgba(255, 255, 255, 0.94);
+  stroke-width: 3.4;
+  filter: drop-shadow(0 0 14px rgba(164, 244, 253, 0.32));
+}
+
+.feature-story-branch {
+  stroke: rgba(255, 255, 255, 0.68);
+  stroke-width: 1.72;
+  filter: drop-shadow(0 0 10px rgba(164, 244, 253, 0.14));
+}
+
+.feature-story-child-branch {
+  stroke-linecap: butt;
+}
+
+.feature-story-dots {
+  stroke-dasharray: 1 7;
+}
+
+.feature-story-node {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 7;
+}
+
+.feature-story-map line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.58);
+  stroke-width: 1.45;
+  stroke-linecap: round;
+}
+
+.feature-story-map circle {
+  fill: rgba(255, 255, 255, 0.9);
+  stroke: rgba(255, 255, 255, 0.26);
+  stroke-width: 7;
+}
+
+.feature-story-map .feature-story-signal-dot {
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.18));
+}
+
+.feature-story-signal-row-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-linecap: round;
+  stroke-width: 1.15;
+}
+
+.feature-story-map text {
+  fill: rgba(255, 255, 255, 0.68);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 15px;
+  letter-spacing: 0;
+  text-anchor: middle;
+}
+
+.feature-story-map .feature-branch-label-start {
+  text-anchor: start;
+}
+
+.feature-story-step {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.feature-story-step h2 {
+  position: absolute;
+  z-index: 2;
+  width: fit-content;
+  max-width: 380px;
+  color: #ffffff;
+  font-size: clamp(2rem, 3vw, 3.3rem);
+  font-weight: 400;
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+  text-shadow: 0 0 18px #000000, 0 0 42px #000000;
+}
+
+.feature-story-index {
+  position: absolute;
+  display: grid;
+  gap: 8px;
+  width: 104px;
+  z-index: 4;
+  padding: 10px 12px;
+  margin: -10px 0 0 -12px;
+  border-radius: 16px;
+  background: radial-gradient(118px circle at 50% 50%, #000000 0%, rgba(0, 0, 0, 0.94) 45%, rgba(0, 0, 0, 0.72) 68%, transparent 100%);
+  color: rgba(255, 255, 255, 0.72);
+  text-transform: uppercase;
+  text-shadow: 0 0 14px #000000;
+}
+
+.feature-story-index span {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.feature-story-index small {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  line-height: 1.35;
+}
+
+.feature-story-step-01 .feature-story-index {
+  top: 300px;
+  left: 42px;
+}
+
+.feature-story-step-01 h2 {
+  top: 200px;
+  left: 245px;
+}
+
+.feature-story-step-02 .feature-story-index {
+  top: 610px;
+  left: 22px;
+}
+
+.feature-story-step-02 h2 {
+  top: 585px;
+  left: 255px;
+}
+
+.feature-story-step-03 .feature-story-index {
+  top: 970px;
+  left: 42px;
+}
+
+.feature-story-step-03 h2 {
+  top: 925px;
+  left: 285px;
+  max-width: 390px;
+  font-size: clamp(1.55rem, 2.12vw, 2.28rem);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+}
+
+.feature-story-step-04 .feature-story-index {
+  top: 1668px;
+  left: 20px;
+}
+
+.feature-story-step-04 h2 {
+  top: 1634px;
+  left: 250px;
+}
+
+.feature-story-watermark {
+  position: absolute;
+  top: 800px;
+  left: 340px;
+  z-index: 0;
+  color: rgba(255, 255, 255, 0.055);
+  font-size: clamp(6rem, 15vw, 14rem);
+  font-weight: 300;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.feature-signal-stage {
+  position: absolute;
+  inset: 2192px 0 auto;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 62px;
+  align-items: start;
+  padding-left: 42px;
+}
+
+.feature-signal-copy h3 {
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.feature-signal-copy {
+  position: relative;
+  min-height: 460px;
+  margin-top: -332px;
+  padding: 18px 18px 0 0;
+}
+
+.feature-signal-copy p {
+  margin-top: 12px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.feature-signal-list {
+  border-top: 0;
+}
+
+.feature-signal-row {
+  display: grid;
+  grid-template-columns: 92px minmax(180px, 1fr) minmax(120px, 180px) 28px;
+  align-items: center;
+  min-height: 92px;
+  border-bottom: 0;
+}
+
+.feature-signal-number {
+  color: rgba(255, 255, 255, 0.84);
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 2.8rem;
+  font-style: italic;
+  line-height: 1;
+}
+
+.feature-signal-label {
+  display: grid;
+  gap: 5px;
+  text-transform: uppercase;
+}
+
+.feature-signal-label small {
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+}
+
+.feature-signal-label strong {
+  color: #ffffff;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.feature-signal-pattern svg {
+  width: 150px;
+  height: 54px;
+}
+
+.feature-signal-pattern path,
+.feature-signal-pattern circle,
+.feature-signal-pattern ellipse {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.62);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feature-signal-plus {
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 1.4rem;
+}
+
+.feature-human-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 46px;
+  align-items: end;
+  margin-top: 118px;
+}
+
+.feature-human-title h2 {
+  font-size: clamp(3.5rem, 7vw, 6.4rem);
+  font-weight: 400;
+  line-height: 0.92;
+}
+
+.feature-wave-panel {
+  min-width: 0;
+}
+
+.feature-wave-labels,
+.feature-language-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.72rem;
+}
+
+.feature-wave-panel svg {
+  width: 100%;
+  height: auto;
+  margin-top: 12px;
+  overflow: visible;
+}
+
+.feature-wave-base,
+.feature-wave-live,
+.feature-wave-dots {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feature-wave-base {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 3;
+}
+
+.feature-wave-live {
+  stroke: rgba(255, 255, 255, 0.78);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 14px rgba(164, 244, 253, 0.24));
+}
+
+.feature-wave-dots {
+  stroke: rgba(164, 244, 253, 0.32);
+  stroke-width: 1;
+  stroke-dasharray: 1 7;
+}
+
+.feature-understand-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  gap: 42px;
+  align-items: center;
+  margin-top: 76px;
+  padding-bottom: 34px;
+}
+
+.feature-understand-row h2 {
+  font-size: clamp(2rem, 4vw, 3.9rem);
+  font-weight: 400;
+  line-height: 0.98;
+}
+
+.feature-understand-row p {
+  max-width: 270px;
+  margin-top: 16px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.feature-language-line {
+  position: relative;
+  padding-top: 64px;
+}
+
+.feature-language-line::before {
+  content: '';
+  position: absolute;
+  inset: 30px 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(164,244,253,0.42), rgba(255,255,255,0.08));
+}
+
+@media (max-width: 900px) {
+  .feature-trace-section {
+    min-height: auto;
+    padding: 96px 18px 80px;
+  }
+
+  .feature-story-board {
+    display: grid;
+    gap: 42px;
+    height: auto;
+    padding-bottom: 10px;
+  }
+
+  .feature-story-map {
+    display: none;
+  }
+
+  .feature-story-step {
+    position: relative;
+    inset: auto;
+    display: grid;
+    gap: 12px;
+  }
+
+  .feature-story-step h2,
+  .feature-story-index,
+  .feature-story-step-01 h2,
+  .feature-story-step-02 h2,
+  .feature-story-step-03 h2,
+  .feature-story-step-04 h2,
+  .feature-story-step-01 .feature-story-index,
+  .feature-story-step-02 .feature-story-index,
+  .feature-story-step-03 .feature-story-index,
+  .feature-story-step-04 .feature-story-index {
+    position: static;
+    max-width: none;
+  }
+
+  .feature-story-step h2 {
+    font-size: clamp(2rem, 8.8vw, 3.35rem);
+    line-height: 0.98;
+  }
+
+  .feature-story-step-03 h2 {
+    font-size: clamp(1.55rem, 6.4vw, 2.3rem);
+  }
+
+  .feature-story-index {
+    width: auto;
+  }
+
+  .feature-story-watermark {
+    display: none;
+  }
+
+  .feature-signal-stage,
+  .feature-human-row,
+  .feature-understand-row {
+    position: static;
+    width: 100%;
+    margin-left: 0;
+    margin-top: 0;
+    padding-left: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .feature-signal-stage {
+    display: grid;
+    gap: 18px;
+    padding: 0;
+  }
+
+  .feature-signal-row {
+    grid-template-columns: 58px 1fr 28px;
+    gap: 12px;
+  }
+
+  .feature-signal-pattern {
+    display: none;
+  }
+
+  .feature-signal-copy {
+    min-height: 118px;
+    padding-right: 0;
+    padding-top: 0;
+  }
+}
+
+.c3-pricing-section {
+  position: relative;
+  min-height: 100vh;
+  padding: 72px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow-x: hidden;
+}
+
+.c3-watermark-container {
+  position: relative;
+  width: 100%;
+  max-width: 1100px;
+  text-align: center;
+  margin-top: 0;
+  z-index: 2;
+}
+
+.c3-watermark-main {
+  font-size: clamp(4rem, 6.4vw, 5.6rem);
+  font-weight: 800;
+  line-height: 0.82;
+  letter-spacing: -0.05em;
+  filter: url(#c3-noise);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.c3-watermark-line-1 {
+  color: #fff;
+}
+
+.c3-watermark-line-2 {
+  background: linear-gradient(to right, #091020 0%, #0B2551 25%, #A4F4FD 65%, #00d2ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.c3-grid {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  gap: 24px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 24px auto 0 auto;
+  padding-bottom: 24px;
+  transform: none;
+  position: relative;
+  z-index: 3;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+}
+
+.c3-grid::-webkit-scrollbar {
+  height: 8px;
+}
+.c3-grid::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+.c3-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.c3-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.c3-card {
+  background: linear-gradient(135deg, rgba(0,0,0,0.7), rgba(0,0,0,0.4));
+  backdrop-filter: blur(14px) brightness(0.91);
+  border: 1px solid rgba(255,255,255,1);
+  border-radius: 28px;
+  padding: 22px 20px;
+  min-height: 340px;
+  flex: 0 0 340px;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.6s cubic-bezier(.22,1,.36,1);
+  overflow: hidden;
+  position: relative;
+}
+
+.c3-card::before {
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 50%);
+  pointer-events:none;
+}
+
+.c3-card:hover {
+  background: rgba(15,15,15,0.6);
+  border-color: rgba(34,211,238,0.7);
+  transform: translateY(-12px) scale(1.01);
+}
+
+.c3-card-pro {
+  background: linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.55));
+}
+
+.c3-tier-small {
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: rgba(255,255,255,0.6);
+}
+
+.c3-tier-large {
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: #fff;
+  margin-top: 8px;
+}
+
+.c3-desc {
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.45);
+  min-height: 2.8em;
+  margin-top: 10px;
+  margin-bottom: 18px;
+  line-height: 1.5;
+}
+
+.c3-list li {
+  display:flex;
+  align-items:flex-start;
+  gap: 10px;
+  font-size: 0.76rem;
+  color: rgba(255,255,255,0.78);
+  margin-bottom: 7px;
+  line-height: 1.25;
+}
+
+.c3-check {
+  width:20px;
+  height:20px;
+  border-radius:50%;
+  background: rgba(255,255,255,0.15);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex-shrink:0;
+}
+
+.c3-btn {
+  background:#fff;
+  color:#000;
+  padding: 8px 24px;
+  border-radius: 100px;
+  font-weight:600;
+  font-size: 0.88rem;
+  margin-top:auto;
+  border:none;
+  cursor:pointer;
+  align-self:center;
+  transition: all 0.3s cubic-bezier(.22,1,.36,1);
+}
+
+.c3-btn:hover {
+  background:#f5f5f5;
+  transform:scale(1.02);
+  box-shadow: 0 8px 24px rgba(255,255,255,0.15);
+}
+
+.c3-toggle-wrap {
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:12px;
+  width:100%;
+  max-width:1040px;
+  margin-top:16px;
+  padding-right:0;
+}
+
+.c3-toggle {
+  width:52px;
+  height:28px;
+  background:#fff;
+  border-radius:100px;
+  position:relative;
+  cursor:pointer;
+  border:none;
+  transition: background 0.3s cubic-bezier(.4,0,.2,1);
+  padding:0;
+}
+
+.c3-toggle-knob {
+  width:20px;
+  height:20px;
+  background:#000;
+  border-radius:50%;
+  position:absolute;
+  top:4px;
+  left:4px;
+  transition: all 0.3s cubic-bezier(.4,0,.2,1);
+}
+
+.c3-toggle.active {
+  background: rgba(255,255,255,0.2);
+}
+
+.c3-toggle.active .c3-toggle-knob {
+  transform: translateX(24px);
+  background:#fff;
+}
+
+@media (max-width:1024px) {
+  .c3-pricing-section {
+    min-height: auto;
+    padding: 80px 20px;
+    justify-content: flex-start;
+  }
+
+  .c3-watermark-main {
+    font-size: 3.5rem;
+    filter:none;
+  }
+
+  .c3-watermark-line-2 {
+    background:none;
+    -webkit-text-fill-color:#00d2ff;
+    color:#00d2ff;
+  }
+
+  .c3-grid {
+    display:flex;
+    justify-content: flex-start;
+    overflow-x:auto;
+    scroll-snap-type:x mandatory;
+    transform:none;
+    width:100vw;
+    padding:0 20px;
+    gap:16px;
+    scrollbar-width:none;
+  }
+
+  .c3-card {
+    flex: 0 0 320px;
+    scroll-snap-align:center;
+  }
+
+  .c3-grid::-webkit-scrollbar {
+    display:none;
+  }
+
+  .c3-toggle-wrap {
+    justify-content:center;
+    padding-right:0;
+  }
+}
+
+.footer-section,
+.footer-section *,
+.footer-section *::before,
+.footer-section *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.footer-section {
+  background: #ffffff;
+  color: #2d3148;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100vh;
+  padding: 104px 24px 20px;
+  scroll-margin-top: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.footer-wrapper {
+  width: min(1180px, calc(100vw - 64px));
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 18px;
+  align-items: stretch;
+  position: relative;
+  z-index: 1;
+  transform: translateY(76px);
+}
+
+.footer-left {
+  position: relative;
+  min-height: 370px;
+  border-radius: 28px;
+  padding: 26px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(21, 76, 189, 0.25);
+  background: #1e4fc0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.footer-left-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.footer-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.footer-logo-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.footer-logo-mark-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(2.9);
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
+
+.footer-logo-mark-large {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  border: 0;
+  background: transparent;
+}
+
+.footer-logo-name {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+.footer-tagline-container {
+  margin-top: auto;
+  margin-bottom: 22px;
+  position: relative;
+  z-index: 1;
+}
+
+.footer-tagline {
+  font-size: 17px;
+  font-weight: 400;
+  color: #ffffff;
+  line-height: 1.45;
+}
+
+.footer-tagline span {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.footer-social-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.footer-social-label {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.3px;
+}
+
+.footer-social-icons {
+  display: flex;
+  gap: 7px;
+}
+
+.social-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: #0e1014;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+
+.social-icon:hover {
+  background: #000;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42), 0 4px 10px rgba(0, 0, 0, 0.24);
+}
+
+.social-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: #ffffff;
+}
+
+.footer-right {
+  background: #f0f1f5;
+  border-radius: 28px;
+  padding: 32px 36px;
+  overflow: visible;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+}
+
+.footer-lucky-graphic {
+  position: absolute;
+  top: -24px;
+  right: 40px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.lucky-cube {
+  width: 78px;
+  height: 78px;
+  border-radius: 20px;
+  transform: rotate(-10deg);
+  background: linear-gradient(135deg, #5b9ffb 0%, #1e5dd7 55%, #1448be 100%);
+  box-shadow:
+    inset 3px 3px 8px rgba(255, 255, 255, 0.35),
+    inset -3px -3px 12px rgba(0, 0, 0, 0.18),
+    8px 14px 28px rgba(20, 72, 200, 0.35);
+  display: grid;
+  place-items: center;
+}
+
+.lucky-cube-mark {
+  transform: rotate(10deg);
+  text-shadow: 0 3px 6px rgba(0, 0, 0, 0.25);
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.lucky-text-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  transform: rotate(-4deg);
+  margin-top: 4px;
+}
+
+.lucky-arrow {
+  width: 22px;
+  height: 22px;
+  color: #9ca3af;
+}
+
+.lucky-arrow path {
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lucky-text {
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  font-weight: 600;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.footer-nav-cols {
+  display: flex;
+  gap: 64px;
+  padding-top: 8px;
+}
+
+.footer-col-title {
+  font-family: 'Caveat', cursive;
+  font-size: 22px;
+  font-weight: 600;
+  font-style: italic;
+  color: #9ca3af;
+  margin-bottom: 14px;
+}
+
+.footer-col a {
+  display: block;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 10px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-col a:hover {
+  color: #1f65d6;
+}
+
+.footer-bottom {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-top: 34px;
+}
+
+.footer-copyright {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+.footer-cta-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.footer-cta-mini h4 {
+  font-size: 15px;
+  font-weight: 400;
+  color: #6b7280;
+  line-height: 1.45;
+}
+
+.footer-cta-mini h4 strong {
+  display: block;
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.footer-subscribe-row {
+  display: flex;
+  width: 310px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 5px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+.footer-subscribe-row input {
+  flex: 1;
+  padding: 11px 14px;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  color: #111827;
+  min-width: 0;
+}
+
+.footer-subscribe-row input::placeholder {
+  color: #9ca3af;
+}
+
+.footer-subscribe-row button {
+  padding: 11px 22px;
+  background: #111214;
+  color: #fff;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+  cursor: pointer;
+}
+
+.footer-subscribe-row button:hover {
+  background: #000;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.34), 0 4px 12px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.footer-watermark {
+  width: min(920px, calc(100% - 48px));
+  max-width: 920px;
+  margin: -54px auto 0;
+  pointer-events: none;
+  user-select: none;
+  position: relative;
+  z-index: 0;
+  line-height: 0;
+  transform: scale(1.45);
+  transform-origin: top center;
+}
+
+.footer-watermark svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.footer-watermark text {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  fill: rgba(0, 0, 0, 0.055);
+}
+
+@media (max-width: 860px) {
+  .footer-section {
+    min-height: auto;
+    padding: 80px 16px 48px;
+    justify-content: flex-start;
+  }
+
+  .footer-wrapper {
+    width: 100%;
+    grid-template-columns: 1fr;
+    transform: none;
+  }
+
+  .footer-left {
+    min-height: auto;
+    gap: 40px;
+  }
+
+  .footer-watermark {
+    width: 100%;
+    margin: -24px auto 0;
+    transform: scale(1.08);
+  }
+}
+
+@media (max-width: 560px) {
+  .footer-section {
+    padding: 48px 16px;
+  }
+
+  .footer-right {
+    padding: 24px;
+  }
+
+  .footer-nav-cols {
+    gap: 40px;
+  }
+
+  .footer-bottom {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .footer-subscribe-row {
+    width: 100%;
+  }
+
+  .footer-lucky-graphic {
+    right: 12px;
+    top: -28px;
+  }
+
+  .lucky-cube {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+  }
+
+  .footer-logo-mark-large {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-4);
+  border-radius: 9999px;
+  border: 2px solid var(--surface-1);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hairline-tertiary);
+}
+
+/* ── The one loading mark ───────────────────────────────────────────────────
+ *
+ * Lumidot paints its dots with INLINE styles from a fixed palette, so the colour used to be
+ * chosen in JS: `resolvedTheme === "dark" ? "white" : "black"`, copy-pasted into five
+ * components. That is a hydration mismatch by construction — next-themes cannot know the theme
+ * on the server, so every page carrying a spinner logged one, and React discards the mismatched
+ * subtree rather than patching it.
+ *
+ * Doing it in CSS removes the branch entirely: the component always renders the same markup, and
+ * the theme decides the colour the way it decides every other colour here. `!important` is
+ * required and is the point — it is beating an inline style, which is the only thing that can
+ * beat one.
+ */
+.lumidot-mark [data-lumidot-dot] {
+  background-color: var(--lumidot-ink) !important;
+  box-shadow:
+    0 0 1.6px var(--lumidot-ink),
+    0 0 4px color-mix(in oklab, var(--lumidot-ink) 38%, transparent) !important;
+}

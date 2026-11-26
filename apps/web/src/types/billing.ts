@@ -1,0 +1,413 @@
+export interface CreditBalanceDto {
+  workspaceId: string;
+  currentCredits: number;
+  creditsUsedThisCycle: number;
+  totalCredits: number;
+  status: string;
+  currentPeriodStart: string; // ISO datetime
+  currentPeriodEnd: string; // ISO datetime
+}
+
+/**
+ * Credits a workspace kept from a subscription that ended (GET credits/workspace/{id}/frozen).
+ * Answers for a workspace with NO live plan — the case the balance endpoint 404s on.
+ */
+export interface FrozenCreditsDto {
+  workspaceId: string;
+  frozenCredits: number;
+  frozenAt: string | null;
+  endedAt: string | null;
+  dormantSince: string | null;
+  graceEndsAt: string | null;
+  hasActiveSubscription: boolean;
+  /**
+   * backend#467: the plan of the workspace's most recent subscription when it has no live one,
+   * and when that plan ended — set even when nothing was left to freeze, so the renew screen can
+   * name what ended. Null when a subscription is live, or there never was one (never paid).
+   */
+  lastPlanName?: string | null;
+  lastEndedAt?: string | null;
+}
+
+export interface SubscriptionDto {
+  id: string;
+  /** Nullable on the wire (`Guid? UserId`): a workspace contract subscription has no user. */
+  userId: string | null;
+  workspaceId: string | null;
+  planId: string;
+  planName: string;
+  price: number;
+  /** The currency `price` is in ("USD", "VND"). Absent from a backend older than USD accounting. */
+  planCurrency?: string;
+  status: string;
+  creditsRemaining: number;
+  creditsUsedThisCycle: number;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  autoRenew: boolean;
+  cancelAtPeriodEnd: boolean;
+  createdAt: string;
+  cancelledAt: string | null;
+  workspaceName?: string | null;
+}
+
+export interface CreateCheckoutSessionRequest {
+  userId: string;
+  workspaceId: string;
+  amount: number;
+  currency: string;
+  paymentType: string;
+  planSlug?: string;
+  billingCycle?: string;
+  /**
+   * WT-429, credit top-ups only: how many credits to buy.
+   *
+   * This — not `amount` — is the authoritative field for a top-up. The server prices it against
+   * the admin-editable `credit_value_usd` and overwrites `amount` with the result, so the
+   * browser can no longer name its own exchange rate (the old panel quoted from a hardcoded
+   * constant that had drifted 2–2.5× off the real rate). The same count rides on the Stripe
+   * session so the completion handler grants exactly what was paid for.
+   */
+  credits?: number;
+  /**
+   * backend#466, plan checkouts: renew automatically. On (the server's default) sells a Stripe
+   * Subscription — the saved card is charged every cycle. Off sells one period, paid once.
+   */
+  autoRenew?: boolean;
+  /** G11, paymentType CreditPack / AddOn: the catalog item. Its price is the catalog's. */
+  packageId?: string;
+  /** G11, add-ons: units bought. */
+  quantity?: number;
+  /** G11: a coupon code; validated server-side. One coupon per checkout. */
+  couponCode?: string;
+}
+
+export interface CheckoutSessionDto {
+  id: string;
+  status: string;
+  paymentStatus?: string;
+  customerEmail?: string | null;
+  amountTotal?: number | null;
+  currency?: string | null;
+  paymentIntentId?: string | null;
+  metadata?: Record<string, string>;
+}
+
+export interface PlanDto {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  tier: string;
+  price: number;
+  currency: string;
+  billingCycle: string;
+  creditsPerCycle: number;
+  /**
+   * The overage, rollover and invoicing columns.
+   *
+   * These were absent from this interface while every screen only read plans, and the API has
+   * always returned them. They are declared now because `PUT /plans/{id}` takes a WHOLE plan and
+   * writes all twenty-two columns from it — so an edit form built on a seventeen-field type would
+   * have silently reset the five it could not see, on every save, to the service's defaults
+   * (overage cap 0, overage price 4.0, low balance 0, rollover 0, terms 15d, grace 360h).
+   *
+   * See lib/billing/plan-request.ts, which is where the round-trip is enforced and tested.
+   */
+  overageCapCredits: number;
+  overagePricePerCredit: number;
+  lowBalanceThresholdCredits: number;
+  rolloverCapCredits: number;
+  invoiceTermsDays: number;
+  invoiceGraceHours: number;
+  features: string;
+  sortOrder: number;
+  isActive: boolean;
+  maxParticipants: number;
+  maxLanguages: number;
+  voiceCloneEnabled: boolean;
+  aiAssistantEnabled: boolean;
+  glossaryEnabled: boolean;
+  dedicatedGpu: boolean;
+}
+
+export type PlanMutationDto = Omit<PlanDto, "id">;
+
+export interface CreditTransactionDto {
+  id: string;
+  /** Nullable on the wire (`Guid? WorkspaceId`), and null for user-scoped transactions. */
+  workspaceId: string | null;
+  workspaceName?: string | null;
+  /** Nullable on the wire (`Guid? UserId`), and null for system/workspace-scoped transactions. */
+  userId: string | null;
+  userName?: string | null;
+  amount: number; // negative = consumption, positive = top-up
+  /**
+   * Server-side values, verbatim from `TransactionConstants.TransactionTypes`. The consume
+   * case was spelled "consumption" here and never matched anything the API sends, which is
+   * why Total Consumed read 0 and the Consumption filter came back empty.
+   */
+  type: "consume" | "top_up" | "adjustment";
+  description?: string;
+  referenceType?: string;
+  referenceId?: string;
+  balanceAfter: number;
+  createdAt: string; // ISO datetime
+}
+
+/**
+ * Mirrors the billing service's `UsageSummaryDto` — the shape returned by the *global*
+ * usage-breakdown endpoint.
+ */
+export interface UsageSummaryDto {
+  usageType: string;
+  totalCreditsConsumed: number;
+}
+
+/** Mirrors `FeatureAdoptionDto` — the per-workspace usage-breakdown endpoint. */
+export interface FeatureAdoptionDto extends UsageSummaryDto {
+  usageCount: number;
+}
+
+/**
+ * Mirrors `UsageBreakdownDto` — the rows nested inside a `BillingReportDto`. Deliberately
+ * NOT `UsageSummaryDto`: the report nests a different record whose credit field is
+ * `creditsConsumed`, not `totalCreditsConsumed`. Typing both as one interface is what let
+ * `usage.totalCreditsConsumed.toLocaleString()` compile and then throw on the first
+ * workspace with any usage at all.
+ */
+export interface UsageBreakdownDto {
+  usageType: string;
+  creditsConsumed: number;
+  quantity: number;
+}
+
+export interface BillingReportDto {
+  workspaceId: string;
+  month: number;
+  year: number;
+  startingBalance: number;
+  endingBalance: number;
+  totalTopUpCredits: number;
+  totalConsumedCredits: number;
+  usageBreakdown: UsageBreakdownDto[];
+  // Both are nullable on the wire (`decimal?` / `int?`) when the month has nothing to
+  // average over. The per-100-chars name is the server's; "PerMinute" never existed there.
+  averageTranslationCostPer100Chars: number | null;
+  averageCostPerMeeting: number | null;
+}
+
+export interface PagedResult<T> {
+  totalCount: number;
+  items: T[];
+}
+
+export interface CreditHistoryFilters {
+  workspaceId?: string;
+  type?: string;
+  fromDate?: string;
+  toDate?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  /**
+   * Global ledger only. A transaction or reference id (exact), otherwise matched against the
+   * description. Ignored by a backend that predates it, so callers must not rely on it narrowing.
+   */
+  search?: string;
+  /** Global ledger only: created_desc (default) | created_asc | amount_desc | amount_asc. */
+  sort?: "created_desc" | "created_asc" | "amount_desc" | "amount_asc";
+}
+
+/**
+ * Server-side filters for the platform-wide invoice list (`GET /invoices/global`).
+ *
+ * `search` is an invoice number fragment, or an exact invoice id. Dates bound `issuedAt`
+ * (`fromDate` inclusive, `toDate` exclusive); amounts bound `total`.
+ */
+export interface GlobalInvoiceFilters {
+  search?: string;
+  status?: string;
+  workspaceId?: string;
+  currency?: string;
+  fromDate?: string;
+  toDate?: string;
+  minTotal?: number;
+  maxTotal?: number;
+  sort?: "issued_desc" | "issued_asc" | "total_desc" | "total_asc" | "due_asc";
+}
+
+export interface CreditHistoryQueryParams extends CreditHistoryFilters {
+  pageNumber: number;
+  pageSize: number;
+}
+
+export interface GroupedCreditTransaction extends CreditTransactionDto {
+  originalTx: CreditTransactionDto[];
+  isGrouped?: boolean;
+}
+
+export interface UsageGroupSummary {
+  count: number;
+  cost: number;
+  rawType: string;
+}
+
+export interface GlobalBillingMetricsDto {
+  totalBalance: number;
+  monthlyUsage: number;
+  auditEventsLast30Days: number;
+  activeWorkspaces: number;
+}
+
+export interface MonthlyUsagePoint {
+  month: number;
+  monthName: string;
+  consumedCredits: number;
+  topUpCredits: number;
+}
+
+export interface UsageChartDto {
+  year: number;
+  monthlyData: MonthlyUsagePoint[];
+}
+
+export interface TopWorkspaceDto {
+  workspaceId: string;
+  workspaceName: string | null;
+  totalCreditsConsumed: number;
+}
+
+/**
+ * Mirrors `WarpTalk.BillingService.Application.DTOs.InvoiceDto` field for field.
+ *
+ * It previously did not. It declared `amount`, `subscriptionId`, `paymentId`, `stripeInvoiceId`,
+ * `invoicePdfUrl` and `hostedInvoiceUrl` — none of which the API has ever sent — and omitted the
+ * eight fields it does send. TypeScript could not catch it: the type is applied by
+ * `apiClient.get<PagedResult<InvoiceDto>>(...)`, an assertion rather than a validation, so the
+ * compiler believed the fiction. Opening Billing History then called `.toLocaleString()` on
+ * `undefined` and the route was replaced by the error boundary.
+ *
+ * Keep this aligned with `InvoiceDtos.cs` when either side changes.
+ */
+export interface InvoiceDto {
+  id: string;
+  invoiceNumber: string;
+  subtotal: number;
+  tax: number;
+  /** What the customer owes. This is the field the UI means by "amount". */
+  total: number;
+  currency: string;
+  status: string;
+  pdfUrl: string | null;
+  /** A JSON-encoded array, serialised as a string by the API. */
+  lineItems: string;
+  issuedAt: string;
+  dueAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  workspaceId: string | null;
+  workspaceName: string | null;
+}
+
+/**
+ * One row of a workspace's payment history.
+ *
+ * Mirrors `WarpTalk.BillingService.Application.DTOs.PaymentTransactionDto` (PaymentDtos.cs) field
+ * for field. `status` is the server's vocabulary — pending | paid | failed | cancelled | refunded |
+ * disputed | subscription_updated — see lib/billing/invoice-payment.
+ */
+export interface PaymentTransactionDto {
+  id: string;
+  subscriptionId: string;
+  amount: number;
+  taxAmount: number;
+  totalAmount: number;
+  currency: string;
+  paymentMethod: string;
+  provider: string;
+  providerTransactionId: string | null;
+  providerOrderId: string | null;
+  status: string;
+  failureReason: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+export interface UsageAlertDto {
+  workspaceId: string;
+  workspaceName: string;
+  consumedCreditsIn24h: number;
+  reason: string;
+}
+
+/**
+ * Whether this workspace keeps translating after its credits reach zero.
+ *
+ * `planCapCredits` is the difference between "switched off" and "not available": a plan whose
+ * cap is 0 offers no allowance at all, and the page must not present a switch that cannot do
+ * anything. The cap itself is not the Owner's to change — see
+ * SubscriptionsController.SetOverage, which only moves between 0 and the plan's own figure.
+ */
+export interface WorkspaceOverageSettingDto {
+  enabled: boolean;
+  effectiveCapCredits: number;
+  planCapCredits: number;
+  overageCreditsThisCycle: number;
+}
+
+/** WT-413: one member's share of a workspace's credit spend. */
+export interface MemberCreditUsageDto {
+  userId: string;
+  creditsConsumed: number;
+  recordCount: number;
+  lastUsedAt: string | null;
+}
+
+/**
+ * Per-member credit spend for a workspace.
+ *
+ * Members arrive as ids, not names: billing has no user directory, and the dashboard already
+ * holds the workspace member list, so the join happens here rather than by coupling billing to
+ * auth for a label.
+ */
+export interface WorkspaceUsageByMemberDto {
+  workspaceId: string;
+  from: string | null;
+  to: string | null;
+  totalCreditsConsumed: number;
+  members: MemberCreditUsageDto[];
+}
+
+/** backend#466: the card on file — brand and last four digits only. */
+export interface CardOnFileDto {
+  brand: string | null;
+  last4: string;
+  expMonth: number | null;
+  expYear: number | null;
+}
+
+/**
+ * backend#466: renewal as the billing page shows it. `renewalMode` says who renews the plan:
+ * `stripe` (the saved card is charged), `invoice` (an invoice is issued), `none` (nothing — turning
+ * auto-renew on needs a new checkout, `autoRenewRequiresCheckout`).
+ */
+export interface RecurringBillingStatusDto {
+  workspaceId: string;
+  subscriptionId: string;
+  renewalMode: "stripe" | "invoice" | "none" | string;
+  autoRenew: boolean;
+  canToggleAutoRenew: boolean;
+  autoRenewRequiresCheckout: boolean;
+  currentPeriodEnd: string;
+  nextChargeAt: string | null;
+  nextChargeAmount: number | null;
+  nextChargeCurrency: string | null;
+  card: CardOnFileDto | null;
+  canManagePaymentMethod: boolean;
+  paymentFailed: boolean;
+  paymentFailedAt: string | null;
+  paymentGraceEndsAt: string | null;
+  paymentFailureReason: string | null;
+  stripeStatus: string | null;
+  stripeUnavailable: boolean;
+}

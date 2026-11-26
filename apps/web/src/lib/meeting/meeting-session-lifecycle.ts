@@ -1,0 +1,359 @@
+/**
+ * When the persistent meeting session may hold a LiveKit connection, and when a MINIMISED one
+ * has to give it back.
+ *
+ * Extracted from persistent-meeting-session.tsx so the rules are executable on their own: the
+ * component owns the wiring, this owns the decisions.
+ */
+
+/**
+ * How long a MINIMISED meeting may sit without any interaction in this tab before its LiveKit
+ * connection is released.
+ *
+ * Deliberately 15 minutes, not 5 and not 60. LiveKit Cloud bills connection-minutes by
+ * wall-clock presence and the AI ingress bot counts a connected human before it will
+ * idle-release itself, so a forgotten tab used to bill two or more participants for as long as
+ * the browser stayed open. Against that: someone who steps away from a real meeting, or who
+ * minimises the call and reads a document in another tab for ten minutes, must not come back to
+ * find they were dropped. Fifteen minutes clears any realistic "back in a moment" and still
+ * stops an abandoned tab well inside the first hour.
+ */
+export const MINI_MEETING_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** How far ahead of the cut-off the "Stay connected" toast appears. */
+export const MINI_MEETING_IDLE_WARNING_MS = 60 * 1000;
+
+/**
+ * Whether <LiveKitRoom connect> may be true.
+ *
+ * `hasToken` alone is the defect: a LiveKit token is issued once and never withdrawn, so
+ * `connect={Boolean(token)}` stayed true for the life of the tab. Presence has to keep
+ * depending on the room still being joinable — which also means a room id restored from
+ * sessionStorage into an ENDED room can never reconnect — and on the minimised session not
+ * having been idle-reaped.
+ */
+/** Statuses that mean the meeting is genuinely over. */
+export const TERMINAL_ROOM_STATUSES = [
+  "ended",
+  "cancelled",
+  "expired",
+  "failed",
+] as const;
+
+/**
+ * Whether the room is still joinable, when the answer may be unknown.
+ *
+ * `Boolean(room)` was the defect. `room` comes from a REST query, so a network failure —
+ * exactly the moment LiveKit is trying hardest to recover — made it undefined, which read as
+ * "the meeting is over" and flipped <LiveKitRoom connect> to false. That runs
+ * room.disconnect(), and the console says so in as many words:
+ *
+ *     Abort connection attempt due to user initiated disconnect
+ *     ConnectionError: Client initiated disconnect
+ *     connection state changed: connecting -> disconnected
+ *
+ * LiveKit was not failing to reconnect. It was reconnecting, and we killed it.
+ *
+ * ABSENCE IS NOT EVIDENCE. A lookup that could not be made tells us nothing about the room,
+ * and "we do not know" must never tear down a live session. A 404 is different — that is the
+ * server answering, and the answer is that the room is gone.
+ */
+export function canConnectToRoom({
+  status,
+  lookupErrorStatus,
+  wasConnectable,
+}: {
+  /** The room's status, or undefined when the lookup has not succeeded. */
+  status: string | undefined;
+  /** HTTP status of a failed lookup; undefined for a network error with no response. */
+  lookupErrorStatus?: number;
+  /** Whether this session was connectable a moment ago. */
+  wasConnectable: boolean;
+}): boolean {
+  if (status !== undefined) {
+    return !TERMINAL_ROOM_STATUSES.includes(
+      status as (typeof TERMINAL_ROOM_STATUSES)[number],
+    );
+  }
+
+  // The server said the room does not exist. Believe it.
+  if (lookupErrorStatus === 404 || lookupErrorStatus === 410) return false;
+
+  // Anything else — DNS failure, timeout, 500, a request that never left the machine — is a
+  // gap in our knowledge, not a fact about the meeting. Hold whatever we last knew.
+  return wasConnectable;
+}
+
+export function shouldConnectMeeting({
+  hasToken,
+  canConnectRoom,
+  idleReaped,
+  displaced = false,
+}: {
+  hasToken: boolean;
+  canConnectRoom: boolean;
+  idleReaped: boolean;
+  /**
+   * The same account joined this meeting from another device or tab and this session was evicted
+   * (see session-displacement.ts). Connecting again would evict the other one, which would
+   * reconnect and evict this one: the loop that kept media from ever settling. Only an explicit
+   * "use this device" clears it.
+   */
+  displaced?: boolean;
+}): boolean {
+  return hasToken && canConnectRoom && !idleReaped && !displaced;
+}
+
+/**
+ * Only a MINIMISED session is ever reaped. The full-size view is the meeting the person is
+ * looking at; it is never idle by definition.
+ */
+export function isIdleReaped({
+  compact,
+  idleDisconnected,
+}: {
+  compact: boolean;
+  idleDisconnected: boolean;
+}): boolean {
+  return compact && idleDisconnected;
+}
+
+/**
+ * What the desktop app's Google Meet sensor last said, as the app shell hands it down.
+ *
+ * Null is an answer of its own: the sensor has said nothing at all. That is a browser tab, macOS
+ * (the sensor has no implementation off Windows, and the desktop reports nothing rather than
+ * "absent"), a desktop build older than the sensor, or a first poll that is not back yet. Null must
+ * never be read as "Meet is gone" — that would reap every bridge host on those platforms.
+ */
+export interface MeetSensorReading {
+  meetWindowVisible: boolean;
+  /** The Meet room code the sighting's address carried. Absent for picture-in-picture. */
+  meetCode?: string;
+  /** When the sensor stopped seeing a Meet window; null while one is up or none has been seen. */
+  meetWindowLostAtMs: number | null;
+}
+
+/**
+ * When a MINIMISED session last showed that somebody is still in its meeting. The idle budget
+ * runs from here.
+ *
+ * AN ORDINARY MEETING
+ *   Input in this window, and nothing else — the rule the reaper has always had.
+ *
+ * AN EXTERNAL BRIDGE
+ *   Input in this window is the wrong question. The host is in Google Meet with the always-on-top
+ *   popup beside it, and the main window renders the bridge compact on every route, so nobody looks
+ *   at it by design. Asking it for pointer moves reaped every bridge at 15 minutes, mid-meeting:
+ *   the dub, both bridge legs and the loopback went with LiveKit while the popup still said
+ *   translation was running. A bridge is alive while there is evidence its Meet call is:
+ *
+ *   0. WT-912: the user is IN the Meet call, per the desktop's read of Meet's own buttons
+ *      (`meetCallPhase: "in-call"`, already matched to this room's Meet code by the caller). The
+ *      best evidence there is, and it holds the clock at `now`. It replaces a guess that failed in
+ *      production: with the user's microphone never published (the bug WT-912 fixes) there were no
+ *      transcript lines, sign 3 below never fired, and a live meeting was let go at 15 minutes.
+ *   0b. The far side is audible: the capture of Meet's audio is running and has heard sound within
+ *      the last few seconds (`farSideHeard`, lib/audio/bridge-inbound-health "listening"). A call
+ *      that can be heard is a call that is on, whatever the transcript has or has not written yet.
+ *      Not once the user has LEFT the call: what the browser plays after that is not the meeting.
+ *   1. Meet is on screen, per the desktop sensor. That is the host in the call right now, so it
+ *      holds the clock at `now` for as long as it lasts. Except when the sighting's code names a
+ *      DIFFERENT Meet call from the room's — the same test the trigger uses. Otherwise a bridge room
+ *      forgotten this morning would be kept alive, and billing, by an unrelated call this afternoon.
+ *      And except when the desktop is SURE the user is not in the call (`lobby`, `left`): the "You
+ *      left the meeting" page is still a Meet window, and counting it kept a room the user had
+ *      walked out of connected for as long as that tab stayed open. Only "unknown" (the desktop
+ *      cannot read Meet's buttons) and no phase at all (an older desktop) leave this sign standing.
+ *   2. The moment the sensor lost sight of Meet. The budget runs from the call leaving the screen,
+ *      not from whenever the main window was last touched.
+ *   3. Speech in the meeting — the last transcript segment. This is what works where the sensor
+ *      does not: a browser tab, macOS, an older desktop build, a Meet window the sensor cannot
+ *      read. It is also the thing the pipeline bills for, so "somebody is talking" is the honest
+ *      measure of a meeting worth keeping connected. No longer the only thing that works there:
+ *      see 0 and 0b.
+ *
+ * DELIBERATELY NOT A SIGN OF LIFE
+ *   - `left`, and an `unknown` with nothing audible. Neither says the call is on; the budget then
+ *     runs from the last sign that did.
+ *   - A capture that is merely RUNNING. It runs for as long as the room is open here, so counting
+ *     it would be counting the reaper's own patience. Only sound through it counts (0b).
+ *   - Translation running. It is the state a forgotten bridge is left in — nobody presses Stop on
+ *     the way out of a call — and the most expensive one. Counting it would switch the reaper off
+ *     in exactly the case it exists for.
+ *   - The backend's abandoned/idle sweeps (backend #390). They count people, and the host's live
+ *     hub connection counts as one, so an app left open on a forgotten bridge is never swept. They
+ *     are the backstop for an app that closed or crashed; for one that stayed open, this is still
+ *     the only thing that lets go.
+ */
+export function lastSignOfLife({
+  now,
+  lastInteractionAt,
+  isBridgeRoom,
+  meetSensor,
+  roomMeetCode,
+  lastSpeechAt,
+  meetCallPhase = null,
+  farSideHeard = false,
+}: {
+  now: number;
+  /** Input in this window. */
+  lastInteractionAt: number;
+  isBridgeRoom: boolean;
+  meetSensor: MeetSensorReading | null;
+  /** The Meet code from the room's stored Meet URL, when it has one. */
+  roomMeetCode?: string;
+  /** When the last transcript segment arrived, or null if none has. */
+  lastSpeechAt: number | null;
+  /**
+   * WT-912: the desktop's last read of Meet's own buttons FOR THIS ROOM'S CALL (the caller drops a
+   * reading whose code names another call: lib/meeting/bridge-meet-follow `trustedMeetPhase`).
+   * Null when it has never said: an older desktop, a browser tab.
+   */
+  meetCallPhase?: "lobby" | "in-call" | "left" | "unknown" | null;
+  /** WT-912: the far side's capture is running and has just heard sound. */
+  farSideHeard?: boolean;
+}): number {
+  if (!isBridgeRoom) return lastInteractionAt;
+
+  if (meetCallPhase === "in-call") return now;
+  if (farSideHeard && meetCallPhase !== "left") return now;
+
+  // A code that is merely absent proves nothing either way — Meet's picture-in-picture window
+  // carries none — so only a code that disagrees refuses the sighting.
+  const differentCall =
+    Boolean(meetSensor?.meetCode) && Boolean(roomMeetCode) && meetSensor?.meetCode !== roomMeetCode;
+  // The desktop is sure the user is not in the call: a Meet window on screen is then the join
+  // screen or the "You left" page, not the meeting.
+  const notInCall = meetCallPhase === "lobby" || meetCallPhase === "left";
+  if (meetSensor?.meetWindowVisible && !differentCall && !notInCall) return now;
+
+  return Math.max(
+    lastInteractionAt,
+    meetSensor?.meetWindowLostAtMs ?? Number.NEGATIVE_INFINITY,
+    lastSpeechAt ?? Number.NEGATIVE_INFINITY,
+  );
+}
+
+export type IdleAction = "none" | "warn" | "disconnect";
+
+/**
+ * What the idle poll should do this tick.
+ *
+ * `warn` fires at most once per idle stretch — `alreadyWarned` is reset by any interaction, so
+ * a person who clicks "Stay connected" (or simply moves the mouse) gets a fresh warning the
+ * next time they go quiet rather than silently losing the grace period.
+ */
+export function evaluateIdleMeeting({
+  now,
+  lastInteractionAt,
+  alreadyWarned,
+  timeoutMs = MINI_MEETING_IDLE_TIMEOUT_MS,
+  warningMs = MINI_MEETING_IDLE_WARNING_MS,
+}: {
+  now: number;
+  lastInteractionAt: number;
+  alreadyWarned: boolean;
+  timeoutMs?: number;
+  warningMs?: number;
+}): IdleAction {
+  const idleFor = now - lastInteractionAt;
+  if (idleFor >= timeoutMs) return "disconnect";
+  if (!alreadyWarned && idleFor >= timeoutMs - warningMs) return "warn";
+  return "none";
+}
+
+/**
+ * Whether a session restored from sessionStorage points at a room that is no longer there.
+ *
+ * WT-306 made `activeRoomId` survive a reload, so the id can outlive the room: ended,
+ * cancelled, or simply no longer readable by this account. Only asked of a MINIMISED session —
+ * on /room/{id} the TranslationRoomEnded broadcast already retires the session AND routes the
+ * person somewhere, whereas closing from here would leave them staring at a bare spinner.
+ *
+ * ONLY A DEFINITIVE ANSWER RETIRES IT (prod incident 2026-10-03)
+ *   This used to retire the session on ANY failed lookup. The backend hung for a few seconds, the
+ *   room query timed out, and a LIVE external-bridge session was torn down about 41 s in - and with
+ *   it the transcript popup, the idle reaper and the Meet-left countdown, every one of the things
+ *   that would otherwise have ended the room. The room was never ended, stayed in the room list
+ *   with no end, and held the bridge trigger for its whole one-hour tail.
+ *
+ *   It is the same mistake `canConnectToRoom` already fixed for LiveKit, and the same rule fixes
+ *   it: ABSENCE IS NOT EVIDENCE. A timeout, a 5xx or a request that never left the machine says
+ *   nothing about the room, so the session holds and the query's own retry/poll gets another go.
+ *   Only the server answering about THIS room ends it: 404/410 (gone, as `canConnectToRoom` reads
+ *   them) and 403, which is the "no longer readable by this account" case WT-306 named above - a
+ *   definite answer, and one no retry will change.
+ */
+export function isRestoredMeetingStale({
+  compact,
+  roomLoadFailed,
+  roomLoadErrorStatus,
+  hasRoom,
+  canConnectRoom,
+}: {
+  compact: boolean;
+  roomLoadFailed: boolean;
+  /** HTTP status of the failed lookup; undefined for a network error or timeout with no response. */
+  roomLoadErrorStatus?: number;
+  hasRoom: boolean;
+  canConnectRoom: boolean;
+}): boolean {
+  if (!compact) return false;
+  if (roomLoadFailed && isDefinitiveRoomLookupFailure(roomLoadErrorStatus)) return true;
+  return hasRoom && !canConnectRoom;
+}
+
+/** A failed room lookup the server ANSWERED, about this room, in a way no retry will change. */
+function isDefinitiveRoomLookupFailure(status: number | undefined): boolean {
+  return status === 403 || status === 404 || status === 410;
+}
+
+/**
+ * WT-899 — how often the open session re-reads its room, so an end it was never TOLD about still
+ * reaches it.
+ *
+ * TranslationRoomEnded is the normal signal, and it only reaches a client the hub admitted to the
+ * room's group. A person with no participant row is never admitted (WT-699 / TC1806): on an
+ * EXTERNAL_BRIDGE room capped at two seats — the host and the Google Meet stand-in — a second
+ * person's registration fails, they sit on /live behind the "Set up your external meeting" wizard,
+ * and when the host ends the call nothing ever arrives. This poll is the fallback that does.
+ * React Query does not run it in a hidden tab, so an abandoned tab costs nothing.
+ */
+export const ROOM_STATUS_POLL_MS = 20 * 1000;
+
+/**
+ * Whether the room ended under a session that saw it running — the polled twin of
+ * TranslationRoomEnded.
+ *
+ * `sawJoinable` keeps this from firing for a session restored onto a room that was ALREADY over:
+ * that one is isRestoredMeetingStale's, and it closes quietly instead of pulling the person to a
+ * page they did not ask for. `exiting` covers this client's own Leave or End, which owns its own
+ * toast and redirect.
+ */
+export function roomEndedUnderSession({
+  status,
+  sawJoinable,
+  exiting,
+}: {
+  status: string | undefined;
+  sawJoinable: boolean;
+  exiting: boolean;
+}): boolean {
+  if (!status || !sawJoinable || exiting) return false;
+  return TERMINAL_ROOM_STATUSES.includes(status as (typeof TERMINAL_ROOM_STATUSES)[number]);
+}
+
+/**
+ * WT-899 — a Leave the server refuses because there is nothing to leave.
+ *
+ * LeaveRoomAsync answers NOT_FOUND ("Participant not found.") when this person has no participant
+ * row — the bridge case above, where registration was refused for capacity. The person is not in
+ * the room by the server's own account, so the exit must still happen. Treating it as an error
+ * left them in front of the Leave dialog with no way out but closing the tab.
+ *
+ * Takes the code (apiErrorCode) rather than the error, so it stays free of axios and testable.
+ */
+export function leaveFailureMeansAlreadyOut(code: string | number | undefined): boolean {
+  return code === "NOT_FOUND" || code === 404;
+}

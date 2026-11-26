@@ -661,3 +661,159 @@ async fn malformed_json_is_invalid_request() {
         assert!(v["message"].as_str().is_some_and(|m| !m.is_empty()));
     }
 }
+
+async fn login_from(env: &Env, email: &str, ua: &str, xff: &str) -> Value {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header("content-type", "application/json")
+        .header("user-agent", ua)
+        .header("x-forwarded-for", xff)
+        .body(Body::from(
+            json!({"email": email, "password": PW}).to_string(),
+        ))
+        .unwrap();
+    let resp = env.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn sessions_list_and_revoke() {
+    let Some(env) = setup().await else { return };
+    let email = register_verified(&env).await;
+    let a = login_from(&env, &email, "Laptop UA", "203.0.113.7, 10.0.0.1").await;
+    let b = login_from(&env, &email, "Phone UA", "not-an-ip").await;
+    let c = login_from(&env, &email, "Tablet UA", "2001:db8::1").await;
+    let at = a["accessToken"].as_str().unwrap();
+
+    let (s, list) = call(&env.app, "GET", "/auth/sessions", None, Some(at)).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    let list = list.as_array().unwrap().clone();
+    assert_eq!(list.len(), 3);
+    let cur: Vec<_> = list.iter().filter(|x| x["isCurrent"] == true).collect();
+    assert_eq!(cur.len(), 1);
+    assert_eq!(cur[0]["deviceInfo"], "Laptop UA");
+    assert_eq!(cur[0]["ipAddress"], "203.0.113.7");
+    let phone = list.iter().find(|x| x["deviceInfo"] == "Phone UA").unwrap();
+    assert!(
+        phone["ipAddress"].is_null(),
+        "unparsable address is dropped"
+    );
+    let phone_id = phone["id"].as_str().unwrap().to_owned();
+    let current_id = cur[0]["id"].as_str().unwrap().to_owned();
+    let signed_in = cur[0]["signedInAt"].clone();
+
+    // Refresh keeps the session (same id, sign-in time, device) and moves last activity.
+    let (s, r) = call(
+        &env.app,
+        "POST",
+        "/auth/refresh",
+        Some(json!({"refreshToken": a["refreshToken"]})),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let at = r["accessToken"].as_str().unwrap().to_owned();
+    let (_, list) = call(&env.app, "GET", "/auth/sessions", None, Some(&at)).await;
+    let cur = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["isCurrent"] == true)
+        .unwrap()
+        .clone();
+    assert_eq!(cur["id"], current_id.as_str());
+    assert_eq!(cur["signedInAt"], signed_in);
+    assert_eq!(cur["deviceInfo"], "Laptop UA");
+
+    // Another account can neither see nor end these sessions.
+    let other = register_verified(&env).await;
+    let (_, o) = login(&env, &other, PW).await;
+    let ot = o["accessToken"].as_str().unwrap();
+    let (_, olist) = call(&env.app, "GET", "/auth/sessions", None, Some(ot)).await;
+    assert_eq!(olist.as_array().unwrap().len(), 1);
+    let (s, _) = call(
+        &env.app,
+        "DELETE",
+        &format!("/auth/sessions/{phone_id}"),
+        None,
+        Some(ot),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // The current session cannot be revoked here; sign-out does that.
+    let (s, _) = call(
+        &env.app,
+        "DELETE",
+        &format!("/auth/sessions/{current_id}"),
+        None,
+        Some(&at),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // Revoking the phone ends its refresh token.
+    let (s, _) = call(
+        &env.app,
+        "DELETE",
+        &format!("/auth/sessions/{phone_id}"),
+        None,
+        Some(&at),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        "/auth/refresh",
+        Some(json!({"refreshToken": b["refreshToken"]})),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _) = call(
+        &env.app,
+        "DELETE",
+        &format!("/auth/sessions/{phone_id}"),
+        None,
+        Some(&at),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "already ended");
+
+    // Revoke-others leaves only the current session.
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        "/auth/sessions/revoke-others",
+        None,
+        Some(&at),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, list) = call(&env.app, "GET", "/auth/sessions", None, Some(&at)).await;
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["id"], current_id.as_str());
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        "/auth/refresh",
+        Some(json!({"refreshToken": c["refreshToken"]})),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    // The other account's session is untouched.
+    let (_, olist) = call(&env.app, "GET", "/auth/sessions", None, Some(ot)).await;
+    assert_eq!(olist.as_array().unwrap().len(), 1);
+
+    // Unauthenticated callers are refused.
+    let (s, _) = call(&env.app, "GET", "/auth/sessions", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}

@@ -1,0 +1,213 @@
+"use client";
+
+/**
+ * Buying credits, as a modal.
+ *
+ * It used to be a panel stacked under the plan cards on `/payment/plans`, so the page asked two
+ * unrelated questions at once — "which plan do you want" and "how many credits do you want to
+ * buy" — and the second one scrolled past most readers. Top-up is an errand, not a page: it is
+ * reached from wherever the balance is shown, does one thing, and closes.
+ *
+ * WHAT THIS COMPONENT MUST NOT DO: price the purchase. The request carries the CREDIT COUNT and
+ * the server prices it against billing_pricing_config, overwriting whatever amount we send. The
+ * rate below is for the on-screen estimate only. A previous version of this UI quoted a
+ * 10/9/8.5/8 VND-per-credit volume ladder that existed nowhere else in the system and overcharged by 2–2.5×;
+ * keeping the number display-only is what stops that recurring.
+ */
+
+import { Spinner } from "@phosphor-icons/react";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { formatAmount, formatMoney } from "@/lib/format/currency";
+import { isPurchaseRequiresSubscription } from "@/lib/billing/extra-credits";
+import { billingService } from "@/services/billing.service";
+import { useAuthStore } from "@/stores/auth-store";
+import { cn } from "@/lib/utils";
+
+import { BillingButton, Row, RowGroup, Section } from "./billing-primitives";
+
+/**
+ * Stripe refuses a USD charge under $0.50. Mirrors PaymentAppService.MinimumTopUpCredits (5,000 credits
+ * is ~$0.77); the server raises it further if the credit value ever drops, and its message says so.
+ */
+const TOP_UP_MINIMUM_CREDITS = 5000;
+
+/**
+ * USD one credit is worth: the documented 4 VND at Stripe's rate when the system moved to USD
+ * (2 Oct 2026). Display only — the server prices the purchase against credit_value_usd.
+ */
+const DOCUMENTED_USD_PER_CREDIT = 0.000154;
+
+/** Round numbers a person recognises, not a ladder of discounts we do not give. */
+const TOP_UP_PACKAGES = [10_000, 25_000, 50_000, 100_000] as const;
+
+export function TopUpModal({
+  open,
+  onOpenChange,
+  workspaceId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  workspaceId: string;
+}) {
+  const t = useTranslations("settingsBillingUsage");
+  const tBilling = useTranslations("settingsBilling");
+  const user = useAuthStore((state) => state.user);
+  const [credits, setCredits] = useState<number>(TOP_UP_PACKAGES[0]);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const belowMinimum = credits > 0 && credits < TOP_UP_MINIMUM_CREDITS;
+  const estimate = Math.round(credits * DOCUMENTED_USD_PER_CREDIT * 100) / 100;
+
+  const startCheckout = async () => {
+    if (!user) return;
+
+    // WT-370 — never bill a USER ID as a workspace. A plan and a credit balance both belong to a
+    // workspace; without one there is nothing to charge, and saying so beats sending an id that
+    // passes every validation and then fails on a foreign key inside the webhook.
+    if (!workspaceId) {
+      toast.error(t("topUpModal.noWorkspaceError"));
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      const url = await billingService.createCheckoutSession({
+        userId: user.id,
+        workspaceId,
+        amount: estimate,
+        currency: "usd",
+        paymentType: "CreditTopUp",
+        credits,
+      });
+      if (url) window.location.assign(url);
+    } catch (error) {
+      // backend#467: refused before Stripe because the workspace has no live plan — say which
+      // step comes first rather than "checkout failed".
+      toast.error(
+        isPurchaseRequiresSubscription(error)
+          ? tBilling("purchaseGate.refused")
+          : t("topUpModal.checkoutFailed"),
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Motion is this file's, not dialog.tsx's: fade in over 180ms and rise ~10px. The base popup
+          already animates at 100ms with a zoom, so the durations are overridden under motion-safe
+          and every animation is switched off under motion-reduce. */}
+      <DialogContent
+        overlayClassName="motion-safe:data-open:duration-[180ms] motion-reduce:data-open:animate-none motion-reduce:data-ending-style:animate-none"
+        className={cn(
+          "max-w-[460px] rounded-[14px] border-border bg-surface-1 p-0 shadow-none",
+          "motion-safe:data-open:duration-[180ms] motion-safe:data-open:slide-in-from-bottom-[10px]",
+          "motion-reduce:data-open:animate-none motion-reduce:data-ending-style:animate-none",
+        )}
+      >
+        <DialogHeader className="px-5 pt-5">
+          <DialogTitle className="text-[16px] font-semibold text-ink">{t("topUpModal.title")}</DialogTitle>
+          <DialogDescription className="text-[12px] text-ink-muted">
+            {t("topUpModal.description")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="px-5 pb-5">
+          <div className="grid grid-cols-2 gap-2">
+            {TOP_UP_PACKAGES.map((amount) => {
+              const selected = credits === amount;
+              return (
+                <button
+                  key={amount}
+                  type="button"
+                  onClick={() => setCredits(amount)}
+                  className={cn(
+                    "rounded-[10px] border px-3 py-2.5 text-left shadow-none motion-safe:transition-colors motion-safe:duration-150",
+                    selected
+                      ? "border-primary bg-primary/5"
+                      : "border-border bg-surface-1 hover:bg-surface-2",
+                  )}
+                >
+                  <p className="text-[13px] font-medium tabular-nums text-ink">
+                    {formatAmount(amount)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-ink-muted">
+                    ≈ {formatMoney(Math.round(amount * DOCUMENTED_USD_PER_CREDIT * 100) / 100, "USD")}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3">
+            <label
+              htmlFor="topup-credits"
+              className="text-[12px] font-medium text-ink-muted"
+            >
+              {t("topUpModal.orEnterAmount")}
+            </label>
+            <Input
+              id="topup-credits"
+              type="number"
+              min={0}
+              value={credits || ""}
+              onChange={(event) =>
+                setCredits(Math.max(0, parseInt(event.target.value, 10) || 0))
+              }
+              placeholder={t("topUpModal.minimumPlaceholder", { min: TOP_UP_MINIMUM_CREDITS.toLocaleString() })}
+              className="mt-1.5 h-9 rounded-[8px] border-border bg-surface-1 text-[13px] shadow-none"
+            />
+          </div>
+
+          <Section className="mt-4 bg-surface-2/40">
+            <RowGroup>
+              <Row label={t("topUpModal.credits")} value={formatAmount(credits)} />
+              <Row
+                label={t("topUpModal.estimatedTotal")}
+                value={formatMoney(estimate, "USD")}
+                hint={t("topUpModal.estimatedHint")}
+              />
+            </RowGroup>
+          </Section>
+
+          {belowMinimum ? (
+            <p className="mt-3 text-[12px] text-amber-500">
+              {t("topUpModal.belowMinimum", {
+                min: formatAmount(TOP_UP_MINIMUM_CREDITS),
+                amount: formatMoney(Math.ceil(TOP_UP_MINIMUM_CREDITS * DOCUMENTED_USD_PER_CREDIT * 100) / 100, "USD"),
+              })}
+            </p>
+          ) : null}
+
+          <BillingButton
+            tone="primary"
+            className="mt-4 h-[36px]"
+            disabled={isProcessing || credits < TOP_UP_MINIMUM_CREDITS}
+            onClick={() => void startCheckout()}
+          >
+            {isProcessing ? (
+              <>
+                <Spinner className="h-3.5 w-3.5 animate-spin" />
+                {t("topUpModal.startingCheckout")}
+              </>
+            ) : (
+              t("topUpModal.continueToPayment")
+            )}
+          </BillingButton>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -1,0 +1,189 @@
+"use client";
+
+/**
+ * Cancelling a workspace's subscription, or undoing a scheduled cancellation (`/reactivate`).
+ *
+ * Both go through the ordinary `SubscriptionService` endpoints rather than an admin-only route.
+ * That is what makes cancelling here the SAME act a workspace owner performs: Stripe is cancelled,
+ * entitlements are republished, and the owner is notified. An admin-only shortcut would have
+ * skipped at least one of those and nobody would have found out until a customer kept being
+ * charged.
+ *
+ * For cancel, the reason is required by this dialog even though the endpoint takes it as optional.
+ * It is stored on the subscription and it is the only record of why somebody at WarpTalk reached
+ * into a customer's billing. Reactivate asks for none: its endpoint has nowhere to keep one, and
+ * collecting text that is then dropped would claim a record that does not exist.
+ */
+
+import { useState } from "react";
+import { useTranslations } from "next-intl";
+import { WarningCircle } from "@phosphor-icons/react/dist/ssr";
+
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { getErrorMessage } from "@/lib/api/errors";
+import type { AdminSubscriptionSummaryDto } from "@/types/admin-subscription";
+
+export type SubscriptionLifecycleAction = "cancel" | "reactivate";
+
+type LifecycleCopy = {
+  title: string;
+  description: string;
+  confirm: string;
+  pending: string;
+  /** Only cancel stores a reason; the reactivate endpoint takes no body to put one in. */
+  requiresReason: boolean;
+};
+
+function getCopy(
+  t: ReturnType<typeof useTranslations>,
+): Record<SubscriptionLifecycleAction, LifecycleCopy> {
+  return {
+    cancel: {
+      title: t("cancel.title"),
+      description: t("cancel.description"),
+      confirm: t("cancel.confirm"),
+      pending: t("cancel.pending"),
+      requiresReason: true,
+    },
+    reactivate: {
+      title: t("reactivate.title"),
+      description: t("reactivate.description"),
+      confirm: t("reactivate.confirm"),
+      pending: t("reactivate.pending"),
+      requiresReason: false,
+    },
+  };
+}
+
+export function SubscriptionLifecycleDialog({
+  subscription,
+  action,
+  onOpenChange,
+  onSubmit,
+  isSaving,
+}: {
+  /** Null while closed. */
+  subscription: AdminSubscriptionSummaryDto | null;
+  action: SubscriptionLifecycleAction;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (reason: string | null) => Promise<unknown>;
+  isSaving: boolean;
+}) {
+  return (
+    <Dialog open={subscription !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-0 sm:max-w-md">
+        {subscription ? (
+          <LifecycleForm
+            key={`${subscription.id}:${action}`}
+            subscription={subscription}
+            action={action}
+            onCancel={() => onOpenChange(false)}
+            onSubmit={onSubmit}
+            onDone={() => onOpenChange(false)}
+            isSaving={isSaving}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LifecycleForm({
+  subscription,
+  action,
+  onCancel,
+  onSubmit,
+  onDone,
+  isSaving,
+}: {
+  subscription: AdminSubscriptionSummaryDto;
+  action: SubscriptionLifecycleAction;
+  onCancel: () => void;
+  onSubmit: (reason: string | null) => Promise<unknown>;
+  onDone: () => void;
+  isSaving: boolean;
+}) {
+  const t = useTranslations("adminSubscriptions.lifecycleDialog");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const copy = getCopy(t)[action];
+
+  const handleSubmit = async () => {
+    const trimmed = reason.trim();
+    if (copy.requiresReason && trimmed.length < 10) {
+      setError(t("reasonTooShort"));
+      return;
+    }
+
+    try {
+      setError(null);
+      await onSubmit(copy.requiresReason ? trimmed : null);
+      onDone();
+    } catch (err) {
+      setError(getErrorMessage(err, t("genericError")));
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{copy.title}</DialogTitle>
+        <DialogDescription>{copy.description}</DialogDescription>
+      </DialogHeader>
+
+      <div className="mt-4 grid gap-3">
+        <div className="rounded-lg border border-hairline/60 px-3 py-2 text-[12px]">
+          <p className="font-medium text-ink">{subscription.planName}</p>
+          <p className="mt-0.5 font-mono text-[11px] text-ink-subtle">
+            {t("workspacePrefix")} {subscription.workspaceId}
+          </p>
+        </div>
+
+        {copy.requiresReason ? (
+        <div>
+          <Label htmlFor="lifecycle-reason" className="text-[12px] text-ink-muted">
+            {t("reasonLabel")}
+          </Label>
+          <Textarea
+            id="lifecycle-reason"
+            className="mt-1.5"
+            rows={3}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder={t("reasonPlaceholder")}
+          />
+        </div>
+        ) : null}
+
+        {error ? (
+          <p
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-[12px] text-destructive"
+          >
+            <WarningCircle size={14} weight="duotone" className="mt-0.5 shrink-0" />
+            {error}
+          </p>
+        ) : null}
+      </div>
+
+      <DialogFooter className="mt-5">
+        <Button variant="outline" onClick={onCancel} disabled={isSaving}>
+          {t("back")}
+        </Button>
+        <Button onClick={() => void handleSubmit()} disabled={isSaving}>
+          {isSaving ? copy.pending : copy.confirm}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}

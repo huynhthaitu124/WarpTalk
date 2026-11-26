@@ -6,8 +6,9 @@ use warptalk_web::extract::{Json, Path, Query};
 
 use super::AppState;
 use super::dto::{
-    AcceptDto, AcceptRequest, ChangeRoleRequest, CreateWorkspaceRequest, InvitationDto,
-    InviteRequest, MemberDto, TransferRequest, WorkspaceDto, WorkspaceSearchQuery, map_page,
+    AcceptDto, AcceptRequest, ChangeRoleRequest, CreateWorkspaceRequest, EntitlementsDto,
+    InvitationDto, InviteRequest, MemberDto, TransferRequest, WorkspaceDto, WorkspaceSearchQuery,
+    map_page,
 };
 use crate::application::invitations::AcceptBy;
 use crate::domain::WorkspaceSettings;
@@ -211,4 +212,14 @@ pub async fn pending_invitations(
 ) -> ApiResult<Vec<InvitationDto>> {
     let list = s.invitations.pending_for_user(auth.user_id()).await?;
     Ok(Json(list.into_iter().map(Into::into).collect()))
+}
+
+pub async fn entitlements(
+    State(s): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<WorkspaceId>,
+) -> ApiResult<EntitlementsDto> {
+    Ok(Json(
+        s.service.entitlements(id, auth.user_id()).await?.into(),
+    ))
 }

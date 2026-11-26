@@ -1,0 +1,815 @@
+"use client";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { createHubConnection } from "@/lib/realtime/signalr";
+import { billingService } from "@/services/billing.service";
+import { getErrorMessage } from "@/lib/api/errors";
+import type { PlanDto, PlanMutationDto } from "@/types/billing";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Edit2,
+  Loader2,
+  Plus,
+  Shield,
+  Sparkles,
+} from "lucide-react";
+import Link from "@/lib/next-shim/link";
+import { usePathname } from "@/lib/next-shim/navigation";
+import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { formatMoney } from "@/lib/format/currency";
+import { planCurrencyOptions } from "@/lib/billing/plan-request";
+
+/**
+ * The six columns below are carried, not edited, on this screen.
+ *
+ * `PUT /plans/{id}` replaces the whole plan — `UpdateFromRequest` assigns every column from the
+ * body — so a field this form never sent was not "left alone". It arrived as the C# record's
+ * default and overwrote what was stored: overage cap and rollover to 0, overage price to 4.0,
+ * invoice terms to 15 days, grace to 360 hours. Renaming a plan here silently rewrote its overage
+ * economics.
+ *
+ * They are held in form state and written straight back so that stops happening. The editor for
+ * them is /admin/plans, which is the portal page this screen predates.
+ */
+interface PlanFormState {
+  name: string;
+  slug: string;
+  tier: string;
+  price: number;
+  currency: string;
+  billingCycle: string;
+  creditsPerCycle: number;
+  overageCapCredits: number;
+  overagePricePerCredit: number;
+  lowBalanceThresholdCredits: number;
+  rolloverCapCredits: number;
+  invoiceTermsDays: number;
+  invoiceGraceHours: number;
+  maxParticipants: number;
+  maxLanguages: number;
+  voiceCloneEnabled: boolean;
+  aiAssistantEnabled: boolean;
+  glossaryEnabled: boolean;
+  dedicatedGpu: boolean;
+  features: string;
+  featuresText: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+const initialFormState: PlanFormState = {
+  name: "",
+  slug: "",
+  tier: "Startup",
+  price: 0,
+  currency: "USD",
+  billingCycle: "monthly",
+  creditsPerCycle: 1000,
+  // Mirrors SubscriptionConstants.PlanDefaults, so a plan created here starts where the server
+  // would have put it rather than somewhere this file invented.
+  overageCapCredits: 0,
+  overagePricePerCredit: 0.0001520913,
+  lowBalanceThresholdCredits: 0,
+  rolloverCapCredits: 0,
+  invoiceTermsDays: 15,
+  invoiceGraceHours: 360,
+  maxParticipants: 5,
+  maxLanguages: 3,
+  voiceCloneEnabled: false,
+  aiAssistantEnabled: false,
+  glossaryEnabled: false,
+  dedicatedGpu: false,
+  features: "[]",
+  featuresText: "",
+  sortOrder: 0,
+  isActive: true,
+};
+
+export default function AdminPlansPage() {
+  const t = useTranslations("adminBillingPlansLegacy");
+  const pathname = usePathname();
+  // Mounted at both /admin/billing/plans and the legacy /billing/plans — see the matching note
+  // in src/app/(internal)/billing/page.tsx. Stay on whichever base is already showing so the
+  // "Back" arrow below doesn't jump the person into the other layout's sidebar.
+  const basePath = pathname.startsWith("/admin") ? "/admin/billing" : "/billing";
+  const queryClient = useQueryClient();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const [formState, setFormState] = useState<PlanFormState>(initialFormState);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // SignalR for real-time plan updates in Admin panel
+  useEffect(() => {
+    const connection = createHubConnection("/hubs/notification");
+
+    connection.on("NewNotification", (notification) => {
+      if (notification?.type === "billing.plan_changed") {
+        toast.info(notification.content, { duration: 5000 });
+        queryClient.invalidateQueries({ queryKey: ["admin-plans"] });
+      }
+    });
+
+    let isMounted = true;
+    connection.start().catch((err) => {
+      if (!isMounted) return;
+      if (err?.message?.includes("stop() was called")) return;
+    });
+
+    return () => {
+      isMounted = false;
+      connection.stop();
+    };
+  }, [queryClient]);
+
+  // Queries
+  const { data: plans = [], isLoading } = useQuery({
+    queryKey: ["admin-plans"],
+    // Admin list: deactivated plans must stay visible here or they can never be re-enabled.
+    queryFn: () => billingService.getAllPlansForAdmin(),
+  });
+
+  // Mutations
+  const createMutation = useMutation({
+    mutationFn: (newPlan: PlanMutationDto) =>
+      billingService.createPlan(newPlan),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-plans"] });
+      setIsDialogOpen(false);
+      setFormState(initialFormState);
+    },
+    onError: (err: unknown) => {
+      setErrorMsg(getErrorMessage(err, t("errors.createFailed")));
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, plan }: { id: string; plan: PlanMutationDto }) =>
+      billingService.updatePlan(id, plan),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-plans"] });
+      setIsDialogOpen(false);
+      setEditingPlanId(null);
+      setFormState(initialFormState);
+    },
+    onError: (err: unknown) => {
+      setErrorMsg(getErrorMessage(err, t("errors.updateFailed")));
+    },
+  });
+
+  const handleOpenCreate = () => {
+    setEditingPlanId(null);
+    setFormState(initialFormState);
+    setErrorMsg(null);
+    setIsDialogOpen(true);
+  };
+
+  const handleOpenEdit = (plan: PlanDto) => {
+    setEditingPlanId(plan.id);
+    setFormState({
+      name: plan.name,
+      slug: plan.slug,
+      tier: plan.tier || "Startup",
+      price: plan.price,
+      currency: plan.currency || "USD",
+      billingCycle: plan.billingCycle || "monthly",
+      creditsPerCycle: plan.creditsPerCycle || 0,
+      // Read as stored and written back unchanged — see the note on PlanFormState.
+      overageCapCredits: plan.overageCapCredits,
+      overagePricePerCredit: plan.overagePricePerCredit,
+      lowBalanceThresholdCredits: plan.lowBalanceThresholdCredits,
+      rolloverCapCredits: plan.rolloverCapCredits,
+      invoiceTermsDays: plan.invoiceTermsDays,
+      invoiceGraceHours: plan.invoiceGraceHours,
+      maxParticipants: plan.maxParticipants || 0,
+      maxLanguages: plan.maxLanguages || 0,
+      voiceCloneEnabled: plan.voiceCloneEnabled || false,
+      aiAssistantEnabled: plan.aiAssistantEnabled || false,
+      glossaryEnabled: plan.glossaryEnabled || false,
+      dedicatedGpu: plan.dedicatedGpu || false,
+      features: plan.features || "[]",
+      featuresText: (() => {
+        try {
+          const arr = JSON.parse(plan.features || "[]");
+          return Array.isArray(arr) ? arr.join("\n") : "";
+        } catch {
+          return "";
+        }
+      })(),
+      sortOrder: plan.sortOrder || 0,
+      isActive: plan.isActive !== false,
+    });
+    setErrorMsg(null);
+    setIsDialogOpen(true);
+  };
+
+  const handleSave = () => {
+    setErrorMsg(null);
+
+    // Validation
+    if (!formState.name.trim()) {
+      setErrorMsg(t("errors.nameRequired"));
+      return;
+    }
+    if (formState.name.length > 100) {
+      setErrorMsg(t("errors.nameTooLong"));
+      return;
+    }
+
+    if (!formState.slug.trim()) {
+      setErrorMsg(t("errors.slugRequired"));
+      return;
+    }
+    if (formState.slug.length > 50) {
+      setErrorMsg(t("errors.slugTooLong"));
+      return;
+    }
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(formState.slug)) {
+      setErrorMsg(t("errors.slugInvalid"));
+      return;
+    }
+
+    if (!formState.tier.trim()) {
+      setErrorMsg(t("errors.tierRequired"));
+      return;
+    }
+    if (formState.tier.length > 20) {
+      setErrorMsg(t("errors.tierTooLong"));
+      return;
+    }
+
+    const currency = (formState.currency || "").toUpperCase().trim();
+    if (currency.length !== 3) {
+      setErrorMsg(t("errors.currencyInvalid"));
+      return;
+    }
+
+    const billingCycle = (formState.billingCycle || "").toLowerCase().trim();
+    if (
+      billingCycle !== "monthly" &&
+      billingCycle !== "semiannual" &&
+      billingCycle !== "yearly"
+    ) {
+      setErrorMsg(t("errors.billingCycleInvalid"));
+      return;
+    }
+
+    // Stripe Minimum Charge Limits Validation
+    let minPrice = 0.5;
+    if (currency === "VND") minPrice = 15000;
+    else if (currency === "JPY") minPrice = 50;
+    else if (currency === "GBP") minPrice = 0.3;
+    else minPrice = 0.5;
+
+    if (formState.price < minPrice) {
+      setErrorMsg(t("errors.priceTooLow", { currency, minPrice }));
+      return;
+    }
+
+    if (formState.creditsPerCycle < 0) {
+      setErrorMsg(t("errors.creditsNegative"));
+      return;
+    }
+    if (formState.maxParticipants < 2) {
+      setErrorMsg(t("errors.maxParticipantsTooLow"));
+      return;
+    }
+    if (formState.maxLanguages < 1) {
+      setErrorMsg(t("errors.maxLanguagesTooLow"));
+      return;
+    }
+    if (formState.sortOrder < 0) {
+      setErrorMsg(t("errors.sortOrderNegative"));
+      return;
+    }
+
+    // Convert lines to JSON array string
+    const lines = formState.featuresText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const { featuresText, ...rest } = formState;
+    void featuresText;
+    const payload = {
+      ...rest,
+      features: JSON.stringify(lines),
+    };
+
+    if (editingPlanId) {
+      updateMutation.mutate({ id: editingPlanId, plan: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
+  };
+
+  return (
+    <div className="flex min-h-full flex-col gap-6 p-6 pb-12">
+      {/* Header */}
+      <div className="flex items-center justify-between bg-surface-1 p-6 rounded-xl border border-hairline shadow-linear">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <Link href={basePath}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <Badge
+              variant="outline"
+              className="bg-surface-2 text-ink border-hairline"
+            >
+              {t("header.badge")}
+            </Badge>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {t("header.title")}
+            </h1>
+          </div>
+          <p className="text-sm text-muted-foreground mt-2">
+            {t("header.description")}
+          </p>
+        </div>
+        <Button
+          onClick={handleOpenCreate}
+          className="bg-primary hover:bg-primary-hover text-primary-foreground gap-2 rounded-md"
+        >
+          <Plus className="h-4 w-4" /> {t("header.addNewPlan")}
+        </Button>
+      </div>
+
+      {/* Plan list card */}
+      <Card className="rounded-xl border-hairline bg-surface-1 shadow-linear">
+        <CardHeader>
+          <CardTitle>{t("list.title")}</CardTitle>
+          <CardDescription>
+            {t("list.description")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex h-32 items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : plans.length === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center gap-2 border border-dashed rounded-lg border-hairline p-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                {t("list.empty")}
+              </p>
+              <Button onClick={handleOpenCreate} variant="outline" size="sm">
+                {t("list.createFirst")}
+              </Button>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="border-hairline hover:bg-transparent">
+                  <TableHead className="w-[180px]">{t("list.columns.name")}</TableHead>
+                  <TableHead>{t("list.columns.tier")}</TableHead>
+                  <TableHead>{t("list.columns.price")}</TableHead>
+                  <TableHead>{t("list.columns.creditsPerCycle")}</TableHead>
+                  <TableHead>{t("list.columns.limits")}</TableHead>
+                  <TableHead>{t("list.columns.status")}</TableHead>
+                  <TableHead className="text-right">{t("list.columns.actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {plans.map((plan) => (
+                  <TableRow
+                    key={plan.id}
+                    className="border-hairline hover:bg-surface-2/20"
+                  >
+                    <TableCell className="font-medium">
+                      <div>
+                        <span className="text-sm">{plan.name}</span>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {plan.slug}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="bg-surface-2">
+                        {plan.tier}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-semibold text-sm">
+                        {plan.price === 0
+                          ? t("list.free")
+                          : formatMoney(plan.price, plan.currency)}
+                      </span>
+                      <div className="text-xs text-muted-foreground capitalize">
+                        {plan.billingCycle}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm">
+                        {plan.creditsPerCycle?.toLocaleString()}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1 text-xs">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2
+                            className={`h-3.5 w-3.5 ${plan.voiceCloneEnabled ? "text-emerald-500" : "text-muted-foreground"}`}
+                          />
+                          {t("list.voiceClone", {
+                            status: plan.voiceCloneEnabled
+                              ? t("list.enabled")
+                              : t("list.disabled"),
+                          })}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2
+                            className={`h-3.5 w-3.5 ${plan.glossaryEnabled ? "text-emerald-500" : "text-muted-foreground"}`}
+                          />
+                          {t("list.glossaryAccess", {
+                            status: plan.glossaryEnabled
+                              ? t("list.enabled")
+                              : t("list.disabled"),
+                          })}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          plan.isActive !== false ? "default" : "destructive"
+                        }
+                        className="rounded-full"
+                      >
+                        {plan.isActive !== false ? t("list.active") : t("list.inactive")}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          onClick={() => handleOpenEdit(plan)}
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-ink"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Add / Edit Dialog */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent
+          style={{ maxWidth: "900px", width: "95vw" }}
+          className="bg-surface-1 border-hairline text-ink rounded-lg shadow-linear max-h-[90vh] overflow-y-auto"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              {editingPlanId
+                ? t("dialog.editTitle")
+                : t("dialog.createTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("dialog.description")}
+            </DialogDescription>
+          </DialogHeader>
+
+          {errorMsg && (
+            <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/20 text-destructive text-sm p-3 rounded-lg">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <div className="grid gap-5 py-4">
+            {/* General Info */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="name">{t("dialog.fields.planName")}</Label>
+                <Input
+                  id="name"
+                  placeholder={t("dialog.fields.planNamePlaceholder")}
+                  value={formState.name}
+                  onChange={(e) =>
+                    setFormState({ ...formState, name: e.target.value })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="slug">{t("dialog.fields.slug")}</Label>
+                <Input
+                  id="slug"
+                  placeholder={t("dialog.fields.slugPlaceholder")}
+                  value={formState.slug}
+                  onChange={(e) =>
+                    setFormState({ ...formState, slug: e.target.value })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+            </div>
+
+            {/* Pricing & Limits */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="price">{t("dialog.fields.price")}</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  value={formState.price}
+                  onChange={(e) =>
+                    setFormState({
+                      ...formState,
+                      price: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="currency">{t("dialog.fields.currency")}</Label>
+                <Select
+                  value={formState.currency}
+                  onValueChange={(val) =>
+                    setFormState({ ...formState, currency: val || "" })
+                  }
+                >
+                  <SelectTrigger className="w-full bg-surface-2 border-hairline focus:ring-primary-focus">
+                    <SelectValue placeholder={t("dialog.fields.currencyPlaceholder")} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-surface-1 border-hairline text-ink">
+                    {/* New plans are USD; only a plan already sold in VND may keep it. */}
+                    {planCurrencyOptions(
+                      editingPlanId ? plans.find((plan) => plan.id === editingPlanId)?.currency : null,
+                    ).map((currency) => (
+                      <SelectItem key={currency} value={currency}>
+                        {currency}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="billingCycle">{t("dialog.fields.billingCycle")}</Label>
+                <Select
+                  value={formState.billingCycle}
+                  onValueChange={(val) =>
+                    setFormState({ ...formState, billingCycle: val || "" })
+                  }
+                >
+                  <SelectTrigger className="w-full bg-surface-2 border-hairline focus:ring-primary-focus">
+                    <SelectValue placeholder={t("dialog.fields.billingCyclePlaceholder")} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-surface-1 border-hairline text-ink">
+                    <SelectItem value="monthly">{t("dialog.fields.billingCycleMonthly")}</SelectItem>
+                    <SelectItem value="semiannual">{t("dialog.fields.billingCycleSemiannual")}</SelectItem>
+                    <SelectItem value="yearly">{t("dialog.fields.billingCycleYearly")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Technical Limits */}
+            <div className="grid grid-cols-4 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="credits">{t("dialog.fields.creditsPerCycle")}</Label>
+                <Input
+                  id="credits"
+                  type="number"
+                  value={formState.creditsPerCycle}
+                  onChange={(e) =>
+                    setFormState({
+                      ...formState,
+                      creditsPerCycle: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="tier">{t("dialog.fields.tierLevel")}</Label>
+                <Input
+                  id="tier"
+                  placeholder={t("dialog.fields.tierLevelPlaceholder")}
+                  value={formState.tier}
+                  onChange={(e) =>
+                    setFormState({ ...formState, tier: e.target.value })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="maxParticipants">{t("dialog.fields.maxParticipants")}</Label>
+                <Input
+                  id="maxParticipants"
+                  type="number"
+                  value={formState.maxParticipants}
+                  onChange={(e) =>
+                    setFormState({
+                      ...formState,
+                      maxParticipants: parseInt(e.target.value) || 0,
+                    })
+                  }
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="maxLanguages">{t("dialog.fields.maxLanguages")}</Label>
+                <Input
+                  id="maxLanguages"
+                  type="number"
+                  min={1}
+                  max={3}
+                  value={formState.maxLanguages}
+                  onChange={(e) => {
+                    let val = parseInt(e.target.value) || 1;
+                    if (val > 3) val = 3;
+                    if (val < 1) val = 1;
+                    setFormState({ ...formState, maxLanguages: val });
+                  }}
+                  className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+                />
+              </div>
+            </div>
+
+            {/* Feature Flags */}
+            <div className="border border-hairline rounded-lg p-4 bg-surface-2/20 space-y-4">
+              <h3 className="text-sm font-semibold text-ink/80 mb-2 flex items-center gap-1.5">
+                <Shield className="h-4 w-4 text-primary" /> {t("dialog.featureFlags.heading")}
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="voiceClone">{t("dialog.featureFlags.voiceCloning")}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("dialog.featureFlags.voiceCloningHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="voiceClone"
+                    checked={formState.voiceCloneEnabled}
+                    onCheckedChange={(checked) =>
+                      setFormState({ ...formState, voiceCloneEnabled: checked })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="aiAssistant">{t("dialog.featureFlags.aiAssistant")}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("dialog.featureFlags.aiAssistantHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="aiAssistant"
+                    checked={formState.aiAssistantEnabled}
+                    onCheckedChange={(checked) =>
+                      setFormState({
+                        ...formState,
+                        aiAssistantEnabled: checked,
+                      })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="glossaryEnabled">{t("dialog.featureFlags.glossaryAccess")}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("dialog.featureFlags.glossaryAccessHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="glossaryEnabled"
+                    checked={formState.glossaryEnabled}
+                    onCheckedChange={(checked) =>
+                      setFormState({ ...formState, glossaryEnabled: checked })
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Sub Limits & Features JSON */}
+            <div className="grid gap-2">
+              <Label htmlFor="sortOrder">{t("dialog.sortOrder")}</Label>
+              <Input
+                id="sortOrder"
+                type="number"
+                value={formState.sortOrder}
+                onChange={(e) =>
+                  setFormState({
+                    ...formState,
+                    sortOrder: parseInt(e.target.value) || 0,
+                  })
+                }
+                className="bg-surface-2 border-hairline focus-visible:ring-primary-focus"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="features">{t("dialog.highlights")}</Label>
+              <Textarea
+                id="features"
+                rows={4}
+                placeholder={t("dialog.highlightsPlaceholder")}
+                value={formState.featuresText}
+                onChange={(e) =>
+                  setFormState({ ...formState, featuresText: e.target.value })
+                }
+                className="bg-surface-2 border-hairline focus-visible:ring-primary-focus font-mono text-xs"
+              />
+            </div>
+
+            {editingPlanId && (
+              <div className="flex items-center justify-between border-t border-hairline pt-3 mt-1">
+                <div className="space-y-0.5">
+                  <Label htmlFor="isActive">{t("dialog.activeStatus")}</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {t("dialog.activeStatusHint")}
+                  </p>
+                </div>
+                <Switch
+                  id="isActive"
+                  checked={formState.isActive}
+                  onCheckedChange={(checked) =>
+                    setFormState({ ...formState, isActive: checked })
+                  }
+                />
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="border-t border-hairline pt-4 gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsDialogOpen(false)}
+              className="rounded-md"
+            >
+              {t("dialog.cancel")}
+            </Button>
+            <Button
+              onClick={handleSave}
+              className="bg-primary hover:bg-primary-hover text-primary-foreground rounded-md"
+              disabled={createMutation.isPending || updateMutation.isPending}
+            >
+              {createMutation.isPending || updateMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("dialog.saving")}
+                </>
+              ) : (
+                t("dialog.save")
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+    </div>
+  );
+}

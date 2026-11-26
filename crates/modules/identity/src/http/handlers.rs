@@ -1,4 +1,6 @@
-use axum::extract::State;
+use std::net::IpAddr;
+
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use base64::Engine;
 use warptalk_kernel::{AppError, AppResult};
@@ -7,6 +9,7 @@ use warptalk_web::extract::Json;
 
 use super::HttpState;
 use super::dto::*;
+use crate::application::ports::ClientInfo;
 use crate::application::voice::SampleInput;
 use crate::application::{RegisterCommand, SettingsUpdate};
 use crate::domain::validation;
@@ -34,18 +37,83 @@ pub async fn verify_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// What the request says about the client, for the user's sessions page. Display only: the
+/// forwarding headers are client-controllable when no proxy strips them, so nothing here may be
+/// used for an access decision.
+fn client_info(h: &HeaderMap) -> ClientInfo {
+    let header = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).map(str::trim);
+    let device_info = header("user-agent")
+        .filter(|v| !v.is_empty())
+        .map(|v| v.chars().take(255).collect());
+    let ip_address = header("x-forwarded-for")
+        .and_then(|v| v.split(',').next())
+        .or_else(|| header("x-real-ip"))
+        .and_then(|v| v.trim().parse::<IpAddr>().ok())
+        .map(|ip| ip.to_string())
+        .filter(|ip| ip.len() <= 45);
+    ClientInfo {
+        device_info,
+        ip_address,
+    }
+}
+
 pub async fn login(
     State(s): State<HttpState>,
+    headers: HeaderMap,
     Json(b): Json<LoginRequest>,
 ) -> AppResult<Json<AuthResponse>> {
-    Ok(Json(s.auth.login(&b.email, &b.password).await?.into()))
+    let client = client_info(&headers);
+    Ok(Json(
+        s.auth.login(&b.email, &b.password, client).await?.into(),
+    ))
 }
 
 pub async fn refresh(
     State(s): State<HttpState>,
+    headers: HeaderMap,
     Json(b): Json<RefreshRequest>,
 ) -> AppResult<Json<AuthResponse>> {
-    Ok(Json(s.auth.refresh(&b.refresh_token).await?.into()))
+    let client = client_info(&headers);
+    Ok(Json(s.auth.refresh(&b.refresh_token, client).await?.into()))
+}
+
+pub async fn list_sessions(
+    State(s): State<HttpState>,
+    u: AuthUser,
+) -> AppResult<Json<Vec<UserSessionDto>>> {
+    let current = u.0.sid;
+    let list = s.auth.sessions(u.user_id()).await?;
+    Ok(Json(
+        list.into_iter()
+            .map(|r| UserSessionDto::new(r, current))
+            .collect(),
+    ))
+}
+
+/// Signs out another of the caller's sessions. The current one ends through `/auth/logout`, which
+/// also clears the client's tokens.
+pub async fn revoke_session(
+    State(s): State<HttpState>,
+    u: AuthUser,
+    Path(id): Path<uuid::Uuid>,
+) -> AppResult<StatusCode> {
+    if id == u.0.sid {
+        return Err(AppError::coded(
+            400,
+            "CURRENT_SESSION",
+            "use sign out to end the current session",
+        ));
+    }
+    s.auth.revoke_session(u.user_id(), id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn revoke_other_sessions(
+    State(s): State<HttpState>,
+    u: AuthUser,
+) -> AppResult<StatusCode> {
+    s.auth.revoke_other_sessions(u.user_id(), u.0.sid).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn logout(

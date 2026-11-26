@@ -167,6 +167,7 @@ async fn suggestion_worker_starts_and_stops_cleanly() {
         Arc::new(InMemoryVectorStore::new()),
         ai,
         settings,
+        None,
     )
     .await
     .unwrap();

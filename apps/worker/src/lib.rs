@@ -29,8 +29,8 @@ use warptalk_ai_plane::knowledge::{
     DenyDocumentAccess, KnowledgeParts, ServiceRetriever, build_knowledge_module,
 };
 use warptalk_assistant::suggestion::{
-    EngineDeps, RedisConsentPolicy, RedisRoomSignals, SettingsConfigSource, SuggestionEngine,
-    SuggestionState, SuggestionWorker,
+    EngineDeps, LlmResolver, RedisConsentPolicy, RedisRoomSignals, ScriptedResolver,
+    SettingsConfigSource, SuggestionEngine, SuggestionState, SuggestionWorker,
 };
 use warptalk_knowledge::infrastructure::{INDEX_RESULTS_STREAM, RedisResultPublisher};
 use warptalk_knowledge::{KnowledgeModule, index_consumer_config, purge_consumer_config};
@@ -128,12 +128,15 @@ pub struct AiPlane {
 }
 
 /// Build the knowledge module and the suggestion worker with the worker's adapters.
+/// `suggestion_script` (dev test mode, see `warptalk_config::TestModeConfig`) replaces the
+/// suggestion LLM with the scripted provider.
 pub async fn build_ai_plane(
     pool: PgPool,
     redis_url: &str,
     vectors: Arc<dyn VectorStore>,
     ai: Arc<AiProviders>,
     settings: SettingsStore,
+    suggestion_script: Option<std::path::PathBuf>,
 ) -> anyhow::Result<AiPlane> {
     let redis = warptalk_bus::connect(redis_url)
         .await
@@ -153,11 +156,18 @@ pub async fn build_ai_plane(
     .await;
 
     warptalk_assistant::suggestion::register_config(&settings);
+    let llm: Arc<dyn LlmResolver> = match suggestion_script {
+        Some(path) => {
+            tracing::warn!(script = %path.display(), "suggestion TEST MODE: scripted LLM, not for production");
+            Arc::new(ScriptedResolver::new(path))
+        }
+        None => ai.clone(),
+    };
     let engine = SuggestionEngine::new(EngineDeps {
         rooms: Arc::new(PgSuggestionRoomDirectory::new(pool)),
         signals: Arc::new(RedisRoomSignals::new(redis.clone())),
         consent: Arc::new(RedisConsentPolicy::new(redis.clone())),
-        llm: ai.clone(),
+        llm,
         knowledge: Arc::new(ServiceRetriever::new(knowledge.service())),
         config: Arc::new(SettingsConfigSource::new(settings)),
         clock: Arc::new(SystemClock),

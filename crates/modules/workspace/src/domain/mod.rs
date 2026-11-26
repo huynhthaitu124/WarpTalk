@@ -1,6 +1,7 @@
 //! Value objects and authorization policy. Pure Rust, no IO.
 
 pub mod documents;
+pub mod entitlements;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

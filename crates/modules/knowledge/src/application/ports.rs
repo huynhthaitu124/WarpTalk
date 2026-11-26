@@ -140,6 +140,38 @@ pub struct FactRecord {
     pub chunk_id: Option<Uuid>,
 }
 
+/// A mirrored chunk row (what the management API lists and edits).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredChunk {
+    pub id: Uuid,
+    pub source_type: String,
+    pub source_id: String,
+    pub kind: ChunkKind,
+    pub ordinal: u32,
+    pub collection: String,
+    pub payload: Value,
+    pub indexed_at: DateTime<Utc>,
+}
+
+/// Keyset position of a chunk listing (newest first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkCursor {
+    pub indexed_at: DateTime<Utc>,
+    pub id: Uuid,
+}
+
+/// Filter of a chunk listing. Transcript chunks are never listed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChunkListFilter {
+    /// `None` = every listable source type.
+    pub source_types: Option<Vec<String>>,
+    pub fact_category: Option<FactCategory>,
+    /// `Some` limits documents to these ids (members); `None` = unrestricted (owner/admin).
+    pub allowed_document_ids: Option<Vec<Uuid>>,
+    /// `Some` limits meeting summaries to these meetings.
+    pub allowed_meeting_ids: Option<Vec<Uuid>>,
+}
+
 /// One source (document, transcript, ...) within a workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceKey<'a> {
@@ -218,6 +250,30 @@ pub trait KnowledgeRepository: Send + Sync {
         category: Option<FactCategory>,
         limit: u32,
     ) -> AppResult<Vec<FactRecord>>;
+
+    // --- chunk management ---
+    /// Newest first by `(indexed_at, id)`, strictly after `after`.
+    async fn list_chunks(
+        &self,
+        workspace: Uuid,
+        filter: &ChunkListFilter,
+        after: Option<ChunkCursor>,
+        limit: u32,
+    ) -> AppResult<Vec<StoredChunk>>;
+    /// A manageable (non-transcript) chunk of the workspace.
+    async fn get_chunk(&self, workspace: Uuid, id: Uuid) -> AppResult<Option<StoredChunk>>;
+    /// Replace the payload of a fact chunk and sync its `knowledge.facts` row.
+    async fn update_fact_chunk(
+        &self,
+        workspace: Uuid,
+        id: Uuid,
+        category: FactCategory,
+        fact: &str,
+        payload: &Value,
+        text_hash: &str,
+    ) -> AppResult<()>;
+    /// Delete the chunk row and the fact row owned by it. Returns whether a chunk row existed.
+    async fn delete_chunk(&self, workspace: Uuid, id: Uuid) -> AppResult<bool>;
 
     /// Delete chunk rows and facts of a source (both filters `None` = the whole workspace).
     /// Returns `(chunks, facts)` deleted.

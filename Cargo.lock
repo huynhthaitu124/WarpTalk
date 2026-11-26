@@ -4120,6 +4120,7 @@ dependencies = [
  "warptalk-livekit",
  "warptalk-llm",
  "warptalk-meeting",
+ "warptalk-notification",
  "warptalk-qdrant",
  "warptalk-room",
  "warptalk-settings",
@@ -4147,9 +4148,11 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
  "uuid",
  "warptalk-bus",
+ "warptalk-config",
  "warptalk-contracts",
  "warptalk-db",
  "warptalk-kernel",
@@ -4394,6 +4397,7 @@ dependencies = [
  "warptalk-identity",
  "warptalk-knowledge",
  "warptalk-meeting",
+ "warptalk-notification",
  "warptalk-room",
  "warptalk-settings",
  "warptalk-telemetry",
@@ -4425,6 +4429,22 @@ dependencies = [
 [[package]]
 name = "warptalk-notification"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "uuid",
+ "warptalk-config",
+ "warptalk-db",
+ "warptalk-kernel",
+ "warptalk-web",
+]
 
 [[package]]
 name = "warptalk-openai"

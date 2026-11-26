@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::FromRef;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use warptalk_web::JwtKeys;
 
 use crate::application::voice::VoiceService;
@@ -35,6 +35,12 @@ pub(crate) fn router(state: HttpState) -> Router {
         .route("/auth/login", post(handlers::login))
         .route("/auth/refresh", post(handlers::refresh))
         .route("/auth/logout", post(handlers::logout))
+        .route("/auth/sessions", get(handlers::list_sessions))
+        .route(
+            "/auth/sessions/revoke-others",
+            post(handlers::revoke_other_sessions),
+        )
+        .route("/auth/sessions/{id}", delete(handlers::revoke_session))
         .route("/me", get(handlers::me))
         .route(
             "/me/profile",

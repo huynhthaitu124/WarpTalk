@@ -144,7 +144,7 @@ fn derive_id(parts: &[&str]) -> Uuid {
     Uuid::from_bytes(b)
 }
 
-fn text_hash(text: &str) -> String {
+pub(crate) fn text_hash(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .take(16)

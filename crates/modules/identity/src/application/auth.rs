@@ -8,7 +8,8 @@ use warptalk_kernel::{AppError, Clock, UserId};
 use warptalk_web::JwtKeys;
 
 use super::ports::{
-    IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, UserAuthRecord, VerificationMailer,
+    ClientInfo, IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, SessionRecord,
+    UserAuthRecord, VerificationMailer,
 };
 use super::tokens::{generate_token, hash_token};
 use crate::domain::password::{hash_password, verify_password};
@@ -139,7 +140,12 @@ impl AuthService {
         }
     }
 
-    pub async fn login(&self, email: &str, password: &str) -> Result<AuthSession> {
+    pub async fn login(
+        &self,
+        email: &str,
+        password: &str,
+        client: ClientInfo,
+    ) -> Result<AuthSession> {
         let now = self.clock.now();
         let rec = match validation::normalize_email(email) {
             Ok(e) => self.repo.find_auth_by_email(&e).await?,
@@ -179,10 +185,11 @@ impl AuthService {
             return Err(account_refused(code));
         }
         self.repo.record_login_success(rec.id, now).await?;
-        self.issue_session(&rec, Uuid::now_v7(), now, None).await
+        self.issue_session(&rec, Uuid::now_v7(), now, None, client)
+            .await
     }
 
-    pub async fn refresh(&self, refresh_token: &str) -> Result<AuthSession> {
+    pub async fn refresh(&self, refresh_token: &str, client: ClientInfo) -> Result<AuthSession> {
         let now = self.clock.now();
         let new_token = generate_token();
         let outcome = self
@@ -192,6 +199,7 @@ impl AuthService {
                 &hash_token(&new_token),
                 now + self.policy.refresh_ttl,
                 now,
+                &client,
             )
             .await?;
         let (user_id, family_id) = match outcome {
@@ -231,7 +239,7 @@ impl AuthService {
             self.repo.revoke_family(family_id, now).await?;
             return Err(account_refused(code));
         }
-        self.issue_session(&rec, family_id, now, Some(new_token))
+        self.issue_session(&rec, family_id, now, Some(new_token), client)
             .await
     }
 
@@ -242,6 +250,36 @@ impl AuthService {
         Ok(())
     }
 
+    /// The user's signed-in sessions (one per live refresh-token family), newest activity first.
+    pub async fn sessions(&self, user: UserId) -> Result<Vec<SessionRecord>> {
+        self.repo.list_sessions(user, self.clock.now()).await
+    }
+
+    /// Signs out one of the user's sessions. 404 when it is not theirs or has already ended,
+    /// so a session id from another account is indistinguishable from an unknown one.
+    pub async fn revoke_session(&self, user: UserId, family_id: Uuid) -> Result<()> {
+        if self
+            .repo
+            .revoke_user_family(user, family_id, self.clock.now())
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::coded(
+                404,
+                "SESSION_NOT_FOUND",
+                "session not found",
+            ))
+        }
+    }
+
+    /// Signs out every session of the user except `current`. Returns the revoked token count.
+    pub async fn revoke_other_sessions(&self, user: UserId, current: Uuid) -> Result<u64> {
+        self.repo
+            .revoke_other_families(user, current, self.clock.now())
+            .await
+    }
+
     /// `existing_refresh`: already-persisted token (refresh flow); otherwise a new one is stored.
     async fn issue_session(
         &self,
@@ -249,6 +287,7 @@ impl AuthService {
         family: Uuid,
         now: DateTime<Utc>,
         existing_refresh: Option<String>,
+        client: ClientInfo,
     ) -> Result<AuthSession> {
         let refresh_token = match existing_refresh {
             Some(t) => t,
@@ -261,6 +300,7 @@ impl AuthService {
                         token_hash: hash_token(&t),
                         expires_at: now + self.policy.refresh_ttl,
                         now,
+                        client,
                     })
                     .await?;
                 t

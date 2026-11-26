@@ -1,0 +1,236 @@
+/**
+ * Reading an AI meeting summary, whatever shape it arrived in.
+ *
+ * The assistant now emits a summary whose shape comes from a template — a standup and an
+ * interview no longer get the same sections — and every item carries `atMs`, the moment in
+ * the meeting it came from, so the reader can jump to the transcript and check it.
+ *
+ * Old summaries are still in production storage in the previous shape: `decisions` as bare
+ * strings, `actionItems` as `{owner, task}`, no citations, no template. Those must keep
+ * rendering. A migration cannot fix them — the citation was never recorded, so there is
+ * nothing to backfill — which means both shapes have to be readable indefinitely.
+ *
+ * Pure so the parsing can be tested without a meeting; the node test runner strips types but
+ * cannot parse JSX, so this cannot live in the panel that renders it.
+ */
+
+export type MeetingSummaryItem = {
+  text: string;
+  /** Present on action items only. */
+  owner?: string;
+  /** Milliseconds from the start of the meeting, or null for a summary written before
+   *  citations existed. A null renders as text with nothing to click. */
+  atMs: number | null;
+  /** The OTHER moments the item rests on, ascending and without repeats.
+   *
+   *  A sentence that summarises an exchange came from several turns by several speakers, and
+   *  `atMs` can only name one of them — it stays the primary moment, the one a click jumps to.
+   *  Empty rather than absent, so nothing downstream has to guard before iterating. */
+  alsoAtMs: readonly number[];
+};
+
+export type MeetingSummarySectionView = {
+  key: string;
+  title: string;
+  items: MeetingSummaryItem[];
+};
+
+/** Titles for the sections the templates produce. */
+const SECTION_TITLES: Record<string, string> = {
+  narrative: "What happened",
+  decisions: "Decisions",
+  actionItems: "Action items",
+  action_items: "Action items",
+  // Not a summary template section: the minutes drafter adds it for a recurring meeting,
+  // quoting what earlier occurrences left open.
+  carriedOver: "Carried over from the last meeting",
+  openQuestions: "Open questions",
+  // Not a summary template section either: the minutes editor adds it for points a secretary
+  // writes in by hand (see DISCUSSION_KEY in minutes-document.ts).
+  discussion: "Discussion points",
+  progress: "Progress",
+  plans: "Plans",
+  blockers: "Blockers",
+  background: "Background",
+  strengths: "Strengths",
+  concerns: "Concerns",
+  shown: "What was shown",
+  reactions: "Reactions",
+  objections: "Objections",
+  problems: "Problems raised",
+  options: "Options considered",
+};
+
+/**
+ * A key with no entry above still gets a readable heading rather than a raw camelCase
+ * token. The templates live in the AI service, so this map WILL fall behind one day; when it
+ * does, a new section should look slightly plain, not broken.
+ */
+export function sectionTitle(key: string): string {
+  if (SECTION_TITLES[key]) return SECTION_TITLES[key];
+  // Sentence case, matching the titles above ("Open questions", not "Open Questions").
+  const spaced = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * The shapes a summary can be rewritten into.
+ *
+ * Mirrors warptalk-ai's summary_templates registry. Two copies of a list is a drift risk, but
+ * the alternative — an endpoint whose only job is to list six constants — buys a network
+ * round trip on every page load to avoid an edit that happens once a quarter. An unknown key
+ * falls back to General on the AI side, so a stale entry here degrades rather than breaks.
+ */
+export const SUMMARY_TEMPLATES: { key: string; label: string; description: string }[] = [
+  {
+    key: "general",
+    label: "General meeting",
+    description: "Overview, decisions, action items and anything left unresolved.",
+  },
+  {
+    key: "traceable",
+    label: "Traceable summary",
+    description: "Every sentence carries the moments it came from.",
+  },
+  { key: "standup", label: "Standup", description: "Per-person progress, plans and blockers." },
+  {
+    key: "interview",
+    label: "Candidate interview",
+    description: "Background, answers, strengths, concerns and next steps.",
+  },
+  {
+    key: "demo",
+    label: "Product demo",
+    description: "What was shown, how it landed, objections and follow-ups.",
+  },
+  {
+    key: "technical",
+    label: "Technical discussion",
+    description: "Problems, options weighed, what was chosen and why.",
+  },
+];
+
+export const DEFAULT_SUMMARY_TEMPLATE = "general";
+
+/** Keys that are not sections of the summary body. */
+const NON_SECTION_KEYS = new Set([
+  "summary",
+  "citations",
+  "templateKey",
+  "insufficientData",
+  "translations",
+]);
+
+function toMs(value: unknown): number | null {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
+/**
+ * The supporting moments, through exactly the rule `atMs` already goes through.
+ *
+ * One unusable element drops rather than failing the item: a sentence with three good moments and
+ * one the assistant garbled is still a sentence with three good moments, and losing it entirely
+ * would be a worse answer than losing the fourth anchor.
+ *
+ * Ascending and de-duplicated — a repeated moment is not a second piece of evidence, and a reader
+ * stepping through them expects to travel forwards through the meeting.
+ */
+function toMsList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+
+  const moments = new Set<number>();
+  for (const entry of value) {
+    const ms = toMs(entry);
+    if (ms !== null) moments.add(ms);
+  }
+  return Array.from(moments).sort((left, right) => left - right);
+}
+
+function toItem(raw: unknown): MeetingSummaryItem | null {
+  // The pre-template shape: a decision was just a string.
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    return text ? { text, atMs: null, alsoAtMs: [] } : null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+
+  const row = raw as Record<string, unknown>;
+  // `task` is the action-item spelling; `text` is every other section's. Also allow description.
+  const text = String(row.text ?? row.task ?? row.description ?? "").trim();
+  if (!text) return null;
+
+  const ownerRaw = row.owner ?? row.assignee;
+  const owner = typeof ownerRaw === "string" ? ownerRaw.trim() : "";
+  return {
+    text,
+    ...(owner ? { owner } : {}),
+    atMs: toMs(row.atMs),
+    alsoAtMs: toMsList(row.alsoAtMs),
+  };
+}
+
+export function parseSummarySections(
+  parsed: Record<string, unknown>,
+): MeetingSummarySectionView[] {
+  const sections: MeetingSummarySectionView[] = [];
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (NON_SECTION_KEYS.has(key) || !Array.isArray(value)) continue;
+    const items = value.map(toItem).filter((item): item is MeetingSummaryItem => item !== null);
+    // An empty section is dropped rather than rendered as a heading over nothing. The
+    // template declares every section it could produce, so most meetings leave some empty.
+    if (items.length > 0) sections.push({ key, title: sectionTitle(key), items });
+  }
+
+  return sections;
+}
+
+/**
+ * The transcript segment a citation points at.
+ *
+ * Nearest-at-or-before, not nearest-overall: a citation marks where a point was made, and
+ * the sentence that made it started at or before that moment. Jumping forward to a later
+ * segment would land the reader after the evidence they came to check.
+ *
+ * Falls back to the first segment starting after the citation when every segment is later —
+ * which happens when the summary cites a moment the stored transcript trimmed away.
+ */
+export function findSegmentAtMs<T extends { startTimeMs?: number | null }>(
+  segments: readonly T[],
+  atMs: number | null,
+): T | null {
+  if (atMs === null || segments.length === 0) return null;
+
+  let best: T | null = null;
+  let bestStart = -1;
+  let firstAfter: T | null = null;
+  let firstAfterStart = Number.POSITIVE_INFINITY;
+
+  for (const segment of segments) {
+    const start = typeof segment.startTimeMs === "number" ? segment.startTimeMs : null;
+    if (start === null) continue;
+
+    if (start <= atMs && start > bestStart) {
+      best = segment;
+      bestStart = start;
+    } else if (start > atMs && start < firstAfterStart) {
+      firstAfter = segment;
+      firstAfterStart = start;
+    }
+  }
+
+  return best ?? firstAfter;
+}
+
+/** A citation's moment as mm:ss, for the label on the control that jumps to it. */
+export function formatCitationTime(atMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(atMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}

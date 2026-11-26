@@ -1,0 +1,67 @@
+{
+  "accessDenied": {
+    "title": "Access Denied",
+    "description": "Only workspace Owners and Administrators can view plugin activity."
+  },
+  "loadError": {
+    "title": "Couldn't load plugin activity",
+    "description": "Retry, and if it keeps failing check that the assistant service is reachable."
+  },
+  "retrying": "Retrying…",
+  "retry": "Retry",
+  "allPlugins": "All plugins",
+  "allMembers": "All members",
+  "memberFallback": "Member",
+  "empty": {
+    "noMoreTitle": "No more activity",
+    "noMoreDescription": "That was the last page.",
+    "noMatchTitle": "No activity matches these filters",
+    "noMatchDescription": "Clear a filter to see more.",
+    "noActivityTitle": "No plugin activity yet",
+    "noActivityDescription": "When WarpBot runs a plugin tool for someone in this workspace, it is listed here."
+  },
+  "table": {
+    "time": "Time",
+    "member": "Member",
+    "plugin": "Plugin",
+    "tool": "Tool",
+    "result": "Result"
+  },
+  "noLongerMember": "No longer a member",
+  "page": "Page {page}",
+  "previous": "Previous",
+  "next": "Next",
+  "outcome": {
+    "succeeded": "Succeeded",
+    "blocked": "Blocked",
+    "blockedHint": "This workspace doesn't allow this plugin. Add it on the workspace plugin page.",
+    "workspaceToolBlocked": "Blocked by workspace",
+    "workspaceToolBlockedHint": "The workspace Owner blocked this tool for WarpBot. Only the Owner can allow it again, on the workspace plugin page.",
+    "turnedOff": "Turned off by member",
+    "turnedOffHint": "The member switched this tool off for WarpBot. Only they can turn it back on.",
+    "declined": "Declined",
+    "declinedHint": "The member cancelled the provider's consent screen.",
+    "awaitingConfirmation": "Awaiting confirmation",
+    "awaitingConfirmationHint": "WarpBot asked the member to confirm this action in chat.",
+    "needsSetup": "Needs setup",
+    "needsSetupHint": "The member's connection is missing or incomplete. They fix it in My connections.",
+    "providerError": "Provider error",
+    "providerErrorHint": "The provider didn't respond or limited requests. Nothing to fix here; try again later.",
+    "providerConfigurationHint": "WarpTalk's setup for this provider is wrong. A platform admin has to fix it.",
+    "toolError": "Tool error",
+    "toolErrorHint": "The tool ran and refused the request. Asking WarpBot differently may work.",
+    "failed": "Failed"
+  },
+  "fixer": {
+    "owner": "You can fix",
+    "member": "Member fixes",
+    "platform": "Platform admin fixes",
+    "nobody": "No action needed"
+  },
+  "formerMember": "Former member",
+  "managePlugins": "Manage plugins",
+  "copyMemberLink": "Copy link for member",
+  "linkCopied": "Link copied",
+  "copyFailed": "Couldn't copy the link",
+  "trendsInInsights": "Trends in Insights"
+}

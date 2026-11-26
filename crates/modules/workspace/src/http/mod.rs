@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
             get(handlers::get_settings).put(handlers::update_settings),
         )
         .route("/workspaces/{id}/members", get(handlers::list_members))
+        .route("/workspaces/{id}/entitlements", get(handlers::entitlements))
         .route(
             "/workspaces/{id}/members/{user_id}/role",
             put(handlers::change_role),

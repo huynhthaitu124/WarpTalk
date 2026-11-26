@@ -1,0 +1,3113 @@
+"use client";
+
+import {
+  useState,
+  useRef,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useCallback,
+  type ReactNode,
+} from "react";
+import { useTranslations } from "next-intl";
+import { usePathname } from "@/lib/next-shim/navigation";
+import Link from "@/lib/next-shim/link";
+import {
+  ArrowUp,
+  Square,
+  ArrowSquareOut,
+  ClockCounterClockwise,
+  ArrowsOutSimple,
+  CornersIn,
+  Plus,
+  PaperPlaneTilt,
+  Cube,
+  CaretDown,
+  Paperclip,
+  FileText,
+  BookBookmark,
+  Lock,
+  PlugsConnected,
+  MagnifyingGlass,
+  Sparkle,
+  Subtitles,
+  VideoCamera,
+  X,
+} from "@phosphor-icons/react/dist/ssr";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  assistantToolDoneLabel,
+  assistantToolLabel,
+  withStepDetail,
+  REASONING_STEP,
+  THINKING_STEP,
+  WRITING_STEP,
+  type AssistantStep,
+} from "@/lib/meeting/assistant-tool-labels";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { composerReadiness } from "@/lib/assistant/composer-readiness";
+import {
+  assistantScopeFor,
+  PLATFORM_SCOPE_LABEL,
+  suggestedPromptsFor,
+} from "@/lib/assistant/assistant-scope";
+import { useIsSystemAdmin } from "@/hooks/use-is-system-admin";
+import { useAssistantContextStore } from "@/stores/assistant-context-store";
+import {
+  useWorkspaceMembers,
+  useWorkspaceDocuments,
+} from "@/hooks/use-workspace";
+import { useTranslationRooms } from "@/hooks/use-translationRooms";
+import {
+  useAssistantConversations,
+  useAssistantPlugins,
+  useCreateAssistantConversation,
+  useCreatePlatformAssistantConversation,
+  useInstallAssistantPlugin,
+  useLoadAssistantConversation,
+  useLoadPlatformAssistantConversation,
+  usePlatformAssistantConversations,
+  usePluginConnectUrl,
+  useSendAssistantMessage,
+  useSendPlatformAssistantMessage,
+  useUpdatePluginToolPolicy,
+} from "@/hooks/use-assistant";
+import { isDesktopApp } from "@/lib/desktop/bridge";
+import { createHubConnection } from "@/lib/realtime/signalr";
+import type * as signalR from "@microsoft/signalr";
+import type {
+  AssistantConversationDto,
+  AssistantMentionDto,
+  AssistantPageContextDto,
+  AssistantPluginCatalogItemDto,
+  SendAssistantMessageResponse,
+} from "@/types/assistant";
+import { assistantService } from "@/services/assistant.service";
+import {
+  AssistantQuestionCard,
+  parseAssistantQuestions,
+  type AssistantQuestion,
+} from "@/components/layout/assistant-question-card";
+import {
+  AssistantPermissionPrompt,
+  parsePermissionPrompt,
+  type PermissionPrompt,
+} from "@/components/assistant/permission-prompt";
+import { AssistantMarkdown } from "@/components/assistant/assistant-markdown";
+import { PluginGlyph } from "@/components/assistant/plugin-glyph";
+import { AnswerSources } from "@/components/assistant/answer-sources";
+import { AssistantWorkTrail } from "@/components/assistant/assistant-work-trail";
+import {
+  parseAnswerSources,
+  type AnswerSource,
+} from "@/lib/assistant/answer-sources";
+import { LumidotSpinner } from "@/components/ui/lumidot-spinner";
+
+import { ScrollFadeEdge, ScrollToLatestChip } from "@/components/ui/scroll-to-latest";
+import { Tooltip } from "@/components/ui/tooltip";
+import { useScrollToLatest } from "@/hooks/use-scroll-to-latest";
+
+import { useAssistantWidgetStore } from "@/stores/assistant-widget-store";
+import { toast } from "sonner";
+import { openProviderConsent, pluginApiKeyPageHref } from "@/lib/assistant/open-provider-consent";
+
+import { ChatAttachmentStrip } from "@/components/layout/chat-attachment-strip";
+import { UserMessageBody } from "@/components/assistant/message-mention-chips";
+import { ComposerMentionMirror } from "@/components/assistant/composer-mention-mirror";
+import { mentionCompletion } from "@/lib/assistant/mention-completion";
+import {
+  hasMentionToken,
+  mentionToken,
+  mentionTokenEndingAt,
+  mentionTokenLabel,
+  parseMessageMentions,
+  splitMentionTokens,
+} from "@/lib/assistant/message-mentions";
+import {
+  NAMESPACE_ENTITY_TYPES,
+  namespaceHints,
+  namespaceKeyword,
+  parseMentionTrigger,
+  type MentionNamespace,
+} from "@/lib/assistant/mention-trigger";
+import { matchesSearchText } from "@/lib/ui/search-text";
+import { withEffectiveConnectionStatus } from "@/lib/assistant/plugin-connection";
+import { mentionBlurb } from "@/lib/assistant/mention-blurb";
+import { isOfferedInWorkspaceChat } from "@/lib/assistant/plugin-availability";
+import {
+  pluginWritesAlwaysAllowed,
+  readDisabledPluginKeys,
+  togglePluginKey,
+  writeDisabledPluginKeys,
+  workspaceWriteLock,
+  writeToolPolicyUpdate,
+  type KeyValueStore,
+} from "@/lib/assistant/tool-policy";
+import { cn } from "@/lib/utils";
+import {
+  ATTACHMENT_ACCEPT,
+  ATTACHMENTS_SUPPORTED,
+  MAX_ATTACHMENTS,
+  rejectionReason,
+  toAttachment,
+  type ChatAttachment,
+} from "@/lib/assistant/attachments";
+
+/**
+ * A row in the "@" menu. Every option must map to a real backend entity: the send path
+ * only forwards mentions that carry both entityType and entityId (see sendMessage), so a
+ * decorative option would render a chip, clear like a real mention, and scope nothing.
+ * That is exactly what the old "Current meeting context"/"All Transcripts"/"Terminology"
+ * rows did — the page the widget was opened from already rides along as ambient context.
+ */
+interface AssistantContextOption {
+  id: string;
+  title: string;
+  type: string;
+  icon: ReactNode;
+  description: string;
+  isAvatar?: boolean;
+  entityType: AssistantMentionDto["entityType"];
+  entityId: string;
+  /**
+   * What goes on the wire as the mention's label, when it is not `title`. WT-887: a summary or
+   * transcript option is titled — and written into the draft as — "Summary · Standup", while the
+   * AI worker's contract wants the bare meeting title. See mentionTokenLabel.
+   */
+  label?: string;
+}
+
+/**
+ * WT-887: a row in the "@" menu that is not an entity but a namespace to narrow to — "document:"
+ * under a typed "@doc". Picking it writes "@document:" into the draft and keeps the menu open on
+ * that namespace; it never becomes a selected context, so it can never be sent as a mention.
+ */
+interface MentionNamespaceHint {
+  id: string;
+  /** The keyword with its colon, "document:": what Tab completes "@doc" to. */
+  title: string;
+  type: string;
+  icon: ReactNode;
+  description: string;
+  isAvatar?: false;
+  namespace: MentionNamespace;
+}
+
+type MentionMenuItem = AssistantContextOption | MentionNamespaceHint;
+
+function isNamespaceHint(item: MentionMenuItem): item is MentionNamespaceHint {
+  return "namespace" in item;
+}
+
+/**
+ * A meeting status that means it never took place, so it has no summary or transcript to point
+ * at. Page snapshots carry the status in whatever case their page had it in.
+ */
+const NEVER_HELD_STATUSES = new Set(["scheduled", "open", "cancelled", "expired"]);
+
+/** Page types whose ambient entity is a meeting — the one whose record the user is looking at. */
+const MEETING_PAGE_TYPES = new Set(["room_detail", "history", "in_meeting"]);
+
+/** The catalog key under common.chatbot that says what each namespace hint narrows to. */
+const NAMESPACE_HINT_KEYS = {
+  document: "mentionNamespaceDocument",
+  meeting: "mentionNamespaceMeeting",
+  summary: "mentionNamespaceSummary",
+  transcript: "mentionNamespaceTranscript",
+  artifact: "mentionNamespaceArtifact",
+} as const satisfies Record<MentionNamespace, string>;
+
+type ChatRole = "user" | "assistant";
+
+interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  context?: string;
+  failed?: boolean;
+  /** The user pressed Stop on this reply; what is in `content` is what had arrived by then. */
+  stopped?: boolean;
+  /**
+   * What this answer cited. Held on the message rather than in a lookup beside it, so it
+   * survives every path a message arrives by — streamed, completed, or replayed out of
+   * history — and cannot end up under the wrong bubble.
+   */
+  sources?: AnswerSource[];
+  /**
+   * What WarpBot did to produce this answer, and how long it took.
+   *
+   * Kept on the message for the same reason `sources` is: it belongs to the answer, and holding
+   * it in a lookup beside the thread would put it under the wrong bubble the first time two turns
+   * overlapped. Absent on anything replayed out of history — the server stores no trail, and an
+   * invented duration is a number a person can check and find wrong.
+   */
+  steps?: AssistantStep[];
+  durationMs?: number;
+  /**
+   * The @mentions this user message went out with, in the wire shape — the same list the request
+   * carried, and the same list `mentionsJson` hands back when the conversation is reopened. One
+   * shape for both paths, so a message drawn a moment after sending and the same message replayed
+   * from history cannot show different chips. See MessageMentionChips.
+   */
+  mentions?: AssistantMentionDto[];
+  /**
+   * The files this user message went out with.
+   *
+   * SENT-SESSION ONLY. Attachments are deliberately not persisted (see ChatAttachmentStrip and
+   * ai_assistant_worker._attach_attachments), so a conversation reopened from history has no
+   * bytes to draw and this is absent. Unlike mentions, that is by design, not a gap.
+   */
+  attachments?: ChatAttachment[];
+}
+
+
+interface SlashCommand {
+  command: string;
+  label: string;
+  description: string;
+  /** Ambient pageTypes (see assistant-context-store) this command is offered on. */
+  pageTypes: string[];
+  /** Builds the message text to send, given the current ambient page context. */
+  buildPrompt: (context: AssistantPageContextDto | null) => string;
+  /** If true, selecting the command sends immediately instead of just inserting text. */
+  autoSend?: boolean;
+}
+
+// Each command leans on the ambient page-context system message the backend already
+// injects (see chat_worker.py::_format_page_context) — entity_id is in there, so the
+// prompt just has to unambiguously name the current entity and the model's own
+// tool-calling picks the right id. The frontend never calls tools directly.
+//
+// Built from `t` rather than a module-level constant so the labels, descriptions and the
+// prompt text actually sent as the user's message can be localized — this list is created
+// inside the component, where the translator is available.
+function buildSlashCommands(
+  t: ReturnType<typeof useTranslations>,
+): SlashCommand[] {
+  return [
+    {
+      command: "/summarize",
+      label: t("slashCommands.summarize.label"),
+      description: t("slashCommands.summarize.description"),
+      pageTypes: ["room_detail", "in_meeting", "history"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.summarize.prompt"),
+    },
+    {
+      command: "/action-items",
+      label: t("slashCommands.actionItems.label"),
+      description: t("slashCommands.actionItems.description"),
+      pageTypes: ["room_detail", "in_meeting", "history"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.actionItems.prompt"),
+    },
+    {
+      command: "/room-info",
+      label: t("slashCommands.roomInfo.label"),
+      description: t("slashCommands.roomInfo.description"),
+      pageTypes: ["room_detail", "in_meeting", "history"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.roomInfo.prompt"),
+    },
+    {
+      command: "/summarize-doc",
+      label: t("slashCommands.summarizeDoc.label"),
+      description: t("slashCommands.summarizeDoc.description"),
+      pageTypes: ["document_detail"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.summarizeDoc.prompt"),
+    },
+    {
+      command: "/extract-terms",
+      label: t("slashCommands.extractTerms.label"),
+      description: t("slashCommands.extractTerms.description"),
+      pageTypes: ["document_detail"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.extractTerms.prompt"),
+    },
+    {
+      command: "/recent-meetings",
+      label: t("slashCommands.recentMeetings.label"),
+      description: t("slashCommands.recentMeetings.description"),
+      pageTypes: ["history", "documents"],
+      autoSend: true,
+      buildPrompt: () => t("slashCommands.recentMeetings.prompt"),
+    },
+    {
+      command: "/search-docs",
+      label: t("slashCommands.searchDocs.label"),
+      description: t("slashCommands.searchDocs.description"),
+      pageTypes: ["documents"],
+      autoSend: false,
+      buildPrompt: () => t("slashCommands.searchDocs.prompt"),
+    },
+  ];
+}
+
+function buildPageContextLabels(
+  t: ReturnType<typeof useTranslations>,
+): Record<string, string> {
+  return {
+    room_detail: t("pageContextLabels.roomDetail"),
+    in_meeting: t("pageContextLabels.inMeeting"),
+    document_detail: t("pageContextLabels.documentDetail"),
+    documents: t("pageContextLabels.documents"),
+    history: t("pageContextLabels.history"),
+    workspace_insights: t("pageContextLabels.insights"),
+    workspace_insights_usage: t("pageContextLabels.insightsUsage"),
+    workspace_insights_tools: t("pageContextLabels.insightsTools"),
+  };
+}
+
+const PAGE_CONTEXT_ICONS: Record<string, ReactNode> = {
+  room_detail: <VideoCamera size={15} weight="regular" />,
+  in_meeting: <VideoCamera size={15} weight="regular" />,
+  document_detail: <FileText size={15} weight="regular" />,
+  documents: <FileText size={15} weight="regular" />,
+  history: <ClockCounterClockwise size={15} weight="regular" />,
+};
+
+function getAmbientContextDisplay(
+  context: AssistantPageContextDto | null,
+  pageContextLabels: Record<string, string>,
+  fallbackPageLabel: string,
+) {
+  if (!context) return null;
+
+  const pageLabel = pageContextLabels[context.pageType] ?? fallbackPageLabel;
+  const rawTitle =
+    context.snapshot?.title ||
+    context.snapshot?.name ||
+    context.snapshot?.query ||
+    pageLabel;
+  const title = rawTitle.trim() || pageLabel;
+
+  return {
+    pageLabel,
+    title,
+    status: context.snapshot?.status,
+    icon: PAGE_CONTEXT_ICONS[context.pageType] ?? (
+      <BookBookmark size={15} weight="regular" />
+    ),
+  };
+}
+
+/**
+ * How long sendMessage waits for this client to actually be inside the conversation's hub
+ * group before POSTing. The hub effect only starts negotiating once conversationId lands in
+ * state, so without this wait the *first* message of every conversation is posted before the
+ * client has joined — and every streamed token for it is delivered to nobody.
+ */
+const HUB_JOIN_TIMEOUT_MS = 10_000;
+
+/**
+ * Watchdog for a turn that produces no hub traffic at all (connection never came back,
+ * worker died). A visible error beats a "Thinking..." spinner that runs until the tab is
+ * closed — this is the fallback, the re-join above is the actual fix.
+ */
+const ASSISTANT_RESPONSE_TIMEOUT_MS = 90_000;
+
+/** Matches chat-panel.tsx: within this many px of the bottom counts as "following along". */
+const AUTOSCROLL_THRESHOLD_PX = 80;
+
+/* WT-474: the caps, the accepted types and the File -> data-URL conversion all live in
+   @/lib/assistant/attachments, so the paste handler, the file picker and the drop target cannot
+   drift apart on what is acceptable. */
+
+function formatConversationTimestamp(value?: string | null) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getPageContextKey(context: AssistantPageContextDto | null) {
+  if (!context) return null;
+  return [
+    context.pageType,
+    context.workspaceId ?? "",
+    context.entityId ?? "",
+  ].join(":");
+}
+
+/**
+ * WT-667 — how tall the composer is allowed to get before it starts scrolling instead.
+ *
+ * Roughly six lines at `text-[13px]`. The panel it lives in is 412px tall (600px expanded), so
+ * this is the point where growing further would cost more of the conversation than it gains in
+ * draft: past six lines you are re-reading what you wrote, not reading what WarpBot said.
+ */
+const COMPOSER_MAX_HEIGHT_PX = 132;
+
+/** localStorage when the browser allows it; private modes and blocked storage read as nothing saved. */
+function browserStore(): KeyValueStore | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function GlobalChatbot() {
+  const t = useTranslations("common.chatbot");
+  // Reused rather than duplicated: these plugin-connection toasts (see
+  // handlePluginConnectionAction) are worded identically to the ones the other, simpler
+  // AI chat panel already ships under aiChat.toasts.
+  const tPluginToasts = useTranslations("aiChat.toasts");
+  const [isOpen, setIsOpen] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  /** WT-474: attachments for the NEXT message only — cleared on send, like @mentions. */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  /** Drag depth, not a boolean: dragging over a child fires dragleave on the parent. */
+  const [dragDepth, setDragDepth] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedContexts, setSelectedContexts] = useState<
+    AssistantContextOption[]
+  >([]);
+  const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  /** WT-887: the namespace typed before the query ("@summary:…"), or null for a plain "@…". */
+  const [mentionNamespace, setMentionNamespace] = useState<MentionNamespace | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [disabledPageContextKey, setDisabledPageContextKey] = useState<
+    string | null
+  >(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [composerOverflowing, setComposerOverflowing] = useState(false);
+  /**
+   * WT-667 — a `rows={1}` textarea is one line tall forever.
+   *
+   * Nothing here ever touched its height, so a long question scrolled INSIDE a 20px window:
+   * you could see the two lines under the caret and nothing else, with a panel of empty space
+   * sitting above it. Re-reading a question before sending it was impossible.
+   *
+   * A textarea reports the height its content wants in `scrollHeight`, but only once it is not
+   * being held to a smaller height — hence resetting to `auto` before measuring. Without that
+   * reset the box can grow and never shrink again, because a tall box reports its own height.
+   */
+  const autoSizeComposer = useCallback((element: HTMLTextAreaElement | null) => {
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+    // Read here because this is the one place that already measured it. The ghost completion
+    // cannot be drawn over a textarea that is scrolling — see the mirror in the composer.
+    setComposerOverflowing(element.scrollHeight > COMPOSER_MAX_HEIGHT_PX);
+  }, []);
+  /**
+   * Sizing on ATTACH as well as on change, because the widget is a popover: the textarea is
+   * unmounted while it is closed and remounts with whatever draft was left in state. An effect
+   * keyed on the text alone would not re-run for that, and the draft would come back one line
+   * tall.
+   */
+  const attachComposer = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      inputRef.current = element;
+      autoSizeComposer(element);
+    },
+    [autoSizeComposer],
+  );
+  // Every path that changes the text lands in `inputValue` — typing, picking a slash command,
+  // a question handed over from the page, the clear on send — so one effect on it covers all
+  // of them, including the shrink back to one line after a message goes out.
+  useEffect(() => {
+    autoSizeComposer(inputRef.current);
+  }, [inputValue, autoSizeComposer]);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const activeWorkspaceId = useWorkspaceStore(
+    (state) => state.activeWorkspaceId,
+  );
+  const activeWorkspaceSlug = useWorkspaceStore(
+    (state) => state.activeWorkspaceSlug,
+  );
+  /**
+   * Platform scope — a system admin on /admin — talks to a SEPARATE conversation store about the
+   * whole platform, with read-only admin tools. Everywhere else the widget is exactly what it was.
+   * Presentation only: AssistantService refuses the platform routes to anyone without the
+   * platform "admin" role, whatever this decides. See lib/assistant/assistant-scope.
+   */
+  const pathname = usePathname();
+  const isSystemAdmin = useIsSystemAdmin();
+  const assistantScope = assistantScopeFor({ pathname, isSystemAdmin });
+  const isPlatformScope = assistantScope === "platform";
+  // WT-541: one answer to "can this send", shared by the button and by sendMessage.
+  const composerState = composerReadiness({
+    text: inputValue,
+    // A platform turn is text only; files dropped in cannot ride along, so they cannot enable it.
+    attachmentCount: isPlatformScope ? 0 : attachments.length,
+    activeWorkspaceId,
+    scope: assistantScope,
+  });
+  const ambientPageContext = useAssistantContextStore(
+    (state) => state.pageContext,
+  );
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isAiTyping, setIsAiTyping] = useState(false);
+  // Stop (3 Oct 2026). `isAiTyping` drops as soon as text streams in, so it cannot say whether a
+  // reply is still being written; this does, from send until the reply completes, fails or is
+  // stopped - it is what turns the send button into Stop.
+  const [replyInFlight, setReplyInFlight] = useState(false);
+  /** The reply being written: its id arrives with the send response (or AssistantMessageStarted). */
+  const activeReplyRef = useRef<{ conversationId: string; replyId: string | null; platform: boolean } | null>(null);
+  /** Stop pressed before the reply's id was known: sent the moment it is. */
+  const stopPendingRef = useRef(false);
+  /** Replies the user stopped. Their late chunks are dropped, and their "failure" is not an error. */
+  const stoppedRepliesRef = useRef(new Set<string>());
+  /**
+   * The tools WarpBot reached for this turn, in order, kept until the next question.
+   *
+   * This used to be one string that every other event cleared: a chunk arriving set it back to
+   * null, and so did each tool finishing. The steps were published correctly by the worker and
+   * relayed correctly by the backend — they were simply overwritten faster than a person could
+   * read them, so the widget looked like it only ever said "Thinking...". Keeping the trail is
+   * the whole point: somebody wants to see that it checked the knowledge base AND searched
+   * documents, not to catch one label mid-flash.
+   */
+  const [steps, setSteps] = useState<AssistantStep[]>([]);
+  /**
+   * WT-620 — the same trail, readable from inside the hub handlers.
+   *
+   * Those handlers are registered once per conversation, so the `steps` they close over is the
+   * trail of the render that ran the effect: empty, because the question had not been asked yet.
+   * The completed handler folded that onto the answer, and every finished answer carried an empty
+   * trail. Subscribing again on every step is not the fix — it would drop and re-add the handlers
+   * mid-turn — so the handlers read this ref instead, as the meeting chat and the Meet-popup pane
+   * already do.
+   *
+   * Only correct if EVERY write goes through updateSteps: a raw setSteps leaves the ref holding a
+   * trail the screen no longer shows.
+   */
+  const stepsRef = useRef<AssistantStep[]>([]);
+  const updateSteps = useCallback(
+    (next: (current: AssistantStep[]) => AssistantStep[]) => {
+      const value = next(stepsRef.current);
+      stepsRef.current = value;
+      setSteps(value);
+    },
+    [],
+  );
+  /** When the open turn began, so the folded summary can say how long it took. */
+  const turnStartedAtRef = useRef<number | null>(null);
+  /**
+   * The turn has run past the watchdog and is still going.
+   *
+   * It used to append a message saying "WarpBot didn't answer in time" with failed: true, which
+   * is a claim the widget was in no position to make: the deadline is a clock, not a signal from
+   * the worker, and the answer usually arrived seconds later. The claim then STAYED in the
+   * thread, in red, above the answer that disproved it.
+   *
+   * A model thinking for longer than expected is not a failure, so this says only that, and any
+   * chunk, completion or failure clears it.
+   */
+  const [isSlow, setIsSlow] = useState(false);
+  // The card WarpBot last put up, or null. One at a time: a second question set replaces the
+  // first, because answering a stale card would send answers the assistant has moved past.
+  const [pendingQuestions, setPendingQuestions] = useState<AssistantQuestion[] | null>(null);
+  // What WarpBot is waiting on before it may act: a write to confirm, a plugin to connect, or a
+  // provider only an operator can register. One at a time, and it lives above the composer rather
+  // than in the thread — see AssistantPermissionPrompt.
+  const [pendingPermission, setPendingPermission] = useState<PermissionPrompt | null>(null);
+  // That prompt has been answered. Two readers: Enter, which must not send the same answer twice
+  // while the first is still running, and the form itself, which cannot see an answer the composer
+  // sent on the user's behalf.
+  const [permissionAnswered, setPermissionAnswered] = useState(false);
+  // When the last turn ended, and null while one is open — which is how the permission form knows
+  // whether the write it just allowed is still running. A stamp rather than a clear of the slot:
+  // the form is what says the write is over, and it takes itself off the screen.
+  const [turnEndedAt, setTurnEndedAt] = useState<number | null>(null);
+  // Both plugin cards last until the NEXT turn starts. Nothing but a click used to clear them, so
+  // a Connect card survived New chat - where pressing Connect opened an OAuth flow the current
+  // turn never asked for - and two of them could stack up, one per error code. So they clear when
+  // a message is sent, on New chat, and when a conversation is opened, as the meeting panel does
+  // in beginAssistantTurn.
+  //
+  // NOT when the turn that raised them completes or fails. A card is raised mid-turn, when the
+  // plugin tool returns, and the answer that lands next is the one explaining it; clearing there
+  // erased the card moments after it appeared, before anyone could press it (WT-688).
+  const clearPluginCards = useCallback(() => {
+    setPendingPermission(null);
+    setPermissionAnswered(false);
+  }, []);
+  const [isMinimized, setIsMinimized] = useState(false);
+  /**
+   * A question handed over from somewhere else on the page — today, the "Research this term"
+   * action on a transcript hint.
+   *
+   * It is put in the box rather than sent. The person asked to look something up, not to have
+   * a question asked on their behalf; leaving it editable is the difference between a shortcut
+   * and the widget speaking for them.
+   */
+  const pendingPrompt = useAssistantWidgetStore((state) => state.pendingPrompt);
+  const consumePendingPrompt = useAssistantWidgetStore((state) => state.consumePendingPrompt);
+  useEffect(() => {
+    if (!pendingPrompt) return;
+    const prompt = consumePendingPrompt();
+    if (!prompt) return;
+    setInputValue(prompt);
+    setIsMinimized(false);
+    setIsOpen(true);
+    // When the panel was already open, initialFocus below does not run again and focus stays on
+    // the hint that was clicked — Enter would press that instead of sending. Wait a frame so the
+    // textarea holds the new value before the caret is put at its end.
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  }, [pendingPrompt, consumePendingPrompt]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  // WT-687: plugins switched off for this conversation. Every connected plugin starts on, as in
+  // Claude; a switch is remembered per conversation on this device and sent with each message.
+  const [disabledPluginKeys, setDisabledPluginKeys] = useState<string[]>([]);
+  // A conversation opened from history brings back its own switches; a new chat starts with every
+  // plugin on. Adjusted while rendering rather than in an effect, so the menu never paints one frame
+  // of the previous conversation's switches. Keyed on the id only, so switches flipped before the
+  // first message are not wiped when that message creates the conversation.
+  const [pluginSwitchesConversationId, setPluginSwitchesConversationId] = useState<string | null>(null);
+  if (pluginSwitchesConversationId !== conversationId) {
+    setPluginSwitchesConversationId(conversationId);
+    setDisabledPluginKeys(conversationId ? readDisabledPluginKeys(browserStore(), conversationId) : []);
+  }
+  const togglePluginForConversation = (pluginKey: string) => {
+    setDisabledPluginKeys((current) => {
+      const next = togglePluginKey(current, pluginKey);
+      if (conversationId) writeDisabledPluginKeys(browserStore(), conversationId, next);
+      return next;
+    });
+  };
+  const [conversationTitle, setConversationTitle] = useState(t("newChat"));
+
+  const createConversation = useCreateAssistantConversation();
+  const sendAssistantMessage = useSendAssistantMessage();
+  const loadConversation = useLoadAssistantConversation();
+  const createPlatformConversation = useCreatePlatformAssistantConversation();
+  const sendPlatformMessage = useSendPlatformAssistantMessage();
+  const loadPlatformConversation = useLoadPlatformAssistantConversation();
+  // Scoped to the active workspace, exactly as the Plugins settings page reads it. Unscoped, the
+  // API has no policy to apply and answers with every row unblocked — so a workspace that had
+  // turned plugins off still had them offered here, and the install and connect below went through
+  // the same ungoverned door.
+  const { data: assistantPlugins = [], refetch: refetchAssistantPlugins } =
+    useAssistantPlugins(activeWorkspaceId ?? undefined);
+  const installPlugin = useInstallAssistantPlugin();
+  const connectPlugin = usePluginConnectUrl();
+  const updateToolPolicy = useUpdatePluginToolPolicy();
+  // Always allow for a whole plugin: its write tools stop showing the Allow / Always allow card.
+  // The catalog refetch the hook triggers brings the resolved choice back to the checkbox.
+  const setPluginAlwaysAllow = async (plugin: AssistantPluginCatalogItemDto, alwaysAllow: boolean) => {
+    try {
+      await updateToolPolicy.mutateAsync({
+        pluginKey: plugin.key,
+        tools: writeToolPolicyUpdate(plugin.tools, alwaysAllow),
+      });
+    } catch {
+      toast.error(t("pluginPermissionSaveFailed", { label: plugin.label }));
+    }
+  };
+  const [skillsMenuOpen, setSkillsMenuOpen] = useState(false);
+  const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
+  // Read through the same helper the Plugins settings page uses, so the Ready/Connect chip below
+  // and the @mention list cannot claim a plugin is usable when its own scopes were declined on a
+  // shared Google connection — see plugin-connection.ts.
+  const catalogPlugins = useMemo(
+    () => assistantPlugins.map(withEffectiveConnectionStatus),
+    [assistantPlugins],
+  );
+  // The plugin menu and, through it, the @mention list. A plugin this workspace has not added is left
+  // out even when the member installed it: the server refuses its tools here, so its switch would do
+  // nothing and its mention would go nowhere. It stays on the Plugins page, where it is revoked.
+  // Past messages still resolve their chips against the whole catalog (`catalogPlugins`).
+  const installedAssistantPlugins = useMemo(
+    () =>
+      catalogPlugins.filter(
+        (plugin) => plugin.installationStatus === "installed" && isOfferedInWorkspaceChat(plugin),
+      ),
+    [catalogPlugins],
+  );
+  // Only a plugin that's actually usable can be @mentioned — mentioning a disconnected plugin
+  // would just tell WarpBot to call a tool that fails with connection_required.
+  const mentionablePlugins = useMemo(
+    () => installedAssistantPlugins.filter((plugin) => plugin.connectionStatus === "connected"),
+    [installedAssistantPlugins],
+  );
+
+  // Only fetch the conversation list while the history menu is actually open.
+  // One list per scope, each fetched only in its own mode: a platform thread is never listed
+  // among a workspace's, nor the other way round.
+  const workspaceConversationsQuery = useAssistantConversations(
+    historyMenuOpen && !isPlatformScope ? activeWorkspaceId : null,
+  );
+  const platformConversationsQuery = usePlatformAssistantConversations(
+    historyMenuOpen && isPlatformScope,
+  );
+  const conversationsQuery = isPlatformScope
+    ? platformConversationsQuery
+    : workspaceConversationsQuery;
+  const conversationLoader = isPlatformScope ? loadPlatformConversation : loadConversation;
+  const visibleConversations = (conversationsQuery.data ?? []).filter(
+    (conversation) => !conversation.isArchived,
+  );
+
+  const handlePluginAction = async (plugin: AssistantPluginCatalogItemDto) => {
+    try {
+      if (plugin.installationStatus !== "installed") {
+        await installPlugin.mutateAsync({
+          pluginKey: plugin.key,
+          workspaceId: activeWorkspaceId ?? undefined,
+        });
+        toast.success(t("pluginInstalled", { label: plugin.label }));
+        return;
+      }
+
+      if (plugin.connectionStatus !== "connected") {
+        const result = await connectPlugin.mutateAsync({
+          pluginKey: plugin.key,
+          // Sealed into the OAuth state. Without it a desktop user is sent through the system
+          // browser with "web" recorded, the callback never emits client=desktop, and the
+          // warptalk:// hand-back never fires — they finish consent and are left in the browser.
+          client: isDesktopApp() ? "desktop" : "web",
+          workspaceId: activeWorkspaceId ?? undefined,
+        });
+        if (result.apiKeyRequired) {
+          window.location.assign(pluginApiKeyPageHref(plugin.key));
+          return;
+        }
+        // The provider's grant already covered it, so there is no consent page to finish.
+        if (result.connected || !result.url) {
+          toast.success(t("pluginConnected", { label: plugin.label }));
+          return;
+        }
+        const consentUrl = result.url;
+        if (openProviderConsent(consentUrl)) {
+          toast.message(t("pluginConnectOpenBrowser", { label: plugin.label }));
+        } else {
+          // The toast action is a real click, so the open it makes is not blocked.
+          toast.error(t("pluginConnectBlocked", { label: plugin.label }), {
+            action: {
+              label: t("pluginConnectBlockedAction"),
+              onClick: () => openProviderConsent(consentUrl),
+            },
+          });
+        }
+        return;
+      }
+
+      toast.message(t("pluginAlreadyConnected", { label: plugin.label }));
+    } catch {
+      toast.error(t("pluginUpdateFailed", { label: plugin.label }));
+    }
+  };
+
+  const handlePluginConnectionAction = async (pluginKey: string) => {
+    try {
+      const result = await connectPlugin.mutateAsync({
+        pluginKey,
+        client: isDesktopApp() ? "desktop" : "web",
+        workspaceId: activeWorkspaceId ?? undefined,
+      });
+      if (result.apiKeyRequired) {
+        window.location.assign(pluginApiKeyPageHref(pluginKey));
+        return;
+      }
+      const consentUrl = result.url;
+      if (result.connected || !consentUrl) {
+        toast.success(tPluginToasts("pluginConnected"));
+      } else if (openProviderConsent(consentUrl)) {
+        toast.message(tPluginToasts("pluginConnectOpenBrowser"));
+      } else {
+        toast.error(tPluginToasts("pluginConnectBlocked"), {
+          action: {
+            label: tPluginToasts("pluginConnectBlockedAction"),
+            onClick: () => openProviderConsent(consentUrl),
+          },
+        });
+      }
+      void refetchAssistantPlugins();
+    } catch {
+      toast.error(tPluginToasts("pluginConnectFailed"));
+    }
+  };
+
+  /** Conversation id this client is currently *joined to* on the hub, not merely talking about. */
+  const joinedConversationIdRef = useRef<string | null>(null);
+  const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearResponseTimeout = useCallback(() => {
+    if (responseTimeoutRef.current) {
+      clearTimeout(responseTimeoutRef.current);
+      responseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const armResponseTimeout = useCallback(() => {
+    clearResponseTimeout();
+    responseTimeoutRef.current = setTimeout(() => {
+      responseTimeoutRef.current = null;
+      setIsSlow(true);
+    }, ASSISTANT_RESPONSE_TIMEOUT_MS);
+  }, [clearResponseTimeout]);
+
+  useEffect(() => clearResponseTimeout, [clearResponseTimeout]);
+
+  /**
+   * Resolves once the hub effect has confirmed JoinConversation for this id. Returns false on
+   * timeout, in which case the caller still posts — a message that maybe streams beats a
+   * message that is silently dropped, and the response watchdog covers the bad case.
+   */
+  const waitForConversationJoin = useCallback(async (convId: string) => {
+    const deadline = Date.now() + HUB_JOIN_TIMEOUT_MS;
+    while (joinedConversationIdRef.current !== convId) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  }, []);
+
+  const startNewConversation = () => {
+    clearResponseTimeout();
+    setConversationId(null);
+    setConversationTitle(t("newChat"));
+    setMessages([]);
+    setInputValue("");
+    setSelectedContexts([]);
+    setIsAiTyping(false);
+    updateSteps(() => []);
+    setIsSlow(false);
+    setIsMinimized(false);
+    // The ask card is its own state, not a message: without this it survived New chat and
+    // sat alone in an empty thread, which read as the button doing nothing.
+    setPendingQuestions(null);
+    clearPluginCards();
+    shouldAutoScrollRef.current = true;
+  };
+
+  /**
+   * The header's X. It used to BE the New chat button (a Plus turned 45°), so it looked like
+   * close and did something else — and with an ask card open it appeared to do nothing at all.
+   * Close now closes: the thread is put away and the panel shuts, without a minimized chip.
+   */
+  const closeConversation = () => {
+    startNewConversation();
+    setIsMinimized(false);
+    setIsOpen(false);
+  };
+
+  /**
+   * Crossing between /admin and a workspace page switches conversation STORES. The open thread
+   * belongs to the scope it was started in, so it is closed rather than continued in the other —
+   * a workspace thread's id sent to the platform routes (or the reverse) is simply not found.
+   */
+  const lastScopeRef = useRef(assistantScope);
+  const resetForScopeChange = useEffectEvent(() => startNewConversation());
+  useEffect(() => {
+    if (lastScopeRef.current === assistantScope) return;
+    lastScopeRef.current = assistantScope;
+    resetForScopeChange();
+  }, [assistantScope]);
+
+  const openConversationFromHistory = (conversation: AssistantConversationDto) =>
+    openConversationById(conversation.id);
+
+  const openConversationById = async (id: string) => {
+    try {
+      const detail = await conversationLoader.mutateAsync(id);
+      clearResponseTimeout();
+      setPendingQuestions(null);
+      setMessages(
+        detail.messages
+          .filter(
+            (message) =>
+              message.role === "user" || message.role === "assistant",
+          )
+          .map((message) => ({
+            id: message.id,
+            role: message.role as ChatRole,
+            content: message.content,
+            failed: message.status === "failed",
+            sources: parseAnswerSources(message.sourcesJson),
+            mentions: parseMessageMentions(message.mentionsJson),
+          })),
+      );
+      setConversationTitle(detail.title?.trim() || t("chatHistory"));
+      setConversationId(detail.id);
+      setIsAiTyping(false);
+      updateSteps(() => []);
+      setIsSlow(false);
+      setInputValue("");
+      setSelectedContexts([]);
+      setIsMinimized(false);
+      setHistoryMenuOpen(false);
+      clearPluginCards();
+      shouldAutoScrollRef.current = true;
+      setIsOpen(true);
+    } catch {
+      toast.error(t("openConversationFailed"));
+    }
+  };
+
+  /**
+   * A conversation handed over from somewhere else — today, a meeting's WarpBot thread ("Continue
+   * in widget", or WarpBot's own continue_in_widget tool). See lib/assistant/continue-in-widget.
+   *
+   * An effect EVENT, not a plain effect over openConversationById: that function is re-created
+   * every render, and a dependency on it would re-run this on every keystroke. Opening goes
+   * through the same path as picking the conversation from history, so a handed-over thread
+   * renders exactly as a reopened one does — including the turns the meeting seeded.
+   */
+  const pendingConversationId = useAssistantWidgetStore((state) => state.pendingConversationId);
+  const consumePendingConversation = useAssistantWidgetStore(
+    (state) => state.consumePendingConversation,
+  );
+  const openHandedOverConversation = useEffectEvent(async (id: string) => {
+    await openConversationById(id);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  });
+  useEffect(() => {
+    if (!pendingConversationId) return;
+    const id = consumePendingConversation();
+    if (!id) return;
+    void openHandedOverConversation(id);
+  }, [pendingConversationId, consumePendingConversation]);
+
+  // Real workspace members/meetings/documents for the @mention picker — each refetches
+  // as the user types after "@". Selecting one attaches a real entityId that rides along
+  // with the next sent message as a structured mention (see sendMessage below), not just
+  // a display chip.
+  const { data: memberResults } = useWorkspaceMembers(
+    activeWorkspaceId ?? undefined,
+    1,
+    5,
+    mentionQuery,
+  );
+  const { data: roomResults } = useTranslationRooms({
+    search: mentionQuery,
+    pageSize: 5,
+  });
+  const { data: documentResults } = useWorkspaceDocuments(
+    activeWorkspaceId ?? "",
+    1,
+    5,
+    mentionQuery,
+  );
+  // WT-887: the meetings a "@summary:" / "@transcript:" / "@artifact:" option can point at. The
+  // same list endpoint the Meetings group reads, narrowed to ENDED — a meeting that has not ended
+  // has no summary yet and no finished transcript, and five scheduled rows would otherwise crowd
+  // out every meeting that does. Only fetched while one of those namespaces is being typed.
+  const wantsMeetingArtifacts =
+    mentionMenuOpen &&
+    !isPlatformScope &&
+    (mentionNamespace === "summary" ||
+      mentionNamespace === "transcript" ||
+      mentionNamespace === "artifact");
+  const { data: endedRoomResults } = useTranslationRooms({
+    search: mentionQuery,
+    status: "ENDED",
+    pageSize: 5,
+    workspaceId: activeWorkspaceId ?? undefined,
+    enabled: wantsMeetingArtifacts,
+  });
+  // The meeting the widget was opened over — a room page, its record, or the live meeting — goes
+  // first: "@summary:" on a meeting's own page is almost always about that meeting. Not when it
+  // never took place, since there is nothing of it to read.
+  const currentMeeting = useMemo(() => {
+    if (!ambientPageContext || !MEETING_PAGE_TYPES.has(ambientPageContext.pageType)) return null;
+    const id = ambientPageContext.entityId;
+    const title = ambientPageContext.snapshot?.title?.trim();
+    const status = ambientPageContext.snapshot?.status?.toLowerCase() ?? "";
+    if (!id || !title || NEVER_HELD_STATUSES.has(status)) return null;
+    return { id, title };
+  }, [ambientPageContext]);
+  const CONTEXT_OPTIONS: AssistantContextOption[] = useMemo(() => {
+    const memberOptions: AssistantContextOption[] = (
+      memberResults?.items ?? []
+    ).map((m) => ({
+      id: `member-${m.userId}`,
+      title: m.fullName,
+      type: "Members",
+      icon: (m.fullName || "?").slice(0, 1).toUpperCase(),
+      isAvatar: true,
+      description: m.email,
+      entityType: "member",
+      entityId: m.userId,
+    }));
+    const roomOptions: AssistantContextOption[] = (
+      roomResults?.rooms ?? []
+    ).map((r) => ({
+      id: `room-${r.id}`,
+      title: r.title,
+      type: "Meetings",
+      icon: <VideoCamera size={14} />,
+      description: r.status,
+      entityType: "room",
+      entityId: r.id,
+    }));
+    const documentOptions: AssistantContextOption[] = (
+      documentResults?.items ?? []
+    ).map((d) => ({
+      id: `document-${d.id}`,
+      title: d.name,
+      type: "Documents",
+      icon: <FileText size={14} />,
+      description: d.status,
+      entityType: "document",
+      entityId: d.id,
+    }));
+    // WT-565: an installed, connected plugin is mentionable so the user can point WarpBot at
+    // it directly instead of only reaching it through the Skills popover. entityId is the real
+    // catalog key — see AssistantMentionDto.
+    // Not query-filtered here like the three fetches above: mentionablePlugins is already the
+    // full local list, and filteredOptions below re-filters every option by title anyway.
+    const pluginOptions: AssistantContextOption[] = mentionablePlugins.map((plugin) => ({
+      id: `plugin-${plugin.key}`,
+      title: plugin.label,
+      type: "Plugins",
+      // PluginGlyph, not a raw <img>: it owns the product-logo fallback and the load-failure
+      // handling, and the avatar contract forbids bypassing the primitives with a bare <img>.
+      icon: <PluginGlyph plugin={plugin} size="xs" />,
+      // The first clause only: the full catalog text is written for the Plugins page. See
+      // mentionBlurb.
+      description: mentionBlurb(plugin.description),
+      entityType: "plugin",
+      entityId: plugin.key,
+    }));
+    // WT-887: a meeting's summary and transcript. The id is the ROOM id and the wire label the bare
+    // meeting title (the AI worker's contract); the title is the token written into the draft —
+    // see mentionTokenLabel for why it carries the kind. All summaries, then all transcripts: the
+    // menu groups rows by `type` in order of first appearance and arrows walk this array, so
+    // interleaving them would make the highlight jump between groups.
+    const artifactMeetings = [
+      ...(currentMeeting ? [currentMeeting] : []),
+      ...(endedRoomResults?.rooms ?? [])
+        .filter((r) => r.id !== currentMeeting?.id)
+        .map((r) => ({ id: r.id, title: r.title })),
+    ];
+    const artifactOption = (
+      meeting: { id: string; title: string },
+      entityType: "summary" | "transcript",
+    ): AssistantContextOption => ({
+      id: `${entityType}-${meeting.id}`,
+      title: mentionTokenLabel({ entityType, label: meeting.title }),
+      label: meeting.title,
+      type: entityType === "summary" ? t("mentionGroupSummaries") : t("mentionGroupTranscripts"),
+      icon: entityType === "summary" ? <Sparkle size={14} /> : <Subtitles size={14} />,
+      description: meeting.id === currentMeeting?.id ? t("mentionCurrentMeeting") : "",
+      entityType,
+      entityId: meeting.id,
+    });
+    const summaryOptions = artifactMeetings.map((meeting) => artifactOption(meeting, "summary"));
+    const transcriptOptions = artifactMeetings.map((meeting) =>
+      artifactOption(meeting, "transcript"),
+    );
+    return [
+      ...memberOptions,
+      ...roomOptions,
+      ...documentOptions,
+      ...pluginOptions,
+      ...summaryOptions,
+      ...transcriptOptions,
+    ];
+  }, [
+    memberResults,
+    roomResults,
+    documentResults,
+    mentionablePlugins,
+    endedRoomResults,
+    currentMeeting,
+    t,
+  ]);
+
+  // Only offer commands relevant to the page the widget was opened from — e.g. "/summarize"
+  // only makes sense with a room in ambient context (see chat_worker.py's page-context
+  // injection). No ambient context registered on this page ⇒ no commands to offer.
+  const ambientPageContextKey = useMemo(
+    () => getPageContextKey(ambientPageContext),
+    [ambientPageContext],
+  );
+  // Never in platform scope: page context names a workspace entity, and a platform turn carries
+  // none (the platform send has no field for it).
+  const effectivePageContext =
+    isPlatformScope ||
+    (ambientPageContextKey && disabledPageContextKey === ambientPageContextKey)
+      ? null
+      : ambientPageContext;
+  const isPageContextVisible = Boolean(effectivePageContext);
+  // Insights starters follow the page context they are answered from: switch the context off and
+  // they go with it.
+  const suggestedPrompts = suggestedPromptsFor({
+    scope: assistantScope,
+    pageType: effectivePageContext?.pageType,
+  });
+
+  const slashCommands = useMemo(() => buildSlashCommands(t), [t]);
+  const pageContextLabels = useMemo(() => buildPageContextLabels(t), [t]);
+  const availableSlashCommands = useMemo(() => {
+    const pageType = effectivePageContext?.pageType ?? "";
+    if (!pageType) return [];
+    return slashCommands.filter((cmd) => cmd.pageTypes.includes(pageType));
+  }, [effectivePageContext?.pageType, slashCommands]);
+  const ambientContextDisplay = useMemo(
+    () =>
+      getAmbientContextDisplay(
+        effectivePageContext,
+        pageContextLabels,
+        t("pageContextLabels.fallback"),
+      ),
+    [effectivePageContext, pageContextLabels, t],
+  );
+  const contextComposerShellClassName = isPageContextVisible
+    ? "rounded-[14px] bg-surface-2/55 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+    : "";
+  const contextInputShellClassName = isPageContextVisible
+    ? "relative rounded-[10px] border border-border bg-surface-1 shadow-[0_1px_2px_rgba(15,23,42,0.05),0_10px_24px_rgba(15,23,42,0.08)]"
+    : "relative rounded-[8px] border border-border bg-surface-1";
+
+  const filteredSlashCommands = availableSlashCommands.filter((cmd) =>
+    cmd.command.slice(1).toLowerCase().startsWith(slashQuery.toLowerCase()),
+  );
+
+  const hubConnectionRef = useRef<signalR.HubConnection | null>(null);
+
+  // Stream the assistant's reply for the active conversation over AssistantHub. Reconnects
+  // whenever conversationId changes (a fresh "New chat" or reopening from history later).
+  useEffect(() => {
+    if (!conversationId) return;
+
+    const connection = createHubConnection("/api/v1/assistant/chat-hub");
+    hubConnectionRef.current = connection;
+
+    const upsertAssistantMessage = (
+      messageId: string,
+      updater: (prev: ChatMessage | undefined) => ChatMessage,
+    ) => {
+      setMessages((prev) => {
+        const index = prev.findIndex((m) => m.id === messageId);
+        if (index === -1) return [...prev, updater(undefined)];
+        const next = [...prev];
+        next[index] = updater(next[index]);
+        return next;
+      });
+    };
+
+    connection.on(
+      "AssistantMessageStarted",
+      (payload: { conversationId: string; messageId: string }) => {
+        if (payload.conversationId !== conversationId) return;
+        if (stoppedRepliesRef.current.has(payload.messageId)) return;
+        if (activeReplyRef.current && !activeReplyRef.current.replyId) {
+          activeReplyRef.current.replyId = payload.messageId;
+        }
+        setIsAiTyping(true);
+        // A new turn starts a new trail; the previous one has been folded into the answer it
+        // produced and stays there.
+        //
+        // Seeded with the step that is genuinely running: before the first tool call WarpBot is
+        // reading the question, which on a slow turn is the longest stretch of the whole thing
+        // and used to be drawn as a bare "Thinking..." with no trail at all.
+        updateSteps(() => [{ key: THINKING_STEP, tool: THINKING_STEP, done: false }]);
+        turnStartedAtRef.current = Date.now();
+        setIsSlow(false);
+        armResponseTimeout();
+        upsertAssistantMessage(payload.messageId, (prev) => ({
+          id: payload.messageId,
+          role: "assistant",
+          content: prev?.content ?? "",
+        }));
+      },
+    );
+
+    connection.on(
+      "AssistantMessageChunk",
+      (payload: {
+        conversationId: string;
+        messageId: string;
+        delta: string;
+      }) => {
+        if (payload.conversationId !== conversationId) return;
+        // Stopped: the worker notices within half a second, and what arrives meanwhile is not
+        // what the user chose to keep.
+        if (stoppedRepliesRef.current.has(payload.messageId)) return;
+        setIsAiTyping(false);
+        setIsSlow(false);
+        // Marked finished, NOT discarded. Once prose starts arriving no tool is still running,
+        // but what it ran is exactly what the reader wants left on screen — and writing the
+        // answer is itself a step, so the trail names it rather than going quiet for the
+        // longest visible part of the turn.
+        updateSteps((current) => {
+          const settled = current.map((step) => ({ ...step, done: true }));
+          return settled.some((step) => step.tool === WRITING_STEP)
+            ? settled
+            : [...settled, { key: WRITING_STEP, tool: WRITING_STEP, done: false }];
+        });
+        // Still mid-turn: re-arm rather than clear, so a stream that dies halfway through
+        // also surfaces instead of freezing under a half-written answer.
+        armResponseTimeout();
+        upsertAssistantMessage(payload.messageId, (prev) => ({
+          id: payload.messageId,
+          role: "assistant",
+          content: (prev?.content ?? "") + payload.delta,
+        }));
+      },
+    );
+
+    connection.on(
+      "AssistantToolCallStarted",
+      (payload: { conversationId: string; toolName: string; toolDetail?: string }) => {
+        if (payload.conversationId !== conversationId) return;
+        if (!activeReplyRef.current) return; // a stopped turn's last step, arriving late
+        setIsAiTyping(true);
+        updateSteps((current) => [
+          // Anything still marked running when a new tool starts has finished — the worker
+          // emits a completed for each, but the trail must not show two spinners if one is lost.
+          ...current.map((step) => ({ ...step, done: true })),
+          {
+            key: `${payload.toolName}-${current.length}`,
+            tool: payload.toolName,
+            done: false,
+            detail: payload.toolDetail || undefined,
+          },
+        ]);
+        armResponseTimeout();
+      },
+    );
+
+    connection.on(
+      "AssistantReasoning",
+      (payload: { conversationId: string; title?: string; body?: string }) => {
+        if (payload.conversationId !== conversationId) return;
+        if (!activeReplyRef.current) return; // a stopped turn's last thought, arriving late
+        const title = payload.title?.trim() ?? "";
+        const body = payload.body?.trim() ?? "";
+        if (!title && !body) return;
+        setIsAiTyping(true);
+        updateSteps((current) => [
+          // The model has moved on from whatever it was doing when it wrote this.
+          ...current.map((step) => ({ ...step, done: true })),
+          {
+            key: `${REASONING_STEP}-${current.length}`,
+            tool: REASONING_STEP,
+            done: false,
+            detail: title || undefined,
+            body: body || undefined,
+          },
+        ]);
+        armResponseTimeout();
+      },
+    );
+
+    connection.on(
+      "AssistantQuestion",
+      (payload: { conversationId: string; questionsJson: string }) => {
+        if (payload.conversationId !== conversationId) return;
+        const questions = parseAssistantQuestions(payload.questionsJson);
+        // A malformed payload leaves the prompt absent rather than rendering an empty shell —
+        // the user's own message box still works, which is the fallback that matters.
+        const permission = parsePermissionPrompt(payload.questionsJson);
+        if (questions.length) setPendingQuestions(questions);
+        // A new ask replaces whatever the slot held, answered or not: the previous one's receipt is
+        // not worth a question going unseen behind it.
+        if (permission) {
+          setPendingPermission(permission);
+          setPermissionAnswered(false);
+        }
+        armResponseTimeout();
+      },
+    );
+
+    connection.on(
+      "AssistantToolCallCompleted",
+      (payload: { conversationId: string; toolName?: string; toolDetail?: string }) => {
+        if (payload.conversationId !== conversationId) return;
+        // The hosted web search publishes its started event before OpenAI has said what it is
+        // searching for, so this is often the first event that can name the target.
+        updateSteps((current) =>
+          withStepDetail(current, payload.toolName ?? "", payload.toolDetail).map((step) => ({
+            ...step,
+            done: true,
+          })),
+        );
+        armResponseTimeout();
+      },
+    );
+
+    connection.on(
+      "AssistantMessageCompleted",
+      (payload: {
+        conversationId: string;
+        id: string;
+        content: string;
+        sourcesJson?: string | null;
+      }) => {
+        if (payload.conversationId !== conversationId) return;
+        if (stoppedRepliesRef.current.has(payload.id)) {
+          // The worker kept what it had written; that is the stopped reply's text now.
+          setMessages((prev) =>
+            prev.map((m) => (m.id === payload.id ? { ...m, content: payload.content || m.content } : m)),
+          );
+          return;
+        }
+        if (!activeReplyRef.current?.replyId || activeReplyRef.current.replyId === payload.id) {
+          activeReplyRef.current = null;
+          setReplyInFlight(false);
+        }
+        setIsAiTyping(false);
+        setIsSlow(false);
+        clearResponseTimeout();
+        // The plugin cards stay: this answer is the one explaining them. See clearPluginCards.
+        // The permission form is told the turn is over so it can stop saying "Running…" — a stamp,
+        // not a clear, because the form owns how long its receipt lives.
+        setTurnEndedAt(Date.now());
+
+        // Folded onto the answer, not deleted.
+        //
+        // This used to clear the trail outright, arguing that a finished turn showing its steps
+        // claims they are still worth watching. Half right: they are not worth WATCHING, and
+        // throwing them away also threw away the only record of which tools an answer came
+        // through — the first thing a person checking a surprising answer reaches for. It is one
+        // folded line now: over, and still there.
+        //
+        // From the REF (WT-620): this handler was registered before the turn began, and the
+        // `steps` it closes over is that render's empty trail.
+        const finishedSteps = stepsRef.current.map((step) => ({ ...step, done: true }));
+        const startedAt = turnStartedAtRef.current;
+        turnStartedAtRef.current = null;
+        updateSteps(() => []);
+
+        // Only the completed event carries them: the worker decides which sources the answer
+        // pointed at once the whole answer exists, so there is nothing to show mid-stream.
+        upsertAssistantMessage(payload.id, () => ({
+          id: payload.id,
+          role: "assistant",
+          content: payload.content,
+          sources: parseAnswerSources(payload.sourcesJson),
+          steps: finishedSteps.length > 0 ? finishedSteps : undefined,
+          durationMs: startedAt ? Date.now() - startedAt : undefined,
+        }));
+      },
+    );
+
+    connection.on(
+      "AssistantMessageFailed",
+      (payload: {
+        conversationId: string;
+        messageId: string;
+        error: string;
+      }) => {
+        if (payload.conversationId !== conversationId) return;
+        // A reply stopped before it wrote anything is "failed" on the server so it stays out of
+        // the next turn's history; on screen it is simply stopped.
+        if (stoppedRepliesRef.current.has(payload.messageId)) return;
+        if (!activeReplyRef.current?.replyId || activeReplyRef.current.replyId === payload.messageId) {
+          activeReplyRef.current = null;
+          setReplyInFlight(false);
+        }
+        setIsAiTyping(false);
+        setIsSlow(false);
+        clearResponseTimeout();
+        // The plugin cards stay: a turn that failed after raising one still needs it pressed.
+        // A turn that died still ended, so the permission form stops waiting on it rather than
+        // spinning until the next question; what went wrong is in the failed reply below it.
+        setTurnEndedAt(Date.now());
+        // A failure is the case the trail matters MOST: how far it got is the only clue to why.
+        // From the ref, for the same reason as the completed handler.
+        const failedSteps = stepsRef.current.map((step) => ({ ...step, done: true }));
+        const failedStartedAt = turnStartedAtRef.current;
+        turnStartedAtRef.current = null;
+        updateSteps(() => []);
+        upsertAssistantMessage(payload.messageId, () => ({
+          id: payload.messageId,
+          role: "assistant",
+          content: payload.error,
+          failed: true,
+          steps: failedSteps.length > 0 ? failedSteps : undefined,
+          durationMs: failedStartedAt ? Date.now() - failedStartedAt : undefined,
+        }));
+      },
+    );
+
+    connection.on(
+      "AssistantFollowUpMessage",
+      (payload: {
+        conversationId: string;
+        id: string;
+        content: string;
+        sourcesJson?: string | null;
+      }) => {
+        if (payload.conversationId !== conversationId) return;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: payload.id,
+            role: "assistant",
+            content: payload.content,
+            sources: parseAnswerSources(payload.sourcesJson),
+          },
+        ]);
+      },
+    );
+
+    const joinConversation = async () => {
+      await connection.invoke("JoinConversation", conversationId);
+      joinedConversationIdRef.current = conversationId;
+    };
+
+    // withAutomaticReconnect (lib/signalr.ts) brings the socket back but NOT the SignalR
+    // group membership. Without this re-join, one transport blip means every token the
+    // worker streams for this conversation is delivered to a client that is no longer in
+    // the group — the widget just sits on "Thinking..." forever.
+    connection.onreconnecting(() => {
+      joinedConversationIdRef.current = null;
+    });
+    connection.onreconnected(() => {
+      joinedConversationIdRef.current = null;
+      void joinConversation().catch(() => {
+        // Still unjoined; the response watchdog surfaces it as a real error.
+      });
+    });
+    connection.onclose(() => {
+      joinedConversationIdRef.current = null;
+    });
+
+    connection
+      .start()
+      .then(joinConversation)
+      .catch(() => {
+        // joinedConversationIdRef stays null, so sendMessage's join wait times out and the
+        // response watchdog turns the stalled spinner into a visible error.
+      });
+
+    return () => {
+      joinedConversationIdRef.current = null;
+      void connection.stop();
+      hubConnectionRef.current = null;
+    };
+  }, [conversationId, armResponseTimeout, clearResponseTimeout, updateSteps]);
+
+  // Calculate mention/slash menu visibility based on @ or leading / characters
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInputValue(val);
+    // Deleting "@Google Meet" from the text is how a mention is removed now that it lives in the
+    // sentence, so a context whose token is gone goes with it.
+    setSelectedContexts((prev) => {
+      const kept = prev.filter((ctx) => hasMentionToken(val, ctx.title));
+      return kept.length === prev.length ? prev : kept;
+    });
+
+    const cursorPosition = e.target.selectionStart;
+    const textBeforeCursor = val.slice(0, cursorPosition);
+
+    // No @mentions in platform scope: everything mentionable is a workspace entity or a plugin.
+    // WT-887: "@summary:standup" is a namespace and a query — see mention-trigger.ts.
+    const mentionTrigger = isPlatformScope ? null : parseMentionTrigger(textBeforeCursor);
+    if (mentionTrigger) {
+      setMentionMenuOpen(true);
+      setMentionNamespace(mentionTrigger.namespace);
+      setMentionQuery(mentionTrigger.query);
+      // Back to the top on every keystroke, the way the slash menu already does it. The
+      // highlight used to keep an index from the previous, longer list: typing one more letter
+      // could leave it past the end, which reads as "nothing is selected" and now also costs
+      // the ghost completion and Tab.
+      setSelectedIndex(0);
+    } else {
+      setMentionMenuOpen(false);
+    }
+
+    // Only when "/" is the very first thing typed (Slack-style) — not mid-sentence — and
+    // only where this page actually has commands. Opening an empty menu on a page with no
+    // ambient context used to hijack Enter and leave the message unsendable.
+    const slashMatch = textBeforeCursor.match(/^\/([\w-]*)$/);
+    if (slashMatch && availableSlashCommands.length > 0) {
+      setSlashMenuOpen(true);
+      setSlashQuery(slashMatch[1]);
+      setSlashSelectedIndex(0);
+    } else {
+      setSlashMenuOpen(false);
+    }
+  };
+
+  /**
+   * One way out of the permission form, whether the answer was pressed or taken by Enter on an
+   * empty composer: the slot keeps the prompt, because the form is now the only thing on screen
+   * saying the write is running, and the stamp is what stops Enter answering it twice.
+   */
+  const answerPermissionPrompt = (message: string) => {
+    void sendMessage(message, { keepPermissionPrompt: true });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Every branch that handles a key here must return. Falling through to the send path
+    // below runs sendMessage() in the same handler, against pre-update state — which is how
+    // picking a mention with Enter used to send the literal "@Al" with no mentions attached
+    // and leave the chip dangling for the *next* message.
+    //
+    // An IME (Vietnamese Telex, Japanese, Chinese…) owns the keyboard while it composes: its Enter
+    // confirms the candidate, its arrows move through candidates. Sending on that Enter posted half
+    // a word and left the rest in the box, and the menu branches would pick a row mid-word.
+    // Same check as the Meet-popup pane's composer.
+    if (e.nativeEvent.isComposing) return;
+    if (slashMenuOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) =>
+          Math.min(prev + 1, filteredSlashCommands.length - 1),
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelectedIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashMenuOpen(false);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const command = filteredSlashCommands[slashSelectedIndex];
+        if (command) {
+          insertSlashCommand(command);
+          return;
+        }
+        // Nothing matched what was typed — send it as ordinary text instead of swallowing
+        // the keystroke and leaving the user with no way out but Escape.
+        setSlashMenuOpen(false);
+        void sendMessage();
+        return;
+      }
+      return;
+    }
+
+    if (mentionMenuOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((prev) =>
+          Math.min(prev + 1, filteredOptions.length - 1),
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionMenuOpen(false);
+        return;
+      }
+      // Tab accepts what the ghost text is offering. preventDefault unconditionally, including
+      // on a query that matches nothing: the default would move focus out of the composer to
+      // the paperclip, which is never what somebody mid-"@goo" meant by it.
+      if (e.key === "Tab" && !e.shiftKey) {
+        e.preventDefault();
+        const option = filteredOptions[selectedIndex];
+        if (option) {
+          insertMention(option);
+          return;
+        }
+        setMentionMenuOpen(false);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        // Guard the index: with a query that matches nothing (e.g. "@zzzz") this used to
+        // call insertMention(undefined), which throws inside a setState updater and takes
+        // the whole page down through the error boundary.
+        const option = filteredOptions[selectedIndex];
+        if (option) {
+          insertMention(option);
+          return;
+        }
+        setMentionMenuOpen(false);
+        void sendMessage();
+        return;
+      }
+      return;
+    }
+
+    // A mention lives in the text as "@Google Meet", so Backspace at its end removes the whole
+    // token. One character off it used to leave "@Google Mee" behind as ordinary words, with the
+    // structured mention silently dropped — the message then looked like it named a plugin it no
+    // longer named.
+    if (e.key === "Backspace" && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      const input = inputRef.current;
+      const caret = input?.selectionStart ?? 0;
+      if (input && caret === input.selectionEnd) {
+        const token = mentionTokenEndingAt(
+          inputValue,
+          caret,
+          selectedContexts.map((ctx) => ({ label: ctx.title })),
+        );
+        if (token) {
+          e.preventDefault();
+          const next = inputValue.slice(0, token.start) + inputValue.slice(token.end);
+          setInputValue(next);
+          setSelectedContexts((prev) => prev.filter((ctx) => hasMentionToken(next, ctx.title)));
+          setTimeout(() => {
+            input.focus();
+            input.setSelectionRange(token.start, token.start);
+          }, 0);
+          return;
+        }
+      }
+    }
+
+    // Handle backspace when input is empty to delete the last context. Only mentions that never
+    // made it into the text can be left by now (see the sent bubble's `unplaced`).
+    if (
+      e.key === "Backspace" &&
+      inputValue === "" &&
+      selectedContexts.length > 0
+    ) {
+      setSelectedContexts((prev) => prev.slice(0, -1));
+      return;
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      // Enter answers the permission prompt only while there is nothing written. A half-typed
+      // question is a better answer than a button press the user did not mean, so anything in the
+      // box wins — and this is a write, which should never be approved by a stray keystroke.
+      const firstAnswer = pendingPermission?.options?.find((option) => option.value)?.value;
+      if (
+        !inputValue.trim() &&
+        pendingPermission?.kind === "tool" &&
+        // Not one already answered: the form is still there, showing the write running, and Enter
+        // on an empty box would confirm the same write twice.
+        !permissionAnswered &&
+        firstAnswer
+      ) {
+        answerPermissionPrompt(firstAnswer);
+        return;
+      }
+      void sendMessage();
+    }
+  };
+
+  // WT-887: a namespace narrows to its own kinds; a plain "@" offers everything it always did, and
+  // not summaries or transcripts — those are reached through "@summary:" and friends, so the plain
+  // list does not double in length with a copy of every meeting. Names match through the same
+  // folding the server's search uses, so "@meeting:hop" keeps the "họp" rows the API returned.
+  const namespaceEntityTypes = mentionNamespace ? NAMESPACE_ENTITY_TYPES[mentionNamespace] : null;
+  const matchingOptions: MentionMenuItem[] = CONTEXT_OPTIONS.filter(
+    (opt) =>
+      (namespaceEntityTypes
+        ? namespaceEntityTypes.includes(opt.entityType)
+        : opt.entityType !== "summary" && opt.entityType !== "transcript") &&
+      matchesSearchText(mentionQuery, opt.label ?? opt.title),
+  );
+  // A plain "@doc" also offers the namespace it could be the start of. See namespaceHints for why
+  // the hint leads only when the query IS a keyword.
+  const hints = mentionNamespace ? null : namespaceHints(mentionQuery);
+  const hintOptions: MentionNamespaceHint[] = (hints?.namespaces ?? []).map((namespace) => ({
+    id: `namespace-${namespace}`,
+    title: namespaceKeyword(namespace),
+    type: t("mentionGroupNamespaces"),
+    icon: <MagnifyingGlass size={14} />,
+    description: t(NAMESPACE_HINT_KEYS[namespace]),
+    namespace,
+  }));
+  const filteredOptions: MentionMenuItem[] = hints?.exact
+    ? [...hintOptions, ...matchingOptions]
+    : [...matchingOptions, ...hintOptions];
+
+  // The composer's text split around the mentions written into it, for the mirror's highlight.
+  const composerMentionSegments = splitMentionTokens(
+    inputValue,
+    selectedContexts.map((ctx) => ({
+      entityType: ctx.entityType,
+      entityId: ctx.entityId,
+      label: ctx.label ?? ctx.title,
+    })),
+  ).segments;
+
+  const composerHasMention = composerMentionSegments.some((part) => part.kind === "mention");
+
+  // What Tab would finish the typed name with — see mention-completion.ts for when it is empty.
+  const mentionGhost = mentionMenuOpen
+    ? mentionCompletion({
+        draft: inputValue,
+        query: mentionQuery,
+        highlightedTitle: filteredOptions[selectedIndex]?.title,
+      })
+    : "";
+  // Drawn for a ghost completion or a mention chip, never while the textarea is at its cap and
+  // scrolling (the two would wrap differently). Only with a chip does it paint the whole
+  // sentence, and only then do the textarea's own glyphs go transparent.
+  const composerMirrorDrawn = (Boolean(mentionGhost) || composerHasMention) && !composerOverflowing;
+  const composerMentionsDrawn = composerMirrorDrawn && composerHasMention;
+
+  const insertMention = (opt: MentionMenuItem) => {
+    const cursorPosition = inputRef.current?.selectionStart || 0;
+    const textBeforeCursor = inputValue.slice(0, cursorPosition);
+    const textAfterCursor = inputValue.slice(cursorPosition);
+    const mentionTrigger = parseMentionTrigger(textBeforeCursor);
+
+    // WT-887: a namespace hint is not a mention. It rewrites "@doc" as "@document:" and leaves the
+    // menu open on that namespace, exactly as if the user had typed the colon.
+    if (isNamespaceHint(opt)) {
+      const keptBefore = textBeforeCursor.slice(0, mentionTrigger?.start ?? cursorPosition);
+      const nextBefore = `${keptBefore}@${opt.title}`;
+      setInputValue(nextBefore + textAfterCursor);
+      setMentionNamespace(opt.namespace);
+      setMentionQuery("");
+      setSelectedIndex(0);
+      setTimeout(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        input.setSelectionRange(nextBefore.length, nextBefore.length);
+      }, 0);
+      return;
+    }
+
+    setSelectedContexts((prev) => {
+      if (prev.find((p) => p.id === opt.id)) return prev;
+      return [...prev, opt];
+    });
+
+    // The mention stays in the sentence as "@Google Meet", where it was typed. It used to be cut
+    // out and kept only as a chip, so "tạo 1 cuộc họp bằng @Google Meet" was sent - and shown
+    // back in the bubble - as "tạo 1 cuộc họp bằng", with the chip stranded above it (17 Sep).
+    // A namespace goes with it: "@summary:stand" becomes "@Summary · Standup".
+    const newTextBefore = mentionTrigger
+      ? textBeforeCursor.slice(0, mentionTrigger.start)
+      : textBeforeCursor;
+    const token = `${mentionToken(opt.title)} `;
+    const needsSpaceBefore = newTextBefore.length > 0 && !/\s$/.test(newTextBefore);
+    const nextBefore = `${newTextBefore}${needsSpaceBefore ? " " : ""}${token}`;
+    setInputValue(nextBefore + textAfterCursor.replace(/^ /, ""));
+
+    setMentionMenuOpen(false);
+
+    // Focus back, with the caret after the token rather than at the end of the box.
+    setTimeout(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(nextBefore.length, nextBefore.length);
+    }, 0);
+  };
+
+  const handleMentionClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const option = filteredOptions.find(
+      (item) => item.id === event.currentTarget.dataset.optionId,
+    );
+    if (option) insertMention(option);
+  };
+
+  const insertSlashCommand = (cmd: SlashCommand) => {
+    const prompt = cmd.buildPrompt(effectivePageContext);
+    setSlashMenuOpen(false);
+
+    if (cmd.autoSend) {
+      // inputValue state hasn't flushed yet — pass the prompt directly rather than
+      // relying on the (stale) inputValue read inside sendMessage.
+      setInputValue("");
+      void sendMessage(prompt);
+      return;
+    }
+
+    setInputValue(prompt);
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(prompt.length, prompt.length);
+    }, 0);
+  };
+
+  // Autoscroll, same shape as chat-panel.tsx: follow new content, but never yank a user who
+  // has deliberately scrolled up to re-read an earlier answer back down to the bottom.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !shouldAutoScrollRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, isAiTyping, steps, isOpen, isExpanded]);
+
+  const { isAway, scrollToLatest } = useScrollToLatest(messagesContainerRef, {
+    // The same slack handleMessagesScroll uses to decide the widget is still following.
+    threshold: AUTOSCROLL_THRESHOLD_PX,
+    // Steps and the typing flag too: a long answer grows the list without adding a message, and
+    // that is exactly when a reader who scrolled up needs to be told the bottom has moved.
+    revision: `${messages.length}:${steps.length}:${isAiTyping}`,
+  });
+
+  const handleMessagesScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom < AUTOSCROLL_THRESHOLD_PX;
+  };
+
+  const togglePageContextVisibility = () => {
+    if (!ambientPageContextKey) return;
+    setDisabledPageContextKey((currentKey) =>
+      currentKey === ambientPageContextKey ? null : ambientPageContextKey,
+    );
+  };
+
+  /**
+   * WT-474: files pasted, picked or dropped into the composer.
+   *
+   * A person debugging asks "what is wrong with this screen" and the screen IS the question; the
+   * same person asks "does this contract allow X" and the PDF is. Describing either in words is
+   * exactly the work the model could have done.
+   *
+   * PER-TURN, LIKE @MENTIONS. Nothing stores these: they go with one message and are cleared, so a
+   * follow-up cannot see them. The strip says so out loud, because a user who attaches once and
+   * then asks "and the red box?" would otherwise get a confident answer about a file the model
+   * never received.
+   */
+  const addFiles = async (files: File[]) => {
+    // A platform turn is text only; a file chip here would promise an attachment never sent.
+    if (files.length === 0 || isPlatformScope || !ATTACHMENTS_SUPPORTED) return;
+
+    let accepted = attachments.length;
+    for (const file of files) {
+      const reason = rejectionReason(file, accepted);
+      if (reason) {
+        toast.error(reason);
+        // `break` rather than `continue` once the COUNT is the problem: every remaining file would
+        // produce the same toast, and four identical toasts is worse than one.
+        if (accepted >= MAX_ATTACHMENTS) break;
+        continue;
+      }
+      try {
+        const attachment = await toAttachment(file);
+        setAttachments((prev) => [...prev, attachment]);
+        accepted += 1;
+      } catch {
+        toast.error(t("fileReadFailed", { name: file.name }));
+      }
+    }
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // Only intercept when the clipboard actually carries a FILE. Pasting TEXT must stay completely
+    // untouched, including text copied out of an app that also puts an image flavour on the
+    // clipboard — hence checking the item kind rather than just `files.length`.
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (files.length === 0 || !ATTACHMENTS_SUPPORTED) return;
+    event.preventDefault();
+    void addFiles(files);
+  };
+
+  const handleDrop = (event: React.DragEvent) => {
+    setDragDepth(0);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addFiles(files);
+  };
+
+  /**
+   * Stop the reply being written (3 Oct 2026). The screen settles at once - the trail is sealed
+   * under the reply, which keeps what had arrived - and the server is told, so the worker stops
+   * calling the model and tools within half a second and keeps that text as the stored reply.
+   * Pressed before the send response named the reply, it is remembered and sent then.
+   */
+  const stopReply = () => {
+    const active = activeReplyRef.current;
+    if (!active) return;
+    if (!active.replyId) {
+      stopPendingRef.current = true;
+    } else {
+      const replyId = active.replyId;
+      stoppedRepliesRef.current.add(replyId);
+      activeReplyRef.current = null;
+      stopPendingRef.current = false;
+      const request = active.platform
+        ? assistantService.platform.stopReply(active.conversationId, replyId)
+        : assistantService.stopReply(active.conversationId, replyId);
+      // Best effort: if the call is lost the reply finishes on its own and is shown as stopped.
+      void request.catch(() => undefined);
+
+      const sealed = stepsRef.current.map((step) => ({ ...step, done: true }));
+      const startedAt = turnStartedAtRef.current;
+      setMessages((prev) => {
+        const durationMs = startedAt ? Date.now() - startedAt : undefined;
+        const steps = sealed.length > 0 ? sealed : undefined;
+        if (prev.some((m) => m.id === replyId)) {
+          return prev.map((m) =>
+            m.id === replyId ? { ...m, stopped: true, steps: steps ?? m.steps, durationMs } : m,
+          );
+        }
+        return [...prev, { id: replyId, role: "assistant" as const, content: "", stopped: true, steps, durationMs }];
+      });
+    }
+    turnStartedAtRef.current = null;
+    updateSteps(() => []);
+    setReplyInFlight(false);
+    setIsAiTyping(false);
+    setIsSlow(false);
+    clearResponseTimeout();
+    setTurnEndedAt(() => Date.now());
+  };
+
+  const sendMessage = async (
+    overrideContent?: string,
+    // Set only by the permission form's own answer. Every other send starts a turn that has
+    // nothing to do with the prompt on screen, and a prompt outliving the turn it belongs to is
+    // how a Connect button came to offer an OAuth flow nobody had asked for (WT-688). An answer is
+    // the one send that must NOT end it: the form is what says the write is running.
+    options?: { keepPermissionPrompt?: boolean },
+  ) => {
+    const content = (overrideContent ?? inputValue).trim();
+    // WT-541: the same rule the send button is disabled by. It used to be spelled out here and
+    // only half-spelled on the button, so a turn with no workspace was swallowed by a control
+    // that looked alive.
+    const readiness = composerReadiness({
+      text: content,
+      attachmentCount: isPlatformScope ? 0 : attachments.length,
+      activeWorkspaceId,
+      scope: assistantScope,
+    });
+    if (!readiness.canSend) return;
+    // A turn is opening, so the last one's end is no longer the state of anything. Before the
+    // awaits below, and in that order, because these two are what the permission form reads to
+    // tell an allowed write that is still running from one that is over.
+    setTurnEndedAt(null);
+    if (options?.keepPermissionPrompt) setPermissionAnswered(true);
+    // The id travels with the yes, so this handler cannot disagree with the check above about
+    // which workspace the turn belongs to — and a platform yes carries no workspace at all.
+    const platformTurn = readiness.scope === "platform";
+
+    // A message this component composed rather than the user typing it — a question card's
+    // answer, a slash command — carries neither the draft's @mentions nor its attachments, and
+    // leaves the draft alone. Sending "Create" used to clear whatever the user had half-written
+    // and attach its chips to the answer.
+    const fromComposer = overrideContent === undefined;
+
+    // Explicit @mentions are per-message: build the list from whatever's attached right
+    // now, then clear the chips so they don't silently ride along with the *next*
+    // unrelated message too.
+    const mentions: AssistantMentionDto[] = (platformTurn || !fromComposer ? [] : selectedContexts)
+      .filter(
+        (
+          ctx,
+        ): ctx is AssistantContextOption & {
+          entityType: AssistantMentionDto["entityType"];
+          entityId: string;
+        } => Boolean(ctx.entityType && ctx.entityId),
+      )
+      .map((ctx) => ({
+        entityType: ctx.entityType,
+        entityId: ctx.entityId,
+        label: ctx.label ?? ctx.title,
+      }));
+
+    // Captured before the state is cleared, for the same reason mentions are: this handler runs
+    // against pre-update state and the request is built further down.
+    const sentAttachments = platformTurn || !fromComposer ? [] : attachments;
+
+    if (fromComposer) {
+      setInputValue("");
+      setSelectedContexts([]);
+      setAttachments([]);
+    }
+    setMentionMenuOpen(false);
+
+    let convId = conversationId;
+    if (!convId) {
+      try {
+        const conversation =
+          readiness.scope === "platform"
+            ? await createPlatformConversation.mutateAsync()
+            : await createConversation.mutateAsync(readiness.workspaceId);
+        convId = conversation.id;
+        // Saved before the id lands in state, so the effect that reloads switches on an id change
+        // reads back the ones the user set in this still-unsaved chat instead of clearing them.
+        writeDisabledPluginKeys(browserStore(), convId, disabledPluginKeys);
+        setConversationId(convId);
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `local-${Date.now()}`,
+            role: "user",
+            content,
+            mentions,
+            attachments: sentAttachments,
+          },
+          {
+            id: `conv-failed-${Date.now()}`,
+            role: "assistant",
+            content: t("conversationStartFailed"),
+            failed: true,
+          },
+        ]);
+        return;
+      }
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `local-${Date.now()}`,
+        role: "user",
+        content,
+        mentions,
+        attachments: sentAttachments,
+      },
+    ]);
+    setIsAiTyping(true);
+    if (!options?.keepPermissionPrompt) clearPluginCards();
+    shouldAutoScrollRef.current = true;
+    armResponseTimeout();
+    activeReplyRef.current = { conversationId: convId, replyId: null, platform: platformTurn };
+    stopPendingRef.current = false;
+    setReplyInFlight(true);
+
+    try {
+      // The hub effect only begins negotiating once conversationId is in state, so without
+      // this the first message of a conversation is POSTed before the client has joined the
+      // group and its whole answer streams past an unsubscribed client.
+      await waitForConversationJoin(convId);
+      let sent: SendAssistantMessageResponse;
+      // Ambient page context (e.g. "user is looking at this room") rides along with every
+      // message automatically — no explicit @-mention needed. It's a hint, not a hard fact:
+      // .NET re-validates it against the conversation's own workspace before forwarding it.
+      if (platformTurn) {
+        sent = await sendPlatformMessage.mutateAsync({ conversationId: convId, content });
+      } else {
+        sent = await sendAssistantMessage.mutateAsync({
+          conversationId: convId,
+          content,
+          pageContext: effectivePageContext,
+          mentions,
+          attachments: sentAttachments,
+          disabledPluginKeys,
+        });
+      }
+      // The assistant's reply streams in over AssistantHub — see the connection effect above.
+      const active = activeReplyRef.current;
+      if (active && active.conversationId === convId && !active.replyId) {
+        active.replyId = sent.assistantMessageId;
+      }
+      if (stopPendingRef.current) stopReply();
+    } catch {
+      activeReplyRef.current = null;
+      setReplyInFlight(false);
+      clearResponseTimeout();
+      setIsAiTyping(false);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `send-failed-${Date.now()}`,
+          role: "assistant",
+          content: t("messageSendFailed"),
+          failed: true,
+        },
+      ]);
+    }
+  };
+
+  return (
+    <>
+      {/* Global Bottom Bar */}
+      <div className="py-1 bg-transparent flex items-center justify-end px-2 shrink-0 z-40 relative mb-0.5">
+        <div className="flex items-center gap-0.5">
+          <AnimatePresence>
+            {isMinimized && messages.length > 0 && (
+              <motion.button
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                onClick={() => {
+                  setIsOpen(true);
+                  setIsMinimized(false);
+                }}
+                className="flex items-center h-[26px] px-3 rounded-[6px] bg-surface-2 hover:bg-surface-3 transition-colors text-ink text-[12px] font-medium mr-1 truncate max-w-[200px]"
+              >
+                {messages.find((m) => m.role === "user")?.content || t("newChat")}
+              </motion.button>
+            )}
+          </AnimatePresence>
+
+          <Popover
+            open={isOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                // Re-opening must NOT start a new conversation: this is the only
+                // always-visible entry point, so wiping here threw away the answer the
+                // user just asked for, with no way to get it back.
+                setIsMinimized(false);
+                shouldAutoScrollRef.current = true;
+              } else if (messages.length > 0) {
+                setIsMinimized(true);
+              }
+              setIsOpen(open);
+            }}
+          >
+            <PopoverTrigger
+              aria-label={t("askWarpBot")}
+              data-tour="warpbot-launcher"
+              className="flex items-center h-[26px] pl-[8px] pr-[10px] rounded-[6px] bg-surface-2 hover:bg-surface-3 transition-colors group text-ink"
+            >
+              <span
+                aria-hidden="true"
+                className="mr-[6px] flex items-center justify-center"
+              >
+                <PaperPlaneTilt
+                  weight="regular"
+                  className="text-ink transition-colors"
+                  size={13}
+                />
+              </span>
+              <span className="text-[12px] leading-none whitespace-nowrap">
+                {t("askWarpBot")}
+              </span>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              // Base UI focuses the first focusable element on open, which is the minimize button
+              // in the header: typing went nowhere and Enter pressed minimize, so the panel hid
+              // instead of sending. The composer is what the panel is opened for.
+              initialFocus={inputRef}
+              className={`p-0 bg-surface-1 border border-border shadow-xl rounded-xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? "w-[680px] h-[600px]" : "w-[460px] h-[412px]"}`}
+            >
+              {/* Chat Header */}
+              <div className="flex items-center justify-between h-[48px] px-4 shrink-0">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="font-semibold text-[13px] text-ink truncate">
+                    {conversationTitle}
+                  </span>
+                  {isPlatformScope ? (
+                    <span
+                      data-testid="warpbot-scope-chip"
+                      className="shrink-0 rounded-full border border-hairline bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-subtle"
+                    >
+                      {PLATFORM_SCOPE_LABEL}
+                    </span>
+                  ) : null}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      setIsMinimized(true);
+                    }}
+                    className="size-6 flex items-center justify-center rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors"
+                  >
+                    <span className="w-2.5 h-[1.5px] bg-current rounded-full" />
+                  </button>
+                  <button
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="size-6 flex items-center justify-center rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors"
+                  >
+                    {isExpanded ? (
+                      <CornersIn size={14} />
+                    ) : (
+                      <ArrowsOutSimple size={14} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("newChat")}
+                    title={t("newChat")}
+                    onClick={startNewConversation}
+                    className="size-6 flex items-center justify-center rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors"
+                  >
+                    <Plus size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("closeChat")}
+                    title={t("closeChat")}
+                    onClick={closeConversation}
+                    className="size-6 flex items-center justify-center rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Messages */}
+              <div className="relative flex min-h-0 flex-1 flex-col">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+                className="min-h-0 flex-1 overflow-y-auto px-2 flex flex-col gap-4"
+              >
+                {suggestedPrompts.length > 0 && messages.length === 0 && !isAiTyping ? (
+                  <div
+                    data-testid={isPlatformScope ? "warpbot-platform-suggestions" : "warpbot-insights-suggestions"}
+                    className="mt-auto flex flex-col items-start gap-1.5 px-2 pb-2"
+                  >
+                    {suggestedPrompts.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => void sendMessage(prompt)}
+                        className="rounded-full border border-hairline bg-surface-1 px-3 py-1 text-left text-[12px] text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {messages.length > 0 &&
+                  messages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                    >
+                      {/* The assistant writes markdown and this printed the source of it:
+                          "## Action items" and "**bold**" reached the reader as those
+                          characters. whitespace-pre-wrap kept the line breaks and nothing
+                          else. What a person typed is rendered as typed — their asterisks
+                          are asterisks. */}
+                      <div
+                        className={`max-w-[85%] text-[13px] leading-relaxed break-words ${
+                          msg.role === "user"
+                            ? "bg-surface-2 text-ink rounded-[12px] px-3.5 py-2 whitespace-pre-wrap"
+                            : msg.failed
+                              ? "text-red-500 py-2 pl-4 whitespace-pre-wrap"
+                              : "text-ink py-2 pl-4"
+                        }`}
+                      >
+                        {msg.role === "assistant" && !msg.failed ? (
+                          <>
+                            <AssistantMarkdown withMeetingCards>{msg.content}</AssistantMarkdown>
+                            {msg.stopped ? (
+                              <p className="mt-1 text-[11.5px] italic text-ink-subtle">{t("replyStopped")}</p>
+                            ) : null}
+                            <AnswerSources
+                              sources={msg.sources ?? []}
+                              workspaceSlug={activeWorkspaceSlug}
+                            />
+                            {/* Under the answer, folded. Over as a progress display, still there
+                                as the record of which tools it came through. */}
+                            <AssistantWorkTrail
+                              steps={msg.steps ?? []}
+                              running={false}
+                              durationMs={msg.durationMs}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <UserMessageBody
+                              content={msg.content}
+                              mentions={msg.mentions ?? []}
+                              plugins={catalogPlugins}
+                            >
+                              {msg.attachments && msg.attachments.length > 0 ? (
+                                <ChatAttachmentStrip
+                                  attachments={msg.attachments}
+                                  className="mb-1 flex justify-end px-0 pb-0"
+                                />
+                              ) : null}
+                            </UserMessageBody>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                {steps.length > 0 && (
+                  <div className="flex justify-start">
+                    <AssistantWorkTrail
+                      steps={steps}
+                      running
+                      slow={isSlow}
+                      className="ml-4 mr-2 flex-1"
+                    />
+                  </div>
+                )}
+
+                {/* Only when there is no trail to say it on. With one on screen this repeated the
+                    same fact in a second place. */}
+                {isSlow && steps.length === 0 && (
+                  <p className="py-1 pl-4 text-[12px] text-ink-subtle">
+                    {t("stillWorking")}
+                  </p>
+                )}
+
+                {/* Only before the first tool names itself. Once there is a trail it says more
+                    than a spinner can, and showing both puts two answers to one question on
+                    screen. */}
+                {isAiTyping && steps.length === 0 && (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 text-[13px] text-ink-subtle py-2 pl-4">
+                      <LumidotSpinner />
+                      <span>{t("thinking")}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Last in the thread, not attached to a message: the questions belong to the
+                    turn that is still open, and pinning them to a bubble would leave them
+                    scrolled away above whatever WarpBot said while asking. */}
+                {pendingQuestions ? (
+                  <div className="pl-4">
+                    <AssistantQuestionCard
+                      questions={pendingQuestions}
+                      disabled={isAiTyping}
+                      onSubmit={(answer) => {
+                        // An ordinary message, sent the ordinary way. Nothing is paused waiting
+                        // for this, so the assistant simply reads it on its next turn with the
+                        // whole conversation in front of it.
+                        setPendingQuestions(null);
+                        void sendMessage(answer);
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+              </div>
+              {/* Only the widget gets the fade. It is a small panel with a hard bottom edge against
+                  the composer, so an answer ends mid-sentence at a cut line; the taller in-meeting
+                  panels end against the page and read as continuing on their own. */}
+              {/* Only while the reader is up the page. It used to render unconditionally, so
+                  at the bottom — where every reader spends most of their time — a soft band sat
+                  over the last two lines of the answer they were reading. The edge exists to say
+                  "there is more below"; at the bottom there is not. */}
+              <ScrollFadeEdge visible={isAway} />
+              <ScrollToLatestChip visible={isAway} onClick={scrollToLatest} />
+              </div>
+
+              {/* Chat Input Section
+                  The context chip is IN FLOW, not absolutely positioned.
+
+                  It used to be `absolute bottom-2 h-[118px]` inside this `shrink-0` section
+                  — a fixed-height tray anchored to the bottom, drawn behind the composer.
+                  The section is only as tall as the composer, so the remaining ~30px of that
+                  118px hung upward INTO the message list and painted over the last answer.
+                  That is the reported overlap, and it could not be tuned away: the composer
+                  grows with the text in it, so any fixed height is wrong at some height.
+
+                  Wrapping the chip and the composer in the tray gets the same look — chip
+                  above the input, both inside one rounded shell — out of the flex layout,
+                  which reserves the space it actually occupies. */}
+              <div className="relative px-2 pb-2 shrink-0">
+                <div className={contextComposerShellClassName}>
+                <AnimatePresence initial={false}>
+                  {ambientContextDisplay && (
+                    <motion.div
+                      key="page-context-shell"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.18, ease: "easeOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="flex min-h-[30px] items-center rounded-[10px] px-2.5 py-1.5 text-[13px] font-medium text-ink">
+                        <div
+                          aria-label={t("activePageContext")}
+                          title={`${ambientContextDisplay.pageLabel}: ${ambientContextDisplay.title}`}
+                          className="flex min-w-0 flex-1 items-center gap-1.5"
+                        >
+                          <span className="flex size-5 shrink-0 items-center justify-center rounded-[6px] bg-surface-1 text-ink-muted ring-1 ring-border/80">
+                            {ambientContextDisplay.icon}
+                          </span>
+                          <span className="shrink-0 text-[12px] text-ink-muted">
+                            {ambientContextDisplay.pageLabel}
+                          </span>
+                          <span className="min-w-0 truncate">
+                            {ambientContextDisplay.title}
+                          </span>
+                          {ambientContextDisplay.status && (
+                            <span className="shrink-0 rounded-[6px] bg-surface-1 px-1.5 py-0.5 text-[11px] font-medium text-ink-subtle ring-1 ring-border">
+                              {ambientContextDisplay.status}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          aria-label={t("removePageContext")}
+                          title={t("removePageContext")}
+                          onClick={() =>
+                            setDisabledPageContextKey(ambientPageContextKey)
+                          }
+                          className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-[6px] text-ink-subtle transition-colors hover:bg-surface-1 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                        >
+                          <X size={12} weight="bold" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                {/* Never overflow-hidden: the "/" and "@" menus below are `absolute bottom-full`
+                    children of this box, so clipping it cut both menus off entirely and left only
+                    their shadow on the composer's top edge (#591 → "@ shows no list", 3 Oct). The
+                    permission form rounds its own top corners instead. */}
+                <div className={`${contextInputShellClassName} relative z-10`}>
+                  {/* What WarpBot is waiting on, where the user's hands already are. In the thread
+                      it scrolled away behind the answer that followed it and was gone when the
+                      conversation was reopened, leaving WarpBot talking about a card nobody could
+                      see. See AssistantPermissionPrompt. */}
+                  {pendingPermission ? (
+                    <AssistantPermissionPrompt
+                      prompt={pendingPermission}
+                      plugins={catalogPlugins}
+                      busy={connectPlugin.isPending}
+                      answered={permissionAnswered}
+                      turnEndedAt={turnEndedAt}
+                      // The slot is NOT cleared on an answer. Creating a meeting takes seconds, and
+                      // a form that vanishes on the press leaves nothing on screen saying the write
+                      // is running — see AssistantPermissionPrompt.
+                      onAnswer={answerPermissionPrompt}
+                      onConnect={(pluginKey) => void handlePluginConnectionAction(pluginKey)}
+                      // Declined, or the receipt's four seconds are up. One path out, so a
+                      // dismissal cannot leave the answered stamp behind for the next prompt.
+                      onDismiss={clearPluginCards}
+                      className="overflow-hidden rounded-t-[inherit]"
+                    />
+                  ) : null}
+                  {/* Slash Command Dropdown */}
+                  <AnimatePresence>
+                    {slashMenuOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute bottom-full mb-1.5 left-0 w-full max-w-[320px] max-h-[300px] overflow-y-auto bg-surface-1 border border-border rounded-xl shadow-xl flex flex-col z-50 py-1.5"
+                      >
+                        {filteredSlashCommands.length > 0 ? (
+                          filteredSlashCommands.map((cmd, i) => (
+                            <button
+                              key={cmd.command}
+                              onClick={() => insertSlashCommand(cmd)}
+                              onMouseEnter={() => setSlashSelectedIndex(i)}
+                              className={`flex items-center gap-2.5 w-full text-left px-3 py-1.5 mx-1.5 rounded-[6px] text-[13px] transition-colors w-[calc(100%-12px)] ${
+                                i === slashSelectedIndex
+                                  ? "bg-surface-2 text-ink"
+                                  : "text-ink-muted hover:bg-surface-2/50"
+                              }`}
+                            >
+                              <span className="flex items-center justify-center size-5 shrink-0 font-mono text-[13px] text-ink-subtle">
+                                /
+                              </span>
+                              <div className="flex min-w-0 flex-col">
+                                <span className="font-medium truncate">
+                                  {cmd.label}
+                                </span>
+                                <span className="text-[11px] text-ink-subtle truncate">
+                                  {cmd.command} — {cmd.description}
+                                </span>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-4 text-center text-[12px] text-ink-subtle">
+                            {t("noMatchingCommand")}
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Mention Dropdown */}
+                  <AnimatePresence>
+                    {mentionMenuOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute bottom-full mb-1.5 left-0 w-full max-w-[320px] max-h-[300px] overflow-y-auto bg-surface-1 border border-border rounded-xl shadow-xl flex flex-col z-50 py-1.5"
+                      >
+                        {filteredOptions.length > 0 ? (
+                          Array.from(
+                            new Set(filteredOptions.map((o) => o.type)),
+                          ).map((type) => (
+                            <div key={type} className="flex flex-col">
+                              <div className="px-3 py-1.5 text-[11px] font-medium text-ink-subtle">
+                                {type}
+                              </div>
+                              {filteredOptions
+                                .filter((o) => o.type === type)
+                                .map((opt) => {
+                                  const i = filteredOptions.findIndex(
+                                    (o) => o.id === opt.id,
+                                  );
+                                  return (
+                                    <button
+                                      key={opt.id}
+                                      data-option-id={opt.id}
+                                      onClick={handleMentionClick}
+                                      onMouseEnter={() => setSelectedIndex(i)}
+                                      className={`flex items-center gap-2.5 w-full text-left px-3 py-1.5 mx-1.5 rounded-[6px] text-[13px] transition-colors w-[calc(100%-12px)] ${
+                                        i === selectedIndex
+                                          ? "bg-surface-2 text-ink"
+                                          : "text-ink-muted hover:bg-surface-2/50"
+                                      }`}
+                                    >
+                                      {opt.isAvatar ? (
+                                        <div className="flex items-center justify-center size-5 rounded-full shrink-0 text-[9px] font-medium text-white bg-ink">
+                                          {opt.icon}
+                                        </div>
+                                      ) : (
+                                        <span className="flex items-center justify-center size-5 shrink-0 text-[14px]">
+                                          {opt.icon}
+                                        </span>
+                                      )}
+                                      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                                        {/* A summary row shows the meeting's name: its group
+                                            heading already says "Summaries". A hint shows what it
+                                            will write, "@document:".
+                                            The name is what the user picks by, so it does not
+                                            shrink until it takes 70% of the row; the description
+                                            gives way first. Both shrinking equally cut "Linear"
+                                            to "Li…" beside its own description (3 Oct 2026). */}
+                                        <span className="max-w-[70%] shrink-0 truncate font-medium">
+                                          {isNamespaceHint(opt)
+                                            ? `@${opt.title}`
+                                            : (opt.label ?? opt.title)}
+                                        </span>
+                                        {opt.description && (
+                                          <span className="min-w-0 truncate text-[12px] text-ink-subtle">
+                                            {opt.description}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-3 py-4 text-center text-[12px] text-ink-subtle">
+                            {t("noContextsFound")}
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* WT-474: the input area is the drop target.
+                      dragDepth is a COUNTER, not a boolean: dragging across a child element fires
+                      dragleave on the parent, so a boolean flickers the highlight off mid-drag.
+                      onDragOver must preventDefault or the browser navigates to the dropped file
+                      instead of handing it over. */}
+                  <div
+                    onDragEnter={(event) => {
+                      if (!ATTACHMENTS_SUPPORTED) return;
+                      if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+                      setDragDepth((depth) => depth + 1);
+                    }}
+                    onDragOver={(event) => {
+                      if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+                      event.preventDefault();
+                    }}
+                    onDragLeave={() => setDragDepth((depth) => Math.max(0, depth - 1))}
+                    onDrop={handleDrop}
+                    className={cn(
+                      // WT-667: the cap here has to clear the textarea's own (132px) plus a row
+                      // of context chips, or the two scrollbars fight: the box would stop growing
+                      // at 120px and the tray would scroll instead of the text. This one is for
+                      // MANY chips, not for a long message.
+                      "flex flex-wrap items-center gap-1.5 w-full min-h-[38px] max-h-[200px] bg-transparent px-2 py-1.5 overflow-y-auto rounded-[10px] transition-colors",
+                      dragDepth > 0 && "bg-primary/5 outline-dashed outline-1 outline-primary/40",
+                    )}
+                  >
+                    {/* Only contexts that are not already written into the sentence. A mention picked
+                        from the @ menu lives in the text as "@Google Meet" and is highlighted there
+                        by the mirror below; drawing it here too would show it twice. */}
+                    {selectedContexts
+                      .filter((ctx) => !hasMentionToken(inputValue, ctx.title))
+                      .map((ctx) => (
+                      <span
+                        key={ctx.id}
+                        className="flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded-md text-[12px] font-medium"
+                      >
+                        {ctx.isAvatar ? (
+                          <span className="flex items-center justify-center size-3.5 rounded-full shrink-0 text-[7px] font-bold text-white bg-ink">
+                            {ctx.icon}
+                          </span>
+                        ) : (
+                          <span className="flex items-center justify-center size-3.5 shrink-0">
+                            {ctx.icon}
+                          </span>
+                        )}
+                        {ctx.title}
+                        <button
+                          type="button"
+                          aria-label={t("removeContextAria", { title: ctx.title })}
+                          title={t("removeContext", { title: ctx.title })}
+                          onClick={() =>
+                            setSelectedContexts((prev) =>
+                              prev.filter((item) => item.id !== ctx.id),
+                            )
+                          }
+                          className="ml-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-[4px] transition-colors hover:bg-primary/20"
+                        >
+                          <X size={9} weight="bold" />
+                        </button>
+                      </span>
+                    ))}
+                    {/* The ghost completion is a MIRROR of the textarea, not a second input. A
+                        textarea paints one colour and gives no way to draw inside it, so the only
+                        way to show "@googl[e Meet]" is to re-render the same string in the same
+                        box, hide it, and let just the grey suffix show through where the caret is.
+
+                        EVERYTHING THAT MOVES A GLYPH MUST AGREE ON BOTH: font size, line height,
+                        wrapping, width, and the absence of padding. Neither sets a line height —
+                        both inherit the same one, and WT-667's six-line cap was measured against
+                        it, so this must not be the change that picks a new one.
+
+                        It is not drawn while the textarea is at its WT-667 cap and scrolling. The
+                        scrollbar then takes width the mirror does not have, so the two wrap at
+                        different points and the suffix lands on the wrong line.
+
+                        aria-hidden: the open menu already announces the option, and hearing the
+                        sentence read back a second time is worse than not hearing the hint. */}
+                    <div className="relative flex-1 min-w-[120px]">
+                      {composerMirrorDrawn ? (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 overflow-hidden text-[13px] whitespace-pre-wrap break-words"
+                        >
+                          {/* The same string, glyph for glyph: each @mention drawn as a chip with
+                              its mark over the "@" (3 Oct 2026). With a mention in the text the
+                              mirror paints the whole sentence and the textarea's glyphs go
+                              transparent - its caret and selection stay. See
+                              ComposerMentionMirror for why nothing here may change a width. */}
+                          <ComposerMentionMirror
+                            segments={composerMentionSegments}
+                            plugins={catalogPlugins}
+                            ghost={mentionGhost}
+                            paintText={composerMentionsDrawn}
+                          />
+                        </div>
+                      ) : null}
+                      <textarea
+                        ref={attachComposer}
+                        value={inputValue}
+                        onChange={handleInput}
+                        onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
+                        placeholder={
+                          selectedContexts.length > 0
+                            ? ""
+                            : ambientContextDisplay
+                              ? t("askWithPageContext")
+                              : t("askPlaceholder")
+                        }
+                        // WT-667: `resize-none` stays — the height is computed, not dragged. The
+                        // scrollbar is the last resort at COMPOSER_MAX_HEIGHT_PX, not the normal
+                        // state it used to be. No `self-stretch`: an explicit height is what makes
+                        // the box the size of its text, and stretching fights it. `relative` puts
+                        // the text above the ghost mirror; `block w-full` makes the wrapper, not
+                        // the textarea, the flex item, so both share one width.
+                        className={cn(
+                          "relative block w-full bg-transparent resize-none overflow-y-auto outline-none text-[13px] placeholder:text-ink-subtle",
+                          // The mirror paints the sentence while it draws mention chips; the caret
+                          // and the selection stay the textarea's own.
+                          composerMentionsDrawn ? "text-transparent caret-ink" : "text-ink",
+                        )}
+                        rows={1}
+                      />
+                    </div>
+                  </div>
+
+                  <ChatAttachmentStrip
+                    attachments={attachments}
+                    onRemove={(index) =>
+                      setAttachments((prev) => prev.filter((_, i) => i !== index))
+                    }
+                  />
+
+                  {/* WT-541 — said on screen, not only in the send button's tooltip.
+                      The admin portal is outside [workspaceSlug], so an admin who signs in and
+                      goes straight to /admin has no active workspace and every WarpBot turn was
+                      swallowed in silence. A disabled button explains nothing to somebody who
+                      has already typed their question. */}
+                  {composerState.blocker === "no-workspace" ? (
+                    <p className="px-2.5 pb-1.5 text-[11px] leading-4 text-ink-subtle">
+                      {composerState.hint}
+                    </p>
+                  ) : null}
+
+                  <div className="flex items-center justify-between px-1.5 pb-1.5">
+                    {/* WT-474: the paperclip sits with Skills, at the left of the control row,
+                        which is where Claude and Codex put it — the composer's own actions on one
+                        side, send on the other. */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept={ATTACHMENT_ACCEPT}
+                      className="hidden"
+                      onChange={(event) => {
+                        void addFiles(Array.from(event.target.files ?? []));
+                        // Cleared so picking the SAME file twice in a row still fires onChange.
+                        event.target.value = "";
+                      }}
+                    />
+                    <div className="flex items-center gap-0.5">
+                    {/* Platform scope is text only and has no plugins: the paperclip and the
+                        Tools menu would offer workspace things a platform turn cannot carry. */}
+                    {!isPlatformScope ? (
+                    <>
+                    {ATTACHMENTS_SUPPORTED ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title={t("attachFiles")}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors text-[12px] font-medium"
+                    >
+                      <Paperclip weight="regular" size={14} />
+                    </button>
+                    ) : null}
+                    <Popover
+                      open={skillsMenuOpen}
+                      onOpenChange={setSkillsMenuOpen}
+                    >
+                      <PopoverTrigger className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-surface-2 text-ink-muted hover:text-ink transition-colors text-[12px] font-medium">
+                        <Cube weight="regular" size={14} />
+                        {t("tools")}
+                        <CaretDown
+                          weight="bold"
+                          size={10}
+                          className="text-ink-subtle ml-0.5"
+                        />
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        side="top"
+                        sideOffset={8}
+                        className="p-1.5 w-[300px] bg-surface-1 border border-border shadow-xl rounded-xl"
+                      >
+                        <div className="flex flex-col gap-2">
+                          {/* The same commands the "/" menu offers, and the same
+                              insertSlashCommand that runs them, so the menu and the keyboard
+                              cannot drift apart. This list used to render the backend's
+                              /assistant/skills, which had no prompt attached and so was
+                              `cursor-default` text -- a menu that looked clickable, was not,
+                              and told nobody what to do with it. */}
+                          <section>
+                            <div className="flex items-center justify-between px-2.5 pt-1 pb-1.5">
+                              <span className="text-[11px] font-medium text-ink-subtle">
+                                {t("tools")}
+                              </span>
+                              {activeWorkspaceSlug && (
+                                <Link
+                                  href={`/${activeWorkspaceSlug}/tools`}
+                                  onClick={() => setSkillsMenuOpen(false)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-muted hover:text-ink transition-colors"
+                                >
+                                  <span>{t("exploreTools")}</span>
+                                  <ArrowSquareOut size={11} />
+                                </Link>
+                              )}
+                            </div>
+                            {availableSlashCommands.length > 0 ? (
+                              <ul className="flex flex-col">
+                                {availableSlashCommands.map((command) => (
+                                  <li key={command.command}>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSkillsMenuOpen(false);
+                                        insertSlashCommand(command);
+                                      }}
+                                      className="flex w-full flex-col gap-0.5 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-surface-2"
+                                    >
+                                      <span className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                                        <span className="font-mono text-[11px] text-ink-subtle">
+                                          {command.command}
+                                        </span>
+                                        {command.label}
+                                      </span>
+                                      <span className="text-[11px] text-ink-subtle">
+                                        {command.description}
+                                      </span>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              // Not "loading": availableSlashCommands is filtered by the page
+                              // you are on, so an empty list is an answer, not a wait.
+                              <div className="flex flex-col gap-1 px-2.5 py-2">
+                                <div className="text-[12px] text-ink-subtle">
+                                  {t("noToolsForPage")}
+                                </div>
+                                {activeWorkspaceSlug && (
+                                  <Link
+                                    href={`/${activeWorkspaceSlug}/tools`}
+                                    onClick={() => setSkillsMenuOpen(false)}
+                                    className="inline-flex items-center gap-1 text-[11.5px] font-medium text-primary hover:underline pt-0.5"
+                                  >
+                                    <span>{t("browseAllTools")}</span>
+                                    <ArrowSquareOut size={11} />
+                                  </Link>
+                                )}
+                              </div>
+                            )}
+                          </section>
+
+                          <section className="border-t border-border pt-2">
+                            <div className="flex items-center justify-between px-2.5 pb-1.5">
+                              <span className="text-[11px] font-medium text-ink-subtle">
+                                {t("pluginsInThisChat")}
+                              </span>
+                              <a
+                                href={
+                                  activeWorkspaceSlug
+                                    ? "/settings/plugins"
+                                    : "/workspace"
+                                }
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-muted hover:text-ink"
+                              >
+                                {t("manage")}
+                                <ArrowSquareOut size={11} />
+                              </a>
+                            </div>
+                            {installedAssistantPlugins.length > 0 ? (
+                              <ul className="flex flex-col gap-1">
+                                {installedAssistantPlugins.map((plugin) => {
+                                  const connected = plugin.connectionStatus === "connected";
+                                  const alwaysAllowed = pluginWritesAlwaysAllowed(plugin.tools);
+                                  // Write tools the workspace Owner set to ask or blocked: the box
+                                  // leaves them alone, and is locked when they are all of them.
+                                  const writeLock = workspaceWriteLock(plugin.tools);
+                                  return (
+                                    <li
+                                      key={plugin.key}
+                                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5"
+                                    >
+                                      <PluginGlyph plugin={plugin} size="xs" />
+                                      <div className="min-w-0">
+                                        <div className="truncate text-[12px] font-medium text-ink">
+                                          {plugin.label}
+                                        </div>
+                                        <div className="truncate text-[11px] text-ink-subtle">
+                                          {!connected
+                                            ? t("connectToUse")
+                                            : disabledPluginKeys.includes(plugin.key)
+                                              ? t("offInThisChat")
+                                              : t("connected")}
+                                        </div>
+                                        {connected && alwaysAllowed !== null ? (
+                                          <Tooltip
+                                            content={
+                                              writeLock === "all"
+                                                ? t("alwaysAllowLockedHint")
+                                                : writeLock === "some"
+                                                  ? t("alwaysAllowPartlyLocked")
+                                                  : null
+                                            }
+                                          >
+                                            <label
+                                              className={cn(
+                                                "mt-1 flex w-fit items-center gap-1.5 text-[11px] text-ink-muted",
+                                                writeLock === "all" ? "cursor-not-allowed" : "cursor-pointer",
+                                              )}
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={alwaysAllowed}
+                                                disabled={updateToolPolicy.isPending || writeLock === "all"}
+                                                onChange={(event) => void setPluginAlwaysAllow(plugin, event.target.checked)}
+                                                className="size-3 accent-primary"
+                                              />
+                                              {t("alwaysAllowChanges")}
+                                              {writeLock ? (
+                                                <span className="inline-flex items-center gap-0.5 text-ink-subtle">
+                                                  <Lock size={10} aria-hidden />
+                                                  {writeLock === "all" ? t("alwaysAllowLocked") : null}
+                                                </span>
+                                              ) : null}
+                                            </label>
+                                          </Tooltip>
+                                        ) : null}
+                                      </div>
+                                      {connected ? (
+                                        // WT-687: on or off for this conversation, as in Claude's
+                                        // connector menu. Off means WarpBot is not offered this
+                                        // plugin's tools on the next message.
+                                        <button
+                                          type="button"
+                                          role="switch"
+                                          aria-checked={!disabledPluginKeys.includes(plugin.key)}
+                                          aria-label={t("useInThisChat", { label: plugin.label })}
+                                          onClick={() => togglePluginForConversation(plugin.key)}
+                                          className={cn(
+                                            "relative h-[18px] w-[30px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                                            disabledPluginKeys.includes(plugin.key) ? "bg-surface-3" : "bg-primary",
+                                          )}
+                                        >
+                                          <span
+                                            aria-hidden
+                                            className={cn(
+                                              "absolute top-[2px] size-[14px] rounded-full bg-white shadow-sm transition-[left] motion-reduce:transition-none",
+                                              disabledPluginKeys.includes(plugin.key) ? "left-[2px]" : "left-[14px]",
+                                            )}
+                                          />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          disabled={installPlugin.isPending || connectPlugin.isPending}
+                                          onClick={() => void handlePluginAction(plugin)}
+                                          className="inline-flex h-7 items-center gap-1 rounded-full border border-border px-2 text-[11px] font-medium text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+                                        >
+                                          {t("connect")}
+                                        </button>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : (
+                              <div className="flex items-center gap-2 px-2.5 py-2 text-[12px] text-ink-subtle">
+                                <PlugsConnected size={14} weight="duotone" />
+                                {t("installPluginsHint")}
+                              </div>
+                            )}
+                          </section>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    </>
+                    ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        aria-label={
+                          isPageContextVisible
+                            ? t("hidePageContext")
+                            : t("showPageContext")
+                        }
+                        title={
+                          isPageContextVisible
+                            ? t("hidePageContext")
+                            : t("showPageContext")
+                        }
+                        onClick={togglePageContextVisibility}
+                        disabled={isPlatformScope || !ambientPageContextKey}
+                        className="flex items-center justify-center size-7 rounded-full bg-surface-2 text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                      >
+                        {isPageContextVisible ? (
+                          <CornersIn size={14} />
+                        ) : (
+                          <ArrowsOutSimple size={14} />
+                        )}
+                      </button>
+                      {/* WT-474: the paperclip lives on the LEFT of this row now, beside Skills.
+                          It once sat here with no handler and nothing to wire it to, and was
+                          removed rather than left on screen as a control that cannot succeed —
+                          the attachment path it needed now exists. */}
+                      {replyInFlight ? (
+                        // Stop (3 Oct 2026): while a reply is being written the send button is the
+                        // way to end it, as in ChatGPT - a turn going the wrong way, or running a
+                        // tool it should not, could otherwise only be waited out.
+                        <button
+                          type="button"
+                          aria-label={t("stopReply")}
+                          title={t("stopReply")}
+                          onClick={stopReply}
+                          className="flex items-center justify-center size-[26px] rounded-full bg-ink text-surface-1 hover:bg-ink-muted transition-colors ml-1"
+                        >
+                          <Square weight="fill" size={10} />
+                        </button>
+                      ) : (
+                      <button
+                        type="button"
+                        aria-label={t("sendMessage")}
+                        onClick={() => void sendMessage()}
+                        // WT-474: an attachment on its own is a question, so send is live for a
+                        // turn carrying only files. Matching the same rule in sendMessage and in
+                        // AssistantService — a button the server would accept must not look dead.
+                        //
+                        // WT-541 is the converse, and was the actual bug: a button the server
+                        // CANNOT accept must not look alive. Both now read one rule.
+                        disabled={!composerState.canSend}
+                        title={composerState.hint ?? t("sendMessage")}
+                        className="flex items-center justify-center size-[26px] rounded-full bg-ink text-surface-1 hover:bg-ink-muted disabled:opacity-50 disabled:bg-surface-2 disabled:text-ink-muted transition-colors ml-1"
+                      >
+                        <ArrowUp weight="bold" size={13} />
+                      </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {/* Chat history — previously a permanently visible button with no handler and no
+              history UI behind it at all. It now opens this workspace's past conversations
+              and reloads the selected one back into the widget. */}
+          <Popover open={historyMenuOpen} onOpenChange={setHistoryMenuOpen}>
+            <PopoverTrigger
+              aria-label={t("chatHistory")}
+              title={t("chatHistory")}
+              disabled={!isPlatformScope && !activeWorkspaceId}
+              className="flex items-center justify-center size-[26px] rounded-[6px] text-ink-muted hover:text-ink hover:bg-surface-2 transition-colors disabled:opacity-50"
+            >
+              <ClockCounterClockwise weight="regular" size={14} />
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="p-1.5 w-[280px] max-h-[320px] overflow-y-auto bg-surface-1 border border-border shadow-xl rounded-xl"
+            >
+              {conversationsQuery.isLoading || conversationLoader.isPending ? (
+                <div className="px-2.5 py-3 text-center text-[12px] text-ink-subtle">
+                  {t("loadingConversations")}
+                </div>
+              ) : conversationsQuery.isError ? (
+                <div className="px-2.5 py-3 text-center text-[12px] text-red-500">
+                  {t("loadHistoryFailed")}
+                </div>
+              ) : visibleConversations.length === 0 ? (
+                <div className="px-2.5 py-3 text-center text-[12px] text-ink-subtle">
+                  {t("noPastConversations")}
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  {visibleConversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      onClick={() =>
+                        void openConversationFromHistory(conversation)
+                      }
+                      className="flex flex-col gap-0.5 px-2.5 py-1.5 text-left rounded-md hover:bg-surface-2 transition-colors"
+                    >
+                      <span className="truncate text-[12px] font-medium text-ink">
+                        {conversation.title?.trim() || t("newChat")}
+                      </span>
+                      <span className="text-[11px] text-ink-subtle">
+                        {formatConversationTimestamp(
+                          conversation.lastMessageAt ?? conversation.createdAt,
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+    </>
+  );
+}

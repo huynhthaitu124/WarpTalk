@@ -1,9 +1,9 @@
 // Test harness served by the Vite dev server (root = apps/web): mounts the meeting caption UI with
 // scripted data-channel messages so caption rendering is testable without a LiveKit server.
 import { createRoot } from 'react-dom/client';
-import { mergeCaption, parseCaption, type CaptionLine } from '@/lib/captions';
-import type { RoomStatus } from '@/lib/schemas';
-import { CaptionsPanel, StatusStrip } from '@/features/MeetingParts';
+import { mergeCaption, parseCaption, type CaptionLine } from '@v2/lib/captions';
+import type { RoomStatus } from '@v2/lib/schemas';
+import { CaptionsPanel, StatusStrip } from '@v2/features/MeetingParts';
 
 export interface HarnessInput {
   /** Raw payloads as the pipeline publishes them (JSON strings or plain text). */

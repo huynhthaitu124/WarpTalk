@@ -5,7 +5,8 @@ use warptalk_db::map_sqlx_error;
 use warptalk_kernel::{AppError, AppResult, UserId};
 
 use crate::application::ports::{
-    IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, UserAuthRecord,
+    ClientInfo, IdentityRepository, NewRefreshToken, NewUser, RotateOutcome, SessionRecord,
+    UserAuthRecord,
 };
 use crate::domain::{AccountFlags, Profile, Settings, UserSummary};
 
@@ -195,13 +196,16 @@ impl IdentityRepository for PgIdentityRepository {
 
     async fn insert_refresh_token(&self, t: NewRefreshToken) -> AppResult<()> {
         sqlx::query(
-            "INSERT INTO auth.refresh_tokens (id, user_id, token_hash, family_id, expires_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO auth.refresh_tokens
+                    (id, user_id, token_hash, family_id, device_info, ip_address, expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(t.user_id.as_uuid())
         .bind(&t.token_hash)
         .bind(t.family_id)
+        .bind(t.client.device_info.as_deref())
+        .bind(t.client.ip_address.as_deref())
         .bind(t.expires_at)
         .bind(t.now)
         .execute(&self.pool)
@@ -216,10 +220,11 @@ impl IdentityRepository for PgIdentityRepository {
         new_hash: &str,
         new_expires_at: DateTime<Utc>,
         now: DateTime<Utc>,
+        client: &ClientInfo,
     ) -> AppResult<RotateOutcome> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
         let row = sqlx::query(
-            "SELECT user_id, family_id, expires_at, revoked_at
+            "SELECT user_id, family_id, expires_at, revoked_at, device_info, ip_address
                FROM auth.refresh_tokens WHERE token_hash = $1 FOR UPDATE",
         )
         .bind(old_hash)
@@ -234,6 +239,8 @@ impl IdentityRepository for PgIdentityRepository {
         let expires_at: DateTime<Utc> = row.try_get("expires_at").map_err(map_sqlx_error)?;
         let revoked_at: Option<DateTime<Utc>> =
             row.try_get("revoked_at").map_err(map_sqlx_error)?;
+        let old_device: Option<String> = row.try_get("device_info").map_err(map_sqlx_error)?;
+        let old_ip: Option<String> = row.try_get("ip_address").map_err(map_sqlx_error)?;
 
         if revoked_at.is_some() {
             revoke_family_tx(&mut tx, family_id, now).await?;
@@ -250,13 +257,18 @@ impl IdentityRepository for PgIdentityRepository {
             .await
             .map_err(map_sqlx_error)?;
         sqlx::query(
-            "INSERT INTO auth.refresh_tokens (id, user_id, token_hash, family_id, expires_at, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO auth.refresh_tokens
+                    (id, user_id, token_hash, family_id, device_info, ip_address, expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::now_v7())
         .bind(user_id)
         .bind(new_hash)
         .bind(family_id)
+        // The session keeps describing the device it was signed in on; the address follows the
+        // client as it moves between networks.
+        .bind(client.device_info.clone().or(old_device))
+        .bind(client.ip_address.clone().or(old_ip))
         .bind(new_expires_at)
         .bind(now)
         .execute(&mut *tx)
@@ -287,6 +299,80 @@ impl IdentityRepository for PgIdentityRepository {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
         revoke_family_tx(&mut tx, family_id, now).await?;
         tx.commit().await.map_err(map_sqlx_error)
+    }
+
+    async fn list_sessions(
+        &self,
+        user: UserId,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<SessionRecord>> {
+        // A family is live while it holds an unrevoked, unexpired token (rotation keeps exactly
+        // one). Its first token is the sign-in; its live token the latest refresh.
+        let rows = sqlx::query(
+            "SELECT live.family_id, live.device_info, live.ip_address, live.expires_at,
+                    live.created_at AS last_active_at, fam.signed_in_at
+               FROM auth.refresh_tokens live
+               JOIN (SELECT family_id, MIN(created_at) AS signed_in_at
+                       FROM auth.refresh_tokens WHERE user_id = $1 GROUP BY family_id) fam
+                 ON fam.family_id = live.family_id
+              WHERE live.user_id = $1 AND live.revoked_at IS NULL AND live.expires_at > $2
+              ORDER BY live.created_at DESC",
+        )
+        .bind(user.as_uuid())
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        rows.iter()
+            .map(|r| {
+                Ok(SessionRecord {
+                    family_id: r.try_get("family_id").map_err(map_sqlx_error)?,
+                    device_info: r.try_get("device_info").map_err(map_sqlx_error)?,
+                    ip_address: r.try_get("ip_address").map_err(map_sqlx_error)?,
+                    signed_in_at: r.try_get("signed_in_at").map_err(map_sqlx_error)?,
+                    last_active_at: r.try_get("last_active_at").map_err(map_sqlx_error)?,
+                    expires_at: r.try_get("expires_at").map_err(map_sqlx_error)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn revoke_user_family(
+        &self,
+        user: UserId,
+        family_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let done = sqlx::query(
+            "UPDATE auth.refresh_tokens SET revoked_at = $3
+              WHERE user_id = $1 AND family_id = $2 AND revoked_at IS NULL AND expires_at > $3",
+        )
+        .bind(user.as_uuid())
+        .bind(family_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(done.rows_affected() > 0)
+    }
+
+    async fn revoke_other_families(
+        &self,
+        user: UserId,
+        keep: Uuid,
+        now: DateTime<Utc>,
+    ) -> AppResult<u64> {
+        let done = sqlx::query(
+            "UPDATE auth.refresh_tokens SET revoked_at = $3
+              WHERE user_id = $1 AND family_id <> $2 AND revoked_at IS NULL",
+        )
+        .bind(user.as_uuid())
+        .bind(keep)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(done.rows_affected())
     }
 
     async fn get_profile(&self, id: UserId) -> AppResult<Option<Profile>> {

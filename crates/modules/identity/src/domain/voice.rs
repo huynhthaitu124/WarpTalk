@@ -90,8 +90,10 @@ fn pcm16_to_mono(bytes: &[u8], channels: usize) -> Vec<f32> {
         .chunks_exact(frame)
         .map(|f| {
             let sum: f32 = f
-                .chunks_exact(2)
-                .map(|p| f32::from(i16::from_le_bytes([p[0], p[1]])) / 32768.0)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| f32::from(i16::from_le_bytes(*p)) / 32768.0)
                 .sum();
             sum / channels as f32
         })

@@ -1,0 +1,289 @@
+"use client";
+
+/**
+ * The shared surface vocabulary for every billing screen.
+ *
+ * ONE RULE THIS FILE EXISTS TO ENFORCE: no drop shadows. Not on cards, not on rows, not on the
+ * modal. Depth here comes from a hairline and a surface change, never from a shadow. Every
+ * primitive below therefore carries an explicit `shadow-none` rather than merely omitting a
+ * shadow class — `Card`, `DialogContent` and several ui/ primitives ship their own `shadow-*`,
+ * so omitting is not the same as refusing, and a component that only omits will quietly grow a
+ * shadow the day its base changes.
+ *
+ * The layout language is lines: a section is a bordered box, and everything inside it is
+ * separated by `divide-y divide-hairline` rather than by gaps between floating tiles. That is
+ * what makes a column of facts read as one statement instead of six competing objects.
+ *
+ * The Billing overview takes the same rule one step further and drops the box: the page itself is
+ * the surface, and its cells (`GridRow`, `StatCell`, `BannerRow`, the plan ladder) are ruled by
+ * 1px hairlines that run edge to edge. A cell never carries a radius or a ground of its own — it
+ * sits on the shell's panel, which is what `check-page-ground` enforces.
+ */
+
+import type { ReactNode } from "react";
+
+import { cn } from "@/lib/utils";
+
+/** A bordered box with no shadow. The only container these pages use. */
+export function Section({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={cn(
+        "overflow-clip rounded-[12px] border border-border bg-surface-1 shadow-none",
+        className,
+      )}
+    >
+      {children}
+    </section>
+  );
+}
+
+/** A section header: title on the left, an optional action on the right. */
+export function SectionHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3">
+      <div className="min-w-0">
+        <h2 className="text-[14px] font-semibold leading-tight text-ink">{title}</h2>
+        {description ? (
+          <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">{description}</p>
+        ) : null}
+      </div>
+      {actions ? <div className="shrink-0">{actions}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A label/value line. The workhorse of the Manage-subscription panel and of every summary list.
+ *
+ * `divide-y` on the parent draws the rules, so this deliberately has no border of its own —
+ * otherwise adjacent rows double the hairline and the stack reads as a table with a heavy grid.
+ */
+export function Row({
+  label,
+  value,
+  hint,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  hint?: ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 px-4 py-3">
+      <div className="min-w-0">
+        <span className="text-[13px] text-ink-muted">{label}</span>
+        {hint ? <p className="mt-0.5 text-[11px] text-ink-subtle">{hint}</p> : null}
+      </div>
+      <span className="shrink-0 text-[13px] font-medium tabular-nums text-ink">{value}</span>
+    </div>
+  );
+}
+
+/** A group of `Row`s, ruled rather than spaced. */
+export function RowGroup({ children }: { children: ReactNode }) {
+  return <div className="divide-y divide-hairline">{children}</div>;
+}
+
+/**
+ * One full-width cell of the ruled page grid. The rule is on the bottom only: the row above draws
+ * the line this one sits under, so stacked rows never double a hairline.
+ */
+export function GridRow({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 border-b border-hairline px-4 py-5 sm:px-6", className)}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A headline number with its unit and an explanatory line under it — the two cells at the top of
+ * the Cartesia subscription screen. A cell of the ruled grid, not a card: the caller places it in a
+ * two-column row and draws the rule between the pair.
+ */
+export function StatCell({
+  label,
+  value,
+  lines,
+  tone = "default",
+  valueTone = "default",
+  badge,
+  meter,
+  actions,
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  /** Short factual lines under the number. Pricing, not prose. */
+  lines?: ReactNode[];
+  tone?: "default" | "warn";
+  /**
+   * Colours the headline number itself. Separate from `tone` (which only tints the little status
+   * square) so the pages that already pass `tone="warn"` keep looking exactly as they did.
+   */
+  valueTone?: "default" | "warn" | "bad";
+  /** A text status next to the label. When given it replaces the colour-only square. */
+  badge?: ReactNode;
+  /** A gauge under the number (see ./credit-meter). Optional and additive. */
+  meter?: ReactNode;
+  /** Buttons at the foot of the cell. */
+  actions?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <GridRow className={className}>
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] text-ink-muted">{label}</span>
+        {badge ?? (
+          <span
+            aria-hidden
+            className={cn(
+              "size-[7px] rounded-[1px]",
+              tone === "warn" ? "bg-amber-500" : "bg-emerald-500",
+            )}
+          />
+        )}
+      </div>
+      <p
+        className={cn(
+          "mt-2 text-[28px] font-semibold leading-none tabular-nums text-ink",
+          valueTone === "warn" && "text-amber-600 dark:text-amber-500",
+          valueTone === "bad" && "text-destructive",
+        )}
+      >
+        {value}
+      </p>
+      {meter}
+      {lines?.length ? (
+        <div className="mt-3 space-y-1">
+          {lines.map((line, index) => (
+            <p key={index} className="text-[12px] leading-relaxed text-ink-muted">
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {actions ? <div className="mt-4 flex flex-wrap gap-2">{actions}</div> : null}
+    </GridRow>
+  );
+}
+
+/**
+ * The full-width row across the top of the subscription page — the "Allow overages" strip.
+ *
+ * Not a toast and not a card: it states a standing condition and offers the one control that
+ * changes it, so it has to sit above the numbers it affects rather than beside them.
+ */
+export function BannerRow({
+  title,
+  badge,
+  description,
+  action,
+}: {
+  title: string;
+  badge?: ReactNode;
+  description: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <GridRow className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[14px] font-semibold text-ink">{title}</h3>
+          {badge}
+        </div>
+        <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">{description}</p>
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </GridRow>
+  );
+}
+
+/** A small pill. Used for "Recommended" and "Most popular". */
+export function Pill({
+  children,
+  tone = "muted",
+}: {
+  children: ReactNode;
+  tone?: "muted" | "accent" | "ok" | "warn" | "bad";
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium leading-none",
+        tone === "accent" && "bg-primary/10 text-primary",
+        tone === "muted" && "bg-surface-2 text-ink-muted",
+        tone === "ok" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+        tone === "warn" && "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+        tone === "bad" && "bg-destructive/10 text-destructive",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+type ButtonTone = "primary" | "outline" | "ghost" | "quiet";
+
+/**
+ * The one button on these screens.
+ *
+ * `quiet` is the disabled-looking state the plan grid needs for "Covered by current plan" and
+ * "Current plan" — visibly inert without being a real disabled control that a screen reader
+ * announces as broken.
+ */
+export function BillingButton({
+  children,
+  onClick,
+  tone = "outline",
+  disabled,
+  type = "button",
+  className,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  tone?: ButtonTone;
+  disabled?: boolean;
+  type?: "button" | "submit";
+  className?: string;
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex h-[32px] w-full items-center justify-center gap-1.5 rounded-[8px] px-3 text-[13px] font-medium shadow-none outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60 motion-safe:transition-[color,background-color,border-color,transform] motion-safe:duration-150 motion-safe:active:translate-y-px",
+        tone === "primary" &&
+          "bg-primary text-primary-foreground hover:bg-primary/90",
+        tone === "outline" &&
+          "border border-border bg-surface-1 text-ink hover:border-primary/40 hover:bg-surface-2",
+        tone === "ghost" && "text-ink-muted hover:bg-surface-2 hover:text-ink",
+        tone === "quiet" && "bg-surface-2 text-ink-subtle",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}

@@ -1,0 +1,136 @@
+/**
+ * Letting the host hear the far side once Google Meet stops playing it to them.
+ *
+ * When the inbound leg rides a virtual device, the host has pointed Meet's SPEAKER at that device
+ * (Hi-Fi Cable on Windows, WarpTalk Speaker or BlackHole 16ch on macOS). Meet then plays the call
+ * into the cable and nothing into the host's headphones: WarpTalk hears the meeting, and the host
+ * does not. The raw stand-in track is deliberately never subscribed from the room
+ * (room-audio-routing), so without this the host of a two-cable bridge sits in silence whenever
+ * "Text only" is on.
+ *
+ * The captured track is played locally rather than subscribed back from LiveKit: it is already in
+ * this page, so there is no SFU round trip, and it does not pull a second copy over the network.
+ *
+ * DUCKING
+ *   Handing the host's ears to WarpTalk is also what makes ducking possible at all. On the loopback
+ *   path it is not: loopback captures after the browser's session volume, so lowering Meet in the
+ *   mixer lowers what WarpTalk hears too (measured — muting Chrome delivered zero chunks). Here the
+ *   capture is taken before this gain, so the original can sit under the translation while the
+ *   pipeline still receives it at full level. The popup's Voice panel sets how far it drops.
+ *
+ * NOT ON THE LOOPBACK PATH
+ *   There Meet still plays into the host's real speakers, so a local copy would be the same voice
+ *   twice, a few milliseconds apart.
+ */
+
+import type { BridgeInboundSource } from "./bridge-inbound-connection.ts";
+import type { InboundHealth } from "./bridge-inbound-health.ts";
+
+/** Original at full level: nothing is being played over it. */
+export const FAR_SIDE_MONITOR_FULL = 1;
+/** Original under the translation, by default: still audible, so the host can tell who is speaking and how. */
+export const FAR_SIDE_MONITOR_UNDER_DUB = 0.3;
+
+/** A level the host may choose, bounded to silent..full. Anything unreadable falls back to the default. */
+export function clampMeetingAudioLevel(level: number): number {
+  if (!Number.isFinite(level)) return FAR_SIDE_MONITOR_UNDER_DUB;
+  return Math.min(FAR_SIDE_MONITOR_FULL, Math.max(0, level));
+}
+
+/**
+ * How loud the far side's original voice is, given whether this listener hears dubs.
+ *
+ * `underDub` is the host's choice from the Voice panel; it applies only while dubs play, because
+ * with Text only there is nothing to sit under and the original is all the host hears.
+ */
+export function farSideMonitorGain(
+  voiceEnabled: boolean,
+  underDub: number = FAR_SIDE_MONITOR_UNDER_DUB,
+): number {
+  return voiceEnabled ? clampMeetingAudioLevel(underDub) : FAR_SIDE_MONITOR_FULL;
+}
+
+/**
+ * Whether the far side is played to the host.
+ *
+ * Only a device source took the meeting's audio away from the host's own speakers.
+ *
+ * WT-900: and while the cable is only standing in for an unanswered loopback question
+ * (`device-while-asking`), only once it demonstrably carries Meet. On that path the host may well
+ * have left Meet's Speakers on their headphones — the wizard told loopback users to — and then Meet
+ * is already in their ears; a copy from the cable on top would be the same voice twice. A cable that
+ * is "listening" is proof Meet plays into it and not to the host, so that is when the copy is due.
+ * Called without `inbound` it answers for the source kind alone, as it always did.
+ */
+export function shouldMonitorFarSide(
+  kind: BridgeInboundSource["kind"],
+  inbound?: { reason?: string | null; health?: InboundHealth | null },
+): boolean {
+  if (kind !== "device") return false;
+  if (inbound?.reason === "device-while-asking") return inbound.health === "listening";
+  return true;
+}
+
+/**
+ * Said once per room to a host whose meeting now listens to the browser but who still has Hi-Fi
+ * Cable installed (WT-898 review).
+ *
+ * Before WT-898 the wizard told every Hi-Fi user to set Meet's Speakers to "Hi-Fi Cable Input",
+ * and WarpTalk played the call back to them through the monitor above. Loopback now wins wherever
+ * it can run, and the monitor only runs on the device path — so a host who followed the old advice
+ * has Meet rendering into a cable nobody plays back, and hears nothing at all. Per-process loopback
+ * may in theory still pick up Meet's render stream on any endpoint, but the host's ears are not
+ * worth that bet. WarpTalk cannot see or change Meet's speaker choice, so all it can do is say so.
+ */
+export const MEET_SPEAKER_RESET_NOTICE =
+  "If you set Google Meet's Speakers to Hi-Fi Cable Input before, set them back to your headphones or speakers — WarpTalk now listens to the browser directly.";
+
+/**
+ * Whether that notice applies: listening to the browser, with the cable the old advice named still
+ * installed. Without the cable the old advice could never have been followed, so there is nothing
+ * to undo; on the device path the monitor plays the call back and the old advice is still right.
+ */
+export function shouldShowMeetSpeakerResetNotice(
+  inboundPath: "device" | "loopback" | null,
+  hasInboundDevice: boolean,
+): boolean {
+  return inboundPath === "loopback" && hasInboundDevice;
+}
+
+export interface FarSideMonitor {
+  setGain: (gain: number) => void;
+  /** Releases the audio graph. Never stops the track, which the publisher owns. Safe to repeat. */
+  stop: () => Promise<void>;
+}
+
+/** Seconds for a gain change to settle, so a toggle ramps instead of clicking. */
+const GAIN_RAMP_SECONDS = 0.15;
+
+export function startFarSideMonitor(track: MediaStreamTrack, gain: number): FarSideMonitor {
+  const context = new AudioContext();
+  const source = context.createMediaStreamSource(new MediaStream([track]));
+  const volume = context.createGain();
+  volume.gain.value = gain;
+  source.connect(volume).connect(context.destination);
+  // Created from inside an async effect, which may be outside the gesture that unlocked audio.
+  void context.resume().catch(() => undefined);
+
+  let stopped = false;
+  return {
+    setGain: (next) => {
+      if (stopped) return;
+      volume.gain.setTargetAtTime(next, context.currentTime, GAIN_RAMP_SECONDS);
+    },
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      source.disconnect();
+      volume.disconnect();
+      try {
+        await context.close();
+      } catch {
+        // Already closed.
+      }
+    },
+  };
+}
