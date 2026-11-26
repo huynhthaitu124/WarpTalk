@@ -2,7 +2,9 @@
 import { authResponse, type AuthResponse } from './schemas';
 import { apiUrl } from '@v2/lib/env';
 
-const RT_KEY = 'wt.refresh';
+// Shared with the legacy UI (`rust-compat.ts` REFRESH_KEY): both roots run in the same app, and the
+// refresh token rotates, so they must read and write one copy or the second root sees no session.
+const RT_KEY = 'warptalk.refreshToken';
 
 type Listener = () => void;
 
