@@ -126,7 +126,8 @@ export function indexTranslationsBySegment(
   for (const translation of translations) {
     const code = normalizeLanguageCode(translation.targetLanguage ?? "");
     const text = translation.translatedText?.trim();
-    if (!code || !text) continue;
+    // "auto" = a listener with no language (meeting bridge): never a real translation.
+    if (!code || code === "auto" || !text) continue;
 
     const forSegment = index[translation.segmentId] ?? (index[translation.segmentId] = {});
     forSegment[code] = text;

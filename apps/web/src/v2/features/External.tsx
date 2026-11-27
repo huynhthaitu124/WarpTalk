@@ -553,7 +553,8 @@ export function ExternalPage() {
         onConnected={() => setCaptionsState('connected')}
         onDisconnected={() => { setCaptionsState('idle'); setGrant(null); }}
         onError={(m) => { setCaptionsState('error'); setCaptionsMsg(m); }}
-        audio={copilot && micOn}
+        // Pause (pill) stops the meeting-app capture; the mic must stop with it or "me" keeps transcribing.
+        audio={copilot && micOn && running}
       />
     </Suspense>
   );

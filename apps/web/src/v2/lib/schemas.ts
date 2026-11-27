@@ -275,7 +275,9 @@ export const chatMessage = z.object({
   createdAt: ts,
   hidden: z.boolean(),
   /** Translations by target language code. */
-  translations: z.record(z.string(), z.string()).default({}),
+  // `auto` is a listener without a language (meeting bridge), never a real translation.
+  translations: z.record(z.string(), z.string()).default({})
+    .transform((t) => Object.fromEntries(Object.entries(t).filter(([k]) => k && k !== 'auto'))),
 });
 export type ChatMessageDto = z.infer<typeof chatMessage>;
 

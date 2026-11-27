@@ -51,7 +51,7 @@ export function parseCaption(payload: Uint8Array, fallbackSpeaker: string, seq: 
   }
   const translations: Record<string, string> = {};
   if (typeof j.translations === 'object' && j.translations !== null) {
-    for (const [k, v] of Object.entries(j.translations as Record<string, unknown>)) if (typeof v === 'string' && v) translations[k] = v;
+    for (const [k, v] of Object.entries(j.translations as Record<string, unknown>)) if (typeof v === 'string' && v && k !== 'auto') translations[k] = v;
   }
   const text = String(j.text ?? j.caption ?? '');
   if (!text && Object.keys(translations).length === 0) return null;
