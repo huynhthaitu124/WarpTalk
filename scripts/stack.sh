@@ -9,6 +9,7 @@
 #
 # Ports on the host (change in deploy/docker/.env): API 8090, web 3000, LiveKit 7880/7881 + UDP 50000-50100,
 # Postgres 5432, Redis 6379, Qdrant 6333/6334. The macOS app talks to http://localhost:8090 by default.
+# On first start it also creates demo-host@example.com / demo-guest@example.com (password Demo!Pass123; SKIP_DEMO_SEED=1 to skip).
 set -euo pipefail
 trap 'printf "\033[1;31mLOI:\033[0m stack.sh dung o dong %s (lenh: %s)\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
@@ -97,6 +98,30 @@ wait_api() {
   die "API khong len sau 3 phut. Xem: scripts/stack.sh logs api migrator"
 }
 
+# A fresh database has no users, so testers hit "invalid email or password" on the first login.
+# Create the fixed demo accounts once (skipped when demo-host can already log in). SKIP_DEMO_SEED=1 to opt out.
+DEMO_HOST_EMAIL=demo-host@example.com
+DEMO_GUEST_EMAIL=demo-guest@example.com
+DEMO_PASSWORD='Demo!Pass123'
+seed_demo() {
+  [ "${SKIP_DEMO_SEED:-}" != 1 ] || return 0
+  local api code log
+  api="http://localhost:$(env_get API_PORT)"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST -H 'content-type: application/json' \
+    --data "{\"email\":\"$DEMO_HOST_EMAIL\",\"password\":\"$DEMO_PASSWORD\"}" "$api/api/v1/auth/login" || true)"
+  if [ "$code" = 200 ]; then DEMO_READY=1; return 0; fi
+  command -v jq >/dev/null || { warn "thieu jq nen chua tao tai khoan demo (brew install jq roi chay lai stack.sh up)"; return 0; }
+  say "tao tai khoan demo ($DEMO_HOST_EMAIL, $DEMO_GUEST_EMAIL)"
+  log="$(mktemp)"
+  if API_URL="$api" REDIS_URL="redis://localhost:$(env_get REDIS_PORT)" DEMO_HOST_EMAIL="$DEMO_HOST_EMAIL" \
+     DEMO_GUEST_EMAIL="$DEMO_GUEST_EMAIL" DEMO_PASSWORD="$DEMO_PASSWORD" bash scripts/demo-seed.sh >"$log" 2>&1; then
+    DEMO_READY=1
+  else
+    warn "tao tai khoan demo that bai (van dung duoc 'Create account' trong app):"; tail -n 5 "$log" >&2
+  fi
+  rm -f "$log"
+}
+
 case "$CMD" in
   up)
     prepare_env
@@ -105,6 +130,8 @@ case "$CMD" in
     say "build + chay stack (lan dau mat vai phut: build Rust + pipeline LiveKit)"
     compose up -d --build "$@"
     wait_api
+    DEMO_READY=0
+    seed_demo
     cat <<EOF
 
 WarpTalk dang chay:
@@ -113,9 +140,14 @@ WarpTalk dang chay:
   LiveKit : ws://localhost:7880
 Dung lai : scripts/stack.sh down     Log: scripts/stack.sh logs api pipeline
 EOF
+    [ "$DEMO_READY" != 1 ] || cat <<EOF
+Tai khoan demo (mat khau $DEMO_PASSWORD):
+  Host  : $DEMO_HOST_EMAIL
+  Guest : $DEMO_GUEST_EMAIL
+EOF
     ;;
   down)   compose down "$@" ;;
   logs)   compose logs -f --tail=200 "$@" ;;
   status) compose ps ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
