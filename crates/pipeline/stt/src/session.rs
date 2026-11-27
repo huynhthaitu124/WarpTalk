@@ -256,8 +256,8 @@ impl OpenAiSession {
         Ok(())
     }
 
-    /// Before a commit: if the speaker's transcript moved on since the last prompt, send it
-    /// as the prompt so this utterance is transcribed as the continuation of what came before.
+    /// After a commit: if the speaker's transcript moved on since the last prompt, send it
+    /// as the prompt so the next utterance is transcribed as the continuation of what came before.
     async fn refresh_prompt(&mut self) -> Result<(), SttError> {
         let (version, tail, langs) = {
             let mut c = self.context.lock().unwrap_or_else(PoisonError::into_inner);
@@ -294,14 +294,17 @@ impl SttSession for OpenAiSession {
             let audio = req.utterance.audio.clone();
             self.append(&audio).await?;
         }
-        self.refresh_prompt().await?;
         let hint = req.utterance.lang.clone().or_else(|| self.lang.clone());
         self.cmd
             .send(ReaderCmd::Commit(hint, Some(req.utterance.speech_ms)))
             .map_err(|_| SttError::Closed)?;
         // The next utterance does not continue this audio: start the filter clean.
         self.upsampler.reset();
-        send_event(&mut self.writer, &ClientEvent::Commit).await
+        send_event(&mut self.writer, &ClientEvent::Commit).await?;
+        // Prompt for the NEXT utterance, sent only once this buffer is committed: a
+        // session.update while audio is still buffered can re-run the in-flight item and
+        // drop words the live partials already showed.
+        self.refresh_prompt().await
     }
 
     async fn discard(&mut self) -> Result<(), SttError> {

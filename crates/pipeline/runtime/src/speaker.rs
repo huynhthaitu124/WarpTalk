@@ -170,6 +170,8 @@ struct Turn {
     stamps: Stamps,
     first_recorded: bool,
     final_recorded: bool,
+    /// A live partial for this turn reached the listeners while it was still being spoken.
+    live_text: bool,
 }
 
 impl Turn {
@@ -179,6 +181,7 @@ impl Turn {
             stamps: Stamps::new(at),
             first_recorded: false,
             final_recorded: false,
+            live_text: false,
         }
     }
 }
@@ -252,6 +255,17 @@ impl TurnTracker {
     }
     fn seq(&self) -> u64 {
         self.lock().current.seq
+    }
+    /// A partial was shown: it belongs to the open turn only when nothing committed is still
+    /// waiting for its final (otherwise it is that earlier turn's text).
+    fn mark_live_text(&self) {
+        let mut g = self.lock();
+        if g.committed.is_empty() {
+            g.current.live_text = true;
+        }
+    }
+    fn has_live_text(&self) -> bool {
+        self.lock().current.live_text
     }
     fn commit(&self, speech_end: Instant, commit_at: Instant) {
         self.clear_sentence_hint();
@@ -375,6 +389,7 @@ async fn relay(
                 p.speaker = speaker.clone();
                 p.seq = seq;
                 p.utterance_seq = tracker.seq();
+                tracker.mark_live_text();
                 let _ = out.try_send(p);
             }
             SttEvent::UtteranceDone { ok } => {
@@ -581,7 +596,31 @@ impl Worker {
                 )
                 .await;
             }
-            EndpointEvent::Dropped { reason, .. } => self.on_dropped(reason).await,
+            EndpointEvent::Dropped {
+                reason,
+                speech_ms,
+                total_ms,
+                decided_at_ms,
+            } => {
+                // The gate judged the closed chunk, but listeners already saw live text for
+                // it: clearing the buffer would delete words they read. Commit what was
+                // streamed instead; the STT guards still filter real noise.
+                if self.streamed > 0 && !self.stream_broken && self.tracker.has_live_text() {
+                    debug!(room = %self.spec.room, speaker = %self.spec.id, ?reason,
+                        "gated chunk had live text; committing instead of discarding");
+                    self.commit(
+                        Vec::new(),
+                        speech_ms,
+                        total_ms,
+                        EndReason::Silence,
+                        decided_at_ms,
+                        decided_at_ms,
+                    )
+                    .await;
+                } else {
+                    self.on_dropped(reason).await;
+                }
+            }
         }
     }
 

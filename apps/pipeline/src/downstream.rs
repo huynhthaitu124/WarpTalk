@@ -377,13 +377,15 @@ impl TranslateDubStage {
 }
 
 /// Target languages of a speaker: the languages of the speaker's live routes minus the
-/// speaker's own (those listeners hear the original; the caption path covers them).
+/// speaker's own (those listeners hear the original; the caption path covers them). `auto`
+/// (a listener with no language, e.g. the meeting bridge) is never a translation target.
 fn targets_for(view: &RoutesView, speaker: &str, source_lang: &str) -> Vec<String> {
     view.speakers
         .get(speaker)
         .map(|s| {
             s.target_languages
                 .iter()
+                .filter(|l| l.as_str() != "auto" && !l.is_empty())
                 .filter(|l| !is_same_language(source_lang, l))
                 .cloned()
                 .collect()
