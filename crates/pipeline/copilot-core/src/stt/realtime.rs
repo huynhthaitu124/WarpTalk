@@ -44,14 +44,64 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const APPEND_CHUNK_SAMPLES: usize = 16_000;
 const NEXT_GEN_MODELS: &[&str] = &["gpt-transcribe", "gpt-live-transcribe"];
 
+/// Recent transcript kept as the transcription prompt: at most this many characters.
+const CONTEXT_MAX_CHARS: usize = 300;
+
+/// The meeting's latest transcript, shared by every session of this STT (both channels).
+/// Sent as the transcription `prompt` (the model reads it as the text that came before), so a
+/// tech discussion keeps its vocabulary: "mobile" instead of "mùa bò", "test" instead of "tết".
+#[derive(Default)]
+struct RecentContext {
+    text: std::sync::Mutex<String>,
+}
+
+impl RecentContext {
+    fn push(&self, sentence: &str) {
+        let mut t = self
+            .text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !t.is_empty() {
+            t.push(' ');
+        }
+        t.push_str(sentence.trim());
+        *t = tail_words(&t, CONTEXT_MAX_CHARS);
+    }
+
+    fn get(&self) -> String {
+        self.text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// The last `max` characters of `s`, starting at a word boundary.
+fn tail_words(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().skip(n - max).collect();
+    match cut.split_once(char::is_whitespace) {
+        Some((_, rest)) => rest.trim_start().to_string(),
+        None => cut,
+    }
+}
+
 pub struct EphemeralRealtimeStt {
     cfg: SttConfig,
     tokens: Arc<TokenManager>,
+    context: Arc<RecentContext>,
 }
 
 impl EphemeralRealtimeStt {
     pub fn new(cfg: SttConfig, tokens: Arc<TokenManager>) -> Self {
-        Self { cfg, tokens }
+        Self {
+            cfg,
+            tokens,
+            context: Arc::default(),
+        }
     }
 
     fn session_config(&self, model: &str, lang: Option<&str>) -> SessionConfig {
@@ -110,6 +160,12 @@ struct Session {
     dead: Arc<AtomicBool>,
     lang: Option<String>,
     event_timeout: Duration,
+    /// The session's transcription config, re-sent with the recent transcript as its prompt
+    /// (a `session.update` that names only the prompt resets `languages`).
+    base_session: Option<serde_json::Value>,
+    base_prompt: String,
+    sent_prompt: String,
+    context: Arc<RecentContext>,
 }
 
 #[async_trait]
@@ -132,15 +188,27 @@ impl SpeechToText for EphemeralRealtimeStt {
         let (mut writer, reader_half) = ws.split();
         let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
         // A server-issued token already carries the transcription config.
-        if tok.session_config.is_none() {
-            send_event(
-                &mut writer,
-                &ClientEvent::SessionUpdate {
-                    session: self.session_config(&tok.model, lang.as_deref()),
-                },
-            )
-            .await?;
-        }
+        let base_session = match &tok.session_config {
+            Some(v) => Some(v.clone()),
+            None => {
+                let session = self.session_config(&tok.model, lang.as_deref());
+                send_event(
+                    &mut writer,
+                    &ClientEvent::SessionUpdate {
+                        session: session.clone(),
+                    },
+                )
+                .await?;
+                serde_json::to_value(&session).ok()
+            }
+        };
+        let base_prompt = base_session
+            .as_ref()
+            .and_then(transcription_node)
+            .and_then(|t| t.get("prompt"))
+            .and_then(|p| p.as_str())
+            .unwrap_or_default()
+            .to_string();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dead = Arc::new(AtomicBool::new(false));
         let event_timeout = Duration::from_millis(self.cfg.event_timeout_ms);
@@ -155,6 +223,7 @@ impl SpeechToText for EphemeralRealtimeStt {
             TurnMachine::new(filter),
             event_timeout,
             dead.clone(),
+            self.context.clone(),
         ));
         Ok(Box::new(Session {
             writer,
@@ -163,6 +232,10 @@ impl SpeechToText for EphemeralRealtimeStt {
             dead,
             lang,
             event_timeout,
+            base_session,
+            sent_prompt: base_prompt.clone(),
+            base_prompt,
+            context: self.context.clone(),
         }))
     }
 }
@@ -177,7 +250,53 @@ async fn send_event(
         .map_err(|e| SttError::Other(format!("ws send: {e}")))
 }
 
+/// `audio.input.transcription` (GA shape) or `input_audio_transcription` (beta shape).
+fn transcription_node(session: &serde_json::Value) -> Option<&serde_json::Value> {
+    session
+        .pointer("/audio/input/transcription")
+        .or_else(|| session.get("input_audio_transcription"))
+}
+
+fn transcription_node_mut(session: &mut serde_json::Value) -> Option<&mut serde_json::Value> {
+    if session.pointer("/audio/input/transcription").is_some() {
+        session.pointer_mut("/audio/input/transcription")
+    } else {
+        session.get_mut("input_audio_transcription")
+    }
+}
+
+/// The base prompt (style + glossary) followed by the recent transcript.
+fn context_prompt(base: &str, recent: &str) -> String {
+    match (base.trim(), recent.trim()) {
+        ("", r) => r.to_string(),
+        (b, "") => b.to_string(),
+        (b, r) => format!("{b} {r}"),
+    }
+}
+
 impl Session {
+    /// After a commit: the next turn is transcribed with the meeting's latest text as context.
+    async fn refresh_prompt(&mut self) -> Result<(), SttError> {
+        let Some(mut session) = self.base_session.clone() else {
+            return Ok(());
+        };
+        let prompt = context_prompt(&self.base_prompt, &self.context.get());
+        if prompt == self.sent_prompt {
+            return Ok(());
+        }
+        let Some(t) = transcription_node_mut(&mut session) else {
+            return Ok(());
+        };
+        t["prompt"] = serde_json::Value::String(prompt.clone());
+        let ev = serde_json::json!({ "type": "session.update", "session": session });
+        self.writer
+            .send(Message::Text(ev.to_string().into()))
+            .await
+            .map_err(|e| SttError::Other(format!("ws send: {e}")))?;
+        self.sent_prompt = prompt;
+        Ok(())
+    }
+
     fn check_alive(&self) -> Result<(), SttError> {
         if self.dead.load(Ordering::Relaxed) || self.reader.is_finished() {
             Err(SttError::Closed)
@@ -212,7 +331,8 @@ impl SttSession for Session {
         self.cmd
             .send(ReaderCmd::Commit(hint))
             .map_err(|_| SttError::Closed)?;
-        send_event(&mut self.writer, &ClientEvent::Commit).await
+        send_event(&mut self.writer, &ClientEvent::Commit).await?;
+        self.refresh_prompt().await
     }
 
     async fn discard(&mut self) -> Result<(), SttError> {
@@ -266,6 +386,7 @@ async fn read_loop(
     mut turns: TurnMachine,
     event_timeout: Duration,
     dead: Arc<AtomicBool>,
+    context: Arc<RecentContext>,
 ) {
     let mut shutting_down = false;
     let mut cmd_open = true;
@@ -302,7 +423,11 @@ async fn read_loop(
                     lang,
                     confidence,
                     is_early,
-                } => SttEvent::Segment(SttSegment::new(text, lang, confidence, is_early)),
+                } => {
+                    context.push(&text);
+                    SttEvent::Segment(SttSegment::new(text, lang, confidence, is_early))
+                }
+                Out::Partial { text } => SttEvent::Partial { text },
                 Out::Done { ok } => SttEvent::UtteranceDone { ok },
             };
             if sink.send(ev).await.is_err() {
@@ -313,5 +438,43 @@ async fn read_loop(
         if lost {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn context_keeps_the_latest_words_only() {
+        let c = RecentContext::default();
+        for i in 0..100 {
+            c.push(&format!("câu số {i} về app mobile."));
+        }
+        let t = c.get();
+        assert!(t.chars().count() <= CONTEXT_MAX_CHARS);
+        assert!(t.ends_with("câu số 99 về app mobile."));
+        assert!(t.starts_with("câu"), "cut at a word boundary: {t}");
+    }
+
+    #[test]
+    fn prompt_is_base_then_recent_text() {
+        assert_eq!(context_prompt("Glossary.", ""), "Glossary.");
+        assert_eq!(context_prompt("", "mình test"), "mình test");
+        assert_eq!(
+            context_prompt("Glossary.", "mình test"),
+            "Glossary. mình test"
+        );
+    }
+
+    #[test]
+    fn finds_transcription_node_in_both_shapes() {
+        let mut ga = serde_json::json!({"audio":{"input":{"transcription":{"prompt":"a"}}}});
+        let beta = serde_json::json!({"input_audio_transcription":{"prompt":"b"}});
+        assert_eq!(transcription_node(&ga).unwrap()["prompt"], "a");
+        assert_eq!(transcription_node(&beta).unwrap()["prompt"], "b");
+        transcription_node_mut(&mut ga).unwrap()["prompt"] = "c".into();
+        assert_eq!(ga["audio"]["input"]["transcription"]["prompt"], "c");
     }
 }

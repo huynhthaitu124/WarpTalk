@@ -158,6 +158,9 @@ pub(crate) struct Worker {
     route: Route,
     /// Recent direct failures (for the fallback threshold).
     direct_failures: VecDeque<Instant>,
+    /// Live (uncommitted) text of the utterance being spoken now; re-shown after a committed
+    /// utterance's segments replace the overlay's partial line.
+    live_partial: String,
     retry_direct_at: Option<Instant>,
     gen_routes: HashMap<u64, Route>,
 }
@@ -190,6 +193,7 @@ impl Worker {
             lvl_last_ms: 0,
             route: Route::Direct,
             direct_failures: VecDeque::new(),
+            live_partial: String::new(),
             retry_direct_at: None,
             gen_routes: HashMap::new(),
         }
@@ -482,6 +486,8 @@ impl Worker {
             streamed_samples: streamed,
         };
         let route = l.route;
+        // Whatever is live now belongs to this utterance; the next one starts empty.
+        self.live_partial.clear();
         match l.session.commit(req).await {
             Ok(()) => self.pending.push_back(meta),
             Err(e) => {
@@ -712,8 +718,24 @@ impl Worker {
                 }
                 self.emit(CopilotEvent::Partial {
                     channel: self.ctx.channel,
-                    text: String::new(),
+                    text: self.live_partial.clone(),
                 });
+            }
+            SttEvent::Partial { text } => {
+                let ends_sentence = ends_sentence(&text);
+                self.live_partial = text;
+                self.emit(CopilotEvent::Partial {
+                    channel: self.ctx.channel,
+                    text: self.live_partial.clone(),
+                });
+                // The speaker finished a sentence: end the turn on a short pause instead of
+                // the full hangover (no-op unless `vad_sentence_hint_hangover_ms` > 0).
+                if ends_sentence {
+                    let evs = self.ep.hint_sentence_complete();
+                    if !evs.is_empty() {
+                        Box::pin(self.process(evs)).await;
+                    }
+                }
             }
         }
     }
@@ -730,7 +752,7 @@ impl Worker {
             Some(i) => self.pending.get_mut(i),
             None => self.open.as_mut(),
         };
-        let (start, end, echo_flag, seq, partial) = match meta {
+        let (start, end, echo_flag, seq) = match meta {
             Some(m) => {
                 let start = m.last_seg_end.max(m.start_ms);
                 let bound = m.end_ms.unwrap_or(now_tl).max(start);
@@ -743,9 +765,9 @@ impl Worker {
                     m.text.push(' ');
                 }
                 m.text.push_str(&text);
-                (start, end, m.likely_echo, m.seq, m.text.clone())
+                (start, end, m.likely_echo, m.seq)
             }
-            None => (now_tl, now_tl, false, self.seq, text.clone()),
+            None => (now_tl, now_tl, false, self.seq),
         };
         let off = self.cfg.start_offset_ms;
         let language = self.ctx.language.resolve(&text, &seg.lang);
@@ -772,16 +794,13 @@ impl Worker {
         self.emit(CopilotEvent::Segment {
             segment: rec.clone(),
         });
-        if seg.is_early {
-            self.emit(CopilotEvent::Partial {
-                channel: self.ctx.channel,
-                text: partial,
-            });
-        }
-        let ends_sentence = rec
-            .text
-            .trim_end()
-            .ends_with(['.', '!', '?', '。', '！', '？']);
+        // The segment replaced the overlay's partial line: put the live text of the utterance
+        // being spoken now back (empty clears it).
+        self.emit(CopilotEvent::Partial {
+            channel: self.ctx.channel,
+            text: self.live_partial.clone(),
+        });
+        let ends_sentence = ends_sentence(&rec.text);
         // Segments from the server path were already ingested by the server (same dedup
         // store, usage and credit gate as `POST /segments`): posting them again would
         // double them in the transcript, so they are only shown.
@@ -796,6 +815,15 @@ impl Worker {
             }
         }
     }
+}
+
+/// `sang .` (the stream stopped inside `.NET`) is not a finished sentence.
+fn ends_sentence(text: &str) -> bool {
+    let t = text.trim_end();
+    if let Some(before) = t.strip_suffix('.') {
+        return before.chars().last().is_some_and(|c| !c.is_whitespace());
+    }
+    t.ends_with(['!', '?', '。', '！', '？'])
 }
 
 fn frames_ms(samples_16k: usize) -> u64 {

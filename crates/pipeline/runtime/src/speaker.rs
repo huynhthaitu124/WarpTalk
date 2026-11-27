@@ -359,6 +359,7 @@ async fn relay(
                     debug!(%room, %speaker, "segment receiver gone; discarding output");
                 }
             }
+            SttEvent::Partial { .. } => {}
             SttEvent::UtteranceDone { ok } => {
                 if let Some((turn, commit)) = tracker.on_done() {
                     if let Some(commit) = commit {

@@ -74,7 +74,13 @@ impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            endpointer: EndpointerConfig::default(),
+            // The live STT model reports a finished sentence while the speaker pauses: end that
+            // turn after 200ms of silence instead of the full hangover, so the next sentence
+            // starts a fresh turn quickly.
+            endpointer: EndpointerConfig {
+                vad_sentence_hint_hangover_ms: 200,
+                ..EndpointerConfig::default()
+            },
             vad_full_scale_rms: 0.05,
             start_offset_ms: 0,
             language_hint: None,

@@ -46,6 +46,11 @@ pub struct SessionParams {
 #[allow(clippy::large_enum_variant)] // Segment is the hot variant; boxing would add an alloc per segment.
 pub enum SttEvent {
     Segment(SttSegment),
+    /// Live text of audio not committed yet (models that transcribe as audio is appended).
+    /// Display only: it may still change and is superseded by the turn's segments.
+    Partial {
+        text: String,
+    },
     /// The commit finished (possibly with no segments, or after an error).
     UtteranceDone {
         ok: bool,

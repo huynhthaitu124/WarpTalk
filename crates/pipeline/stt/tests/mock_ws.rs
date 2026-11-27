@@ -246,7 +246,7 @@ async fn end_to_end_flash_session_streams_then_commits() {
         .iter()
         .filter_map(|e| match e {
             SttEvent::Segment(s) => Some((s.text.clone(), s.is_early)),
-            SttEvent::UtteranceDone { .. } => None,
+            SttEvent::UtteranceDone { .. } | SttEvent::Partial { .. } => None,
         })
         .collect();
     assert_eq!(

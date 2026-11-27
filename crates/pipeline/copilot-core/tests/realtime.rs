@@ -138,6 +138,7 @@ async fn run_one(stt: &EphemeralRealtimeStt) -> Vec<(String, bool)> {
             .unwrap()
         {
             SttEvent::Segment(g) => out.push((g.text, g.is_early)),
+            SttEvent::Partial { .. } => {}
             SttEvent::UtteranceDone { ok } => {
                 assert!(ok);
                 break;

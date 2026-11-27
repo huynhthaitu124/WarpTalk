@@ -37,6 +37,12 @@ fn latin_end_is_final(prefix_with_terminator: &str) -> bool {
     !word.contains('.')
 }
 
+/// A `.` with nothing but whitespace before it starts a token (`.NET`, `.env`): it never ends
+/// a sentence, even while the stream has not delivered the rest of the token yet.
+fn starts_token(chars: &[(usize, char)], i: usize) -> bool {
+    i == 0 || chars.get(i - 1).is_some_and(|&(_, p)| p.is_whitespace())
+}
+
 /// Splits `text` into the complete sentences and the unfinished tail.
 ///
 /// With `final_text` the tail is flushed as a last sentence (the text will not grow). Without
@@ -60,7 +66,7 @@ pub fn split_stream(text: &str, final_text: bool) -> (Vec<String>, String) {
         if c == '\n' || c == '\r' {
             push(&text[start..pos], &mut sentences);
             cut_to = Some(end_of_c);
-        } else if is_latin_terminator(c) {
+        } else if is_latin_terminator(c) && !(c == '.' && starts_token(&chars, i)) {
             match next {
                 Some(n) if n.is_whitespace() => {
                     push(&text[start..end_of_c], &mut sentences);
@@ -113,6 +119,20 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_dot_starts_a_token() {
+        // Streaming cut right after the dot of ".NET" must not end the sentence.
+        assert_eq!(
+            split_stream("Mình sẽ migrate sang .", false),
+            (vec![], "Mình sẽ migrate sang .".into())
+        );
+        assert_eq!(
+            split_sentences("Migrate sang .NET 10. Xong rồi."),
+            vec!["Migrate sang .NET 10.", "Xong rồi."]
+        );
+        assert_eq!(split_sentences("sang . net 10"), vec!["sang . net 10"]);
+    }
 
     #[test]
     fn english_basic() {

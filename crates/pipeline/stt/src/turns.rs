@@ -38,6 +38,11 @@ pub enum Out {
         confidence: Option<f32>,
         is_early: bool,
     },
+    /// Live text of an item not committed yet (`gpt-live-transcribe` streams deltas while the
+    /// speaker talks). The whole text so far, display only; the turn's segments replace it.
+    Partial {
+        text: String,
+    },
     Done {
         ok: bool,
     },
@@ -217,6 +222,11 @@ pub struct TurnMachine {
     /// Speech heard per detected language (ms) in auto-detect mode: the meeting's languages.
     /// Short turns in a language nobody speaks here are treated as noise hallucinations.
     heard: HashMap<String, u32>,
+    /// Item whose live text was last shown ([`Out::Partial`]).
+    live_item: Option<String>,
+    /// Items the client already committed: their late deltas are not live text any more
+    /// (the next utterance's partial must not be overwritten by the previous one's tail).
+    closed: VecDeque<String>,
 }
 
 /// Share of the speech a language needs to count as one of the meeting's languages.
@@ -255,6 +265,8 @@ impl TurnMachine {
             items: HashMap::new(),
             item_order: VecDeque::new(),
             heard: HashMap::new(),
+            live_item: None,
+            closed: VecDeque::new(),
         }
     }
 
@@ -272,6 +284,12 @@ impl TurnMachine {
     /// As [`Self::expect_commit`], with the speech duration the endpointer measured.
     pub fn expect_commit_with(&mut self, lang_hint: Option<String>, speech_ms: Option<u32>) {
         self.pending.push_back((lang_hint, speech_ms));
+        if let Some(id) = self.live_item.take() {
+            self.closed.push_back(id);
+            while self.closed.len() > 8 {
+                self.closed.pop_front();
+            }
+        }
     }
 
     /// Commits whose outcome is still unknown.
@@ -286,6 +304,8 @@ impl TurnMachine {
         self.bound.clear();
         self.items.clear();
         self.item_order.clear();
+        self.live_item = None;
+        self.closed.clear();
         (0..n).map(|_| Out::Done { ok: false }).collect()
     }
 
@@ -306,8 +326,17 @@ impl TurnMachine {
             }
             ServerEvent::Delta { item_id, delta } => {
                 self.touch(&item_id);
+                let live = !self.bound.iter().any(|b| b.item_id == item_id)
+                    && !self.closed.contains(&item_id);
                 if let Some(b) = self.items.get_mut(&item_id) {
                     b.deltas.push_str(&delta);
+                    if live
+                        && let Some(text) = clean_text(&b.deltas)
+                        && !crate::guard::mixed_scripts(&text)
+                    {
+                        out.push(Out::Partial { text });
+                        self.live_item = Some(item_id);
+                    }
                 }
             }
             ServerEvent::Completed {
@@ -511,12 +540,36 @@ mod tests {
     fn deltas_before_commit_flush_at_commit() {
         let mut m = machine();
         m.expect_commit(Some("en".into()));
-        assert!(m.on_event(delta("i1", "Hello there. How are")).is_empty());
+        // Before the commit the text is only shown live.
+        assert_eq!(
+            m.on_event(delta("i1", "Hello there. How are")),
+            vec![Out::Partial {
+                text: "Hello there. How are".into()
+            }]
+        );
         // Commit attributes the buffered text: first sentence goes out with zero wait.
         assert_eq!(m.on_event(committed("i1")), vec![seg("Hello there.", true)]);
         assert_eq!(
             m.on_event(delta("i1", " you? I am")),
             vec![seg("How are you?", true)]
+        );
+    }
+
+    #[test]
+    fn late_deltas_of_a_committed_item_are_not_live() {
+        let mut m = machine();
+        assert_eq!(
+            m.on_event(delta("i1", "Một")),
+            vec![Out::Partial {
+                text: "Một".into()
+            }]
+        );
+        // The client commits; the next utterance starts streaming before the server confirms.
+        m.expect_commit(Some("vi".into()));
+        assert_eq!(m.on_event(delta("i1", " hai")), vec![]);
+        assert_eq!(
+            m.on_event(delta("i2", "Ba")),
+            vec![Out::Partial { text: "Ba".into() }]
         );
     }
 

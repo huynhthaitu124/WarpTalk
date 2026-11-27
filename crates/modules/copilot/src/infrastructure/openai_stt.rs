@@ -18,7 +18,9 @@ use crate::application::ports::{SttIssueError, SttToken, SttTokenIssuer, SttToke
 use crate::domain::LanguageMode;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com";
-pub const DEFAULT_MODEL: &str = "gpt-4o-transcribe";
+/// Streams deltas while audio is appended (before the commit), so the overlay shows live text;
+/// `gpt-4o-transcribe` only transcribes once a turn is committed.
+pub const DEFAULT_MODEL: &str = "gpt-live-transcribe";
 /// UNVERIFIED endpoint path (relative to the base URL).
 const ENDPOINT_PATH: &str = "/v1/realtime/client_secrets";
 /// How long the minted secret may be used to open the connection.
@@ -76,6 +78,29 @@ fn language_hint(tag: &str) -> Option<String> {
 /// Models that take the plural `languages` hint (same list as `warptalk-stt`).
 const PLURAL_LANGUAGE_MODELS: &[&str] = &["gpt-transcribe", "gpt-live-transcribe"];
 
+/// Style prompt: a sample tech-meeting sentence. Transcription models follow the prompt's style and
+/// vocabulary, so a non-English speaker's English terms stay English ("migrate", not "mi ray")
+/// and English speech keeps its jargon ("mobile", "staging"). `None` without a language hint.
+fn code_switch_prompt(hint: Option<&str>) -> Option<&'static str> {
+    match hint? {
+        "en" => Some(
+            "Software team meeting: we'll migrate the service to .NET 10, ship the mobile app, \
+             write tests, split tasks per workflow, deploy to staging, check the logs, fix the bug \
+             and review the pull request.",
+        ),
+        "vi" => Some(
+            "Cuộc họp kỹ thuật tiếng Việt, giữ nguyên từ tiếng Anh: mình sẽ migrate service sang \
+             .NET 10, build app mobile, viết test, chia task theo workflow, deploy lên staging, check \
+             log, fix bug, review pull request, đọc doc và context của dự án. Nguyên tắc là dùng \
+             đúng skill cho từng flow.",
+        ),
+        _ => Some(
+            "The speaker mixes English technical terms (migrate, deploy, .NET, API, pull request) \
+             into their own language; write those words in English.",
+        ),
+    }
+}
+
 /// UNVERIFIED request body. `fixed`: one `language`. `auto`: the primary language is hinted and
 /// the others stay expected (plural-hint models get the list; single-hint models only the
 /// primary, with the vocabulary prompt carrying the code-switched terms). `multi`: no language
@@ -107,21 +132,49 @@ fn request_body(model: &str, req: &SttTokenRequest) -> (Value, Value) {
                 transcription["languages"] = json!(list);
             }
         }
+        // A fixed non-English language still hears English terms ("migrate sang .NET 10"):
+        // models that take a list get English as the second language.
+        LanguageMode::Fixed if PLURAL_LANGUAGE_MODELS.contains(&model) => {
+            if let Some(l) = hint {
+                let mut list = vec![l];
+                if list[0] != "en" {
+                    list.push("en".to_owned());
+                }
+                transcription["languages"] = json!(list);
+            }
+        }
         _ => {
             if let Some(l) = hint {
                 transcription["language"] = json!(l);
             }
         }
     }
-    if let Some(p) = req.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+    let glossary = req
+        .prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
+    let style = code_switch_prompt(req.language.as_deref().and_then(language_hint).as_deref());
+    let prompt = match (style, glossary) {
+        (Some(s), Some(g)) => Some(format!("{s} {g}")),
+        (Some(s), None) => Some(s.to_owned()),
+        (None, Some(g)) => Some(g.to_owned()),
+        (None, None) => None,
+    };
+    if let Some(p) = prompt {
         transcription["prompt"] = json!(p);
     }
+    // `turn_detection: null`: the client's endpointer owns the turns and commits each one itself.
+    // With server VAD on as well, the server auto-committed at its own ~500ms silence while the
+    // client committed again after its hangover: the server's items had no pending client turn
+    // (their transcript was dropped, so the next sentence went missing) and the client's extra
+    // commits hit an empty buffer.
     let session = json!({
         "type": "transcription",
         "audio": { "input": {
             "format": { "type": "audio/pcm", "rate": 24000 },
             "transcription": transcription,
-            "turn_detection": { "type": "server_vad" }
+            "turn_detection": null
         }}
     });
     let body = json!({
@@ -311,17 +364,18 @@ mod tests {
         let tx = |model: &str, r: &SttTokenRequest| {
             request_body(model, r).1["audio"]["input"]["transcription"].clone()
         };
-        // fixed: one language, no prompt.
+        // fixed: one language; a Vietnamese hint still gets the code-switch style prompt.
         let t = tx("gpt-4o-transcribe", &req_with(LanguageMode::Fixed, None));
         assert_eq!(t["language"], "vi");
-        assert!(t.get("prompt").is_none());
+        assert!(t["prompt"].as_str().unwrap().contains("migrate"));
         // auto on a single-hint model: primary hint + glossary prompt.
         let t = tx(
             "gpt-4o-transcribe",
             &req_with(LanguageMode::Auto, Some("Glossary: OKR.")),
         );
         assert_eq!(t["language"], "vi");
-        assert_eq!(t["prompt"], "Glossary: OKR.");
+        let p = t["prompt"].as_str().unwrap();
+        assert!(p.contains(".NET") && p.ends_with("Glossary: OKR."));
         // auto on a plural-hint model: the list, primary first.
         let t = tx("gpt-live-transcribe", &req_with(LanguageMode::Auto, None));
         assert_eq!(t["languages"], json!(["vi", "en"]));
@@ -329,6 +383,21 @@ mod tests {
         // multi: no single hint on any model.
         let t = tx("gpt-4o-transcribe", &req_with(LanguageMode::Multi, None));
         assert!(t.get("language").is_none() && t.get("languages").is_none());
+        // English: the tech-meeting style prompt, then the glossary.
+        let mut r = req_with(LanguageMode::Fixed, Some("Glossary: OKR."));
+        r.language = Some("en-US".into());
+        let p = tx("gpt-4o-transcribe", &r)["prompt"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(p.starts_with("Software team meeting") && p.ends_with("Glossary: OKR."));
+    }
+
+    #[test]
+    fn client_owns_turn_detection() {
+        let (_, session) = request_body("gpt-4o-transcribe", &req_with(LanguageMode::Fixed, None));
+        let input = &session["audio"]["input"];
+        assert!(input.get("turn_detection").is_some() && input["turn_detection"].is_null());
     }
 
     #[test]

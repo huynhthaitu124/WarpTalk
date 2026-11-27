@@ -368,6 +368,7 @@ async fn read_loop(
                         .push(&text, Instant::now());
                     SttEvent::Segment(SttSegment::new(text, lang, confidence, is_early))
                 }
+                Out::Partial { text } => SttEvent::Partial { text },
                 Out::Done { ok } => SttEvent::UtteranceDone { ok },
             };
             if sink.send(ev).await.is_err() {
