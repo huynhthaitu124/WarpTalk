@@ -333,6 +333,15 @@ private final class CopilotPanel: NSPanel {
     // click anywhere else). The overlay floats over other apps, so it always reports itself active.
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
+    // Faking key status above made AppKit offer ⌘V/⌘C/⌘A to this panel's web view even while the user
+    // typed in the main window, so paste landed nowhere. Track the real key state and only take
+    // key equivalents when the panel truly holds the keyboard.
+    private var reallyKey = false
+    override func becomeKey() { reallyKey = true; super.becomeKey() }
+    override func resignKey() { reallyKey = false; super.resignKey() }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        reallyKey ? super.performKeyEquivalent(with: event) : false
+    }
     // Key/main is not enough: AppKit greys glass whenever the APP is inactive (another app in
     // front), which is the normal state for this overlay. These AppKit-internal hooks decide the
     // "active appearance"; overriding them keeps the glass lit. Private selectors: if a future
