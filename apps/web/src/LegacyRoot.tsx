@@ -7,6 +7,8 @@
  * - i18n: the catalog is loaded client-side (i18n/messages-loader.ts),
  * - the old `proxy.ts` gate runs here (RouteGate).
  */
+// First import on purpose: cookies must work before any module reads them (warptalk:// has no cookie jar).
+import "@/lib/native-cookie-shim";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BrowserRouter, Navigate, useLocation, useRoutes } from "react-router-dom";
 import { IntlClientProvider } from "@/i18n/intl-client-provider";
