@@ -5,11 +5,13 @@ import { Command, CommandGroup, CommandItem, CommandList } from "@/components/ui
 import { CheckCircle, Plus } from "@phosphor-icons/react/dist/ssr";
 import {
   getLanguageCode,
+  getLanguageName,
   isLanguageAllowedByPolicy,
   meetingLanguagePickerOptions,
 } from "@/lib/language/languages";
 import { LanguageLabel } from "@/components/language/language-label";
 import { normalizeLanguage } from "@/lib/language/language-profile";
+import { Flag } from "@v2/ui/Flag";
 
 /**
  * Meeting-language picker. A meeting is defined by the SET of languages that will be
@@ -32,6 +34,7 @@ export function LanguageSelector({
   onLanguagesChange,
   allowedTargetLanguages,
   readOnly = false,
+  flags = false,
 }: {
   languages: string[];
   onLanguagesChange: (languages: string[]) => void;
@@ -39,6 +42,8 @@ export function LanguageSelector({
   allowedTargetLanguages?: string[] | null;
   /** When true, renders a static read-only pill without a popover or add button. */
   readOnly?: boolean;
+  /** Show each language's flag instead of its code badge. */
+  flags?: boolean;
 }) {
   const t = useTranslations("rooms.create.language");
   // The picker offers locale tags ("vi-VN"); the server stores bare codes, because
@@ -109,7 +114,14 @@ export function LanguageSelector({
                 {/* Full name rather than the first two letters of it: "VI" is not a language
                     anyone recognises, and a single picked language has room to say so. Several
                     at once stay flags-only, where the label carries the name on hover. */}
-                <LanguageLabel value={code} showName={selected.length === 1} />
+                {flags ? (
+                  <span className="inline-flex items-center gap-1.5" title={getLanguageName(code)}>
+                    <Flag code={normalizeLanguage(code) ?? ""} />
+                    {selected.length === 1 ? <span>{getLanguageName(code)}</span> : null}
+                  </span>
+                ) : (
+                  <LanguageLabel value={code} showName={selected.length === 1} />
+                )}
               </div>
             </div>
           ))}
@@ -130,7 +142,11 @@ export function LanguageSelector({
                       className="w-full rounded-md text-[13px] aria-selected:bg-surface-2 mb-0.5 flex items-center justify-between gap-2 cursor-pointer"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-[14px] leading-none">{getLanguageCode(language.code)}</span>
+                        {flags ? (
+                          <Flag code={normalizeLanguage(language.code) ?? ""} />
+                        ) : (
+                          <span className="text-[14px] leading-none">{getLanguageCode(language.code)}</span>
+                        )}
                         <span className="truncate font-medium text-ink">{language.label}</span>
                       </div>
                       <div data-slot="command-shortcut" className="flex shrink-0 ml-auto items-center">

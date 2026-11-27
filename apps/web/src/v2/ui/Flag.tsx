@@ -30,6 +30,42 @@ function Art({ code }: { code: string }) {
           <circle cx="15" cy="10" r="6" fill="#BC002D" />
         </svg>
       );
+    case 'ko':
+      return (
+        <svg viewBox="0 0 30 20" preserveAspectRatio="xMidYMid slice" className="size-full">
+          <rect width="30" height="20" fill="#fff" />
+          <path d="M10,10 a5,5 0 0,1 10,0 a2.5,2.5 0 0,1 -5,0 a2.5,2.5 0 0,0 -5,0z" fill="#CD2E3A" />
+          <path d="M10,10 a5,5 0 0,0 10,0 a2.5,2.5 0 0,0 -5,0 a2.5,2.5 0 0,1 -5,0z" fill="#0047A0" />
+          <g stroke="#000" strokeWidth="1.1">
+            <path d="M3.5,3.5 l3,-2 M4.3,4.7 l3,-2 M5.1,5.9 l3,-2" />
+            <path d="M22.5,14.1 l3,2 M23.3,12.9 l3,2 M24.1,11.7 l3,2" />
+            <path d="M3.5,16.5 l3,2 M4.3,15.3 l3,2 M5.1,14.1 l3,2" />
+            <path d="M22.5,5.9 l3,-2 M23.3,7.1 l3,-2 M24.1,8.3 l3,-2" />
+          </g>
+        </svg>
+      );
+    case 'fr':
+      return (
+        <svg viewBox="0 0 30 20" preserveAspectRatio="xMidYMid slice" className="size-full">
+          <rect width="10" height="20" fill="#0055A4" />
+          <rect x="10" width="10" height="20" fill="#fff" />
+          <rect x="20" width="10" height="20" fill="#EF4135" />
+        </svg>
+      );
+    case 'es':
+      return (
+        <svg viewBox="0 0 30 20" preserveAspectRatio="xMidYMid slice" className="size-full">
+          <rect width="30" height="20" fill="#AA151B" />
+          <rect y="5" width="30" height="10" fill="#F1BF00" />
+        </svg>
+      );
+    case 'zh':
+      return (
+        <svg viewBox="0 0 30 20" preserveAspectRatio="xMidYMid slice" className="size-full">
+          <rect width="30" height="20" fill="#DE2910" />
+          <polygon fill="#FFDE00" points="5,2 5.9,4.8 8.8,4.8 6.5,6.5 7.3,9.3 5,7.6 2.7,9.3 3.5,6.5 1.2,4.8 4.1,4.8" />
+        </svg>
+      );
     default:
       return <span className="grid size-full place-items-center bg-surface-3 text-[8px] font-semibold uppercase leading-none text-ink-muted">{code.slice(0, 2)}</span>;
   }

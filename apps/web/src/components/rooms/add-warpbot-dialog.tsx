@@ -201,6 +201,7 @@ export function AddWarpBotDialog() {
             <span className="text-[13px] text-ink">{t("quick.languagesLabel")}</span>
             <div className="mt-2 flex">
               <LanguageSelector
+                flags
                 languages={languages}
                 onLanguagesChange={(next) => next.length && setPicked(next)}
               />

@@ -178,10 +178,10 @@
       "joined": "This call already has a WarpTalk room; you were added to it."
     },
     "quick": {
-      "title": "Add WarpBot to a meeting",
+      "title": "Join a meeting",
       "label": "Paste a meeting link",
       "placeholder": "https://meet.google.com/abc-defg-hij",
-      "submit": "Add WarpBot",
+      "submit": "Join",
       "titleWithProvider": "{provider} meeting",
       "titleDefault": "Translation session",
       "hint": "WarpBot does not join the call as a participant. It listens through the WarpTalk app on this Mac: keep the meeting open here, and the pill appears once capture starts.",

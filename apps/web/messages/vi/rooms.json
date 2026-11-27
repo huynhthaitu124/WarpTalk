@@ -178,10 +178,10 @@
       "joined": "Cuộc gọi này đã có phòng WarpTalk; bạn đã được thêm vào."
     },
     "quick": {
-      "title": "Thêm WarpBot vào cuộc họp",
+      "title": "Tham gia cuộc họp",
       "label": "Dán link cuộc họp",
       "placeholder": "https://meet.google.com/abc-defg-hij",
-      "submit": "Thêm WarpBot",
+      "submit": "Tham gia",
       "titleWithProvider": "Cuộc họp {provider}",
       "titleDefault": "Phiên dịch",
       "hint": "WarpBot không vào cuộc họp như một người tham gia. Nó nghe qua app WarpTalk trên máy Mac này: giữ cuộc họp mở trên máy, pill sẽ hiện khi bắt đầu thu âm.",
