@@ -183,7 +183,8 @@
       "placeholder": "https://meet.google.com/abc-defg-hij",
       "submit": "WarpBot を追加",
       "titleWithProvider": "{provider} の会議",
-      "titleDefault": "翻訳セッション"
+      "titleDefault": "翻訳セッション",
+      "hint": "WarpBot は参加者として会議に入りません。この Mac の WarpTalk アプリで音声を聞き取ります。会議をこの Mac で開いたままにすると、キャプチャ開始時にピルが表示されます。"
     }
   },
   "startedBanner": {

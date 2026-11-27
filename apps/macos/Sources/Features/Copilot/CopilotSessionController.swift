@@ -133,6 +133,10 @@ final class CopilotSessionController: ObservableObject {
         setState(.starting)
         do {
             let baseUrl = try CopilotStartRequest.resolveBaseUrl(requested: req.apiBaseUrl, fallback: deps.defaultBackendURL())
+            // Fail fast with the URL we tried: otherwise capture "starts", every upload fails silently and
+            // the room is later auto-ended with no transcript.
+            try await Self.ensureBackendReachable(baseUrl)
+            try checkpoint(gen)
             guard await deps.permissions.ensureMicrophone() else {
                 throw BridgeError(code: "PERMISSION_DENIED", message: "Chưa được cấp quyền micro. Mở System Settings > Privacy & Security > Microphone.")
             }
@@ -188,6 +192,20 @@ final class CopilotSessionController: ObservableObject {
             setState(.error)
             emit("copilot.error", ["channel": NSNull(), "code": e.code, "message": e.message, "fatal": true])
             throw e
+        }
+    }
+
+    static func ensureBackendReachable(_ baseUrl: String) async throws {
+        guard let url = URL(string: baseUrl + "/health") else { return }
+        var r = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+        r.httpMethod = "GET"
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: r)
+            if let http = resp as? HTTPURLResponse, http.statusCode < 500 { return }
+            throw URLError(.badServerResponse)
+        } catch {
+            throw BridgeError(code: "BACKEND_UNREACHABLE",
+                              message: "Không kết nối được server WarpTalk tại \(baseUrl). Kiểm tra backend đang chạy (scripts/stack.sh up) hoặc đổi Backend URL trong Settings.")
         }
     }
 

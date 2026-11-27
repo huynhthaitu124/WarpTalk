@@ -183,7 +183,8 @@
       "placeholder": "https://meet.google.com/abc-defg-hij",
       "submit": "Thêm WarpBot",
       "titleWithProvider": "Cuộc họp {provider}",
-      "titleDefault": "Phiên dịch"
+      "titleDefault": "Phiên dịch",
+      "hint": "WarpBot không vào cuộc họp như một người tham gia. Nó nghe qua app WarpTalk trên máy Mac này: giữ cuộc họp mở trên máy, pill sẽ hiện khi bắt đầu thu âm."
     }
   },
   "startedBanner": {

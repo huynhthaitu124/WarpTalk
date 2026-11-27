@@ -115,7 +115,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-API_BIND="${HTTP_BIND:-127.0.0.1:8080}"
+API_BIND="${HTTP_BIND:-127.0.0.1:${API_PORT:-8090}}"
 API_URL="http://${API_BIND}"
 WEB_PORT_V="${WEB_PORT:-3000}"
 # next.config.ts rewrites /api/** to this backend (dev only).

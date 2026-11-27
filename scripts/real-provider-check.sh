@@ -6,7 +6,7 @@
 # Environment (values are never printed):
 #   OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY   which providers step B and C may use
 #   Step A (realtime STT through a locally running api; the api itself needs OPENAI_API_KEY):
-#     WARPTALK_API_URL      default http://127.0.0.1:8080
+#     WARPTALK_API_URL      default http://127.0.0.1:8090
 #     WARPTALK_TOKEN        bearer access token of a user who may use the copilot session
 #     WARPTALK_SESSION_ID   an existing copilot session id (POST /api/v1/copilot/sessions)
 #     WAV_FILE              speech WAV to transcribe; otherwise generated with `say` / `espeak-ng`
@@ -64,7 +64,7 @@ build_eval() {
 
 # ---------------------------------------------------------------- A. realtime STT
 step_stt() {
-  local api="${WARPTALK_API_URL:-http://127.0.0.1:8080}" tok="${WARPTALK_TOKEN:-}" sid="${WARPTALK_SESSION_ID:-}"
+  local api="${WARPTALK_API_URL:-http://127.0.0.1:8090}" tok="${WARPTALK_TOKEN:-}" sid="${WARPTALK_SESSION_ID:-}"
   if [ -z "$tok" ] || [ -z "$sid" ]; then
     note SKIP "A stt-token" "set WARPTALK_TOKEN and WARPTALK_SESSION_ID (and run the api with OPENAI_API_KEY)"
     return

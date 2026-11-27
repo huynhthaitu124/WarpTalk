@@ -24,6 +24,7 @@ import type { PlanDto } from "@/types/billing";
 import { formatPlanPrice, priceWithVat } from "@/lib/billing/plan-display";
 import { usePlanTax } from "@/hooks/use-plan-tax";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
+import { useNative } from "@/v2/lib/native";
 const VIDEO_SRC =
   "https://stream.mux.com/9JXDljEVWYwWu01PUkAemafDugK89o01BR6zqJ3aS9u00A.m3u8";
 
@@ -1270,7 +1271,34 @@ function LandingFooter() {
   );
 }
 
+/**
+ * The desktop app has no use for the marketing page (testers landed on it with no way in): skip
+ * straight to sign-in, or the workspace when a session is remembered.
+ */
 export default function HomePage() {
+  const isApp = useNative() !== undefined;
+  return isApp ? <DesktopEntryRedirect /> : <LandingPage />;
+}
+
+function DesktopEntryRedirect() {
+  const router = useRouter();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const user = useAuthStore((state) => state.user);
+  const activeWorkspaceSlug = useWorkspaceStore((state) => state.activeWorkspaceSlug);
+  useEffect(() => {
+    router.replace(
+      getLandingGetStartedHref({
+        isAuthenticated,
+        user,
+        hasRememberedSession: hasRememberedAccessToken(),
+        activeWorkspaceSlug: getRememberedWorkspaceSlug(activeWorkspaceSlug),
+      }),
+    );
+  }, [router, isAuthenticated, user, activeWorkspaceSlug]);
+  return null;
+}
+
+function LandingPage() {
   const t = useTranslations("landing");
   const locale = useLocale();
   const queryClient = useQueryClient();

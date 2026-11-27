@@ -2,14 +2,14 @@ import type { NextConfig } from 'next';
 import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 
 /**
- * - `next dev`: same-origin `/api/**` is rewritten to the backend (`API_PROXY_TARGET`, default :8080;
+ * - `next dev`: same-origin `/api/**` is rewritten to the backend (`API_PROXY_TARGET`, default :8090 = Docker stack / dev-up.sh;
  *   the E2E suite sets :18080), so the browser never needs CORS.
  * - `next build`: static export to `out/` (the macOS app bundles it and serves it as `warptalk://app/`;
  *   it injects `window.warptalkNative.config.apiBaseUrl`). Rewrites do not exist in a static export.
  */
 export default function config(phase: string): NextConfig {
   const dev = phase === PHASE_DEVELOPMENT_SERVER;
-  const target = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:8080';
+  const target = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:8090';
   return {
     reactStrictMode: true,
     poweredByHeader: false,

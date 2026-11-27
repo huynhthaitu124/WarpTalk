@@ -381,10 +381,15 @@ pub struct Mutation {
 #[async_trait]
 pub trait RoomRepo: Send + Sync {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord>;
-    /// Live `EXTERNAL_BRIDGE` rooms whose capturer has not heartbeated since `cutoff` (or never
-    /// captured and started before it), with the user allowed to end each one (effective host).
-    async fn idle_bridge_rooms(&self, cutoff: DateTime<Utc>) -> AppResult<Vec<(RoomId, UserId)>> {
-        let _ = cutoff;
+    /// Live `EXTERNAL_BRIDGE` rooms whose capturer last heartbeated before `idle_cutoff`, or whose
+    /// capturer never heartbeated at all (lease still equals the claim time) and was claimed before
+    /// `unclaimed_cutoff`, with the user allowed to end each one (effective host).
+    async fn idle_bridge_rooms(
+        &self,
+        idle_cutoff: DateTime<Utc>,
+        unclaimed_cutoff: DateTime<Utc>,
+    ) -> AppResult<Vec<(RoomId, UserId)>> {
+        let _ = (idle_cutoff, unclaimed_cutoff);
         Ok(Vec::new())
     }
     /// Pending invitation emails of a room, oldest first.

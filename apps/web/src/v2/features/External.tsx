@@ -504,6 +504,8 @@ export function ExternalPage() {
           ],
         };
       }
+      case 'BACKEND_UNREACHABLE':
+        return { hint: e.message || 'The desktop app cannot reach the WarpTalk server. Start the backend or fix Backend URL in the app Settings.', actions: [act('retry', 'Try again', () => { dismissError(e.code); void startCapture(); })] };
       case 'NO_AUDIO_PROCESS':
         return { hint: 'The app is not playing sound yet. Join the call, make sure someone is audible, then try again.', actions: [act('retry', 'Try again', () => { dismissError(e.code); void startCapture(); })] };
       case 'APP_NOT_RUNNING':

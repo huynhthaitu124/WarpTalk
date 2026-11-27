@@ -197,10 +197,22 @@ impl RoomQueries {
 
     /// End live bridge rooms whose capture went silent for `idle` (the meeting tab closed, the
     /// app quit, the call ended) so they stop showing "In Progress" and the summary runs.
+    /// A room whose capturer never sent a heartbeat waits `unclaimed` instead: ending it after `idle`
+    /// killed rooms whose app could not reach the backend yet (wrong port, stack still booting),
+    /// and an ended room can never show the pill again.
     /// Returns how many were ended; one failing room does not stop the others.
-    pub async fn end_idle_bridge_rooms(&self, idle: std::time::Duration) -> AppResult<usize> {
+    pub async fn end_idle_bridge_rooms(
+        &self,
+        idle: std::time::Duration,
+        unclaimed: std::time::Duration,
+    ) -> AppResult<usize> {
         let idle = chrono::Duration::from_std(idle).unwrap_or(chrono::Duration::minutes(10));
-        let rooms = self.repo.idle_bridge_rooms(self.clock.now() - idle).await?;
+        let unclaimed = chrono::Duration::from_std(unclaimed).unwrap_or(chrono::Duration::hours(2));
+        let now = self.clock.now();
+        let rooms = self
+            .repo
+            .idle_bridge_rooms(now - idle, now - unclaimed)
+            .await?;
         let mut ended = 0;
         for (room, host) in rooms {
             match self.end_room(room, host).await {

@@ -892,6 +892,69 @@ async fn bridge_heartbeat_keeps_lease() {
     assert_eq!(st, StatusCode::OK);
 }
 
+/// A claimed room whose app never heartbeated (backend unreachable, stack booting) survives the
+/// 10 min idle sweep; one that heartbeated and then went silent does not.
+#[tokio::test]
+async fn idle_sweep_spares_never_captured_rooms() {
+    let Some((c, clock, _ws, u, never)) = clocked_bridge().await else {
+        return;
+    };
+    let ten_min = std::time::Duration::from_secs(600);
+    let two_h = std::time::Duration::from_secs(7200);
+    let status = |room: String| {
+        let pool = c.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM translation_room.translation_rooms WHERE id = $1",
+            )
+            .bind(room.parse::<Uuid>().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    // a second room in the same ctx that did heartbeat once
+    let (ws2, u2) = members(&c, 1);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            CLAIM,
+            u2[0],
+            Some(claim_body(ws2, &meet_code())),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let captured = v["id"].as_str().unwrap().to_owned();
+    advance(&clock, 30);
+    let (st, v) = c
+        .call(
+            Method::POST,
+            &bridge_uri(&captured, "capturer/heartbeat"),
+            u2[0],
+            Some(json!({"audioFlowing": true})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    advance(&clock, 11 * 60);
+    c.module
+        .queries()
+        .end_idle_bridge_rooms(ten_min, two_h)
+        .await
+        .unwrap();
+    assert_ne!(status(never.clone()).await, "ENDED");
+    assert_eq!(status(captured).await, "ENDED");
+
+    advance(&clock, 2 * 60 * 60);
+    c.module
+        .queries()
+        .end_idle_bridge_rooms(ten_min, two_h)
+        .await
+        .unwrap();
+    assert_eq!(status(never).await, "ENDED");
+    let _ = u;
+}
+
 #[tokio::test]
 async fn bridge_takeover_when_lease_stale() {
     let Some((c, clock, _ws, u, room)) = clocked_bridge().await else {

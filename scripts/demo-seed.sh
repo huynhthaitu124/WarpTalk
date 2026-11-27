@@ -5,7 +5,7 @@
 # Yeu cau: API dang chay voi DEV_MAIL_CAPTURE=1 (scripts/dev-up.sh bat san), curl, jq,
 #          redis-cli (hoac docker compose cho Redis cua deploy/docker).
 # Bien moi truong (deu tuy chon):
-#   API_URL        mac dinh http://127.0.0.1:8080   (co hay khong "/api/v1" deu duoc)
+#   API_URL        mac dinh http://127.0.0.1:8090   (co hay khong "/api/v1" deu duoc)
 #   REDIS_URL      mac dinh redis://localhost:6379
 #   DEMO_PASSWORD  mat khau cho ca hai user (mac dinh Demo!Pass123)
 #   DEMO_HOST_EMAIL / DEMO_GUEST_EMAIL   co dinh email (mac dinh: ngau nhien moi lan chay)
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-API_URL="${API_URL:-http://127.0.0.1:8080}"
+API_URL="${API_URL:-http://127.0.0.1:8090}"
 API_URL="${API_URL%/}"; API_URL="${API_URL%/api/v1}"
 API="$API_URL/api/v1"
 REDIS_URL="${REDIS_URL:-redis://localhost:6379}"

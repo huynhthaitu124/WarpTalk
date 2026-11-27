@@ -20,7 +20,7 @@ keys:
   devkey: secret
 
 # API gui su kien phong (participant_joined, room_finished...) toi webhook cua module meeting.
-# Cong 8080 = cong API mac dinh cua scripts/dev-up.sh. Doi cong API thi doi ca dong nay.
+# api:8080 = cong API ben trong mang Docker (profile apps). Tren host API publish o API_PORT (8090).
 webhook:
   api_key: devkey
   urls:

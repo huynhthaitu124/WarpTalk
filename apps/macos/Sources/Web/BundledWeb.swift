@@ -87,6 +87,16 @@ enum APIProxy {
 
     static func isAPIPath(_ path: String) -> Bool { path.hasPrefix(prefix) }
 
+    /// `{code, message}` like `AppError`, for when the backend cannot be reached at all.
+    static func unreachableBody(backendURL: String, error: Error?) -> Data {
+        let target = backendURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let msg = target.isEmpty
+            ? "Chưa cấu hình Backend URL. Mở WarpTalk > Settings để đặt địa chỉ server."
+            : "Không kết nối được server WarpTalk tại \(target). Kiểm tra backend đang chạy (docker compose) hoặc đổi Backend URL trong Settings."
+        let d: [String: String] = ["code": "BACKEND_UNREACHABLE", "message": msg, "detail": error?.localizedDescription ?? ""]
+        return (try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys])) ?? Data(msg.utf8)
+    }
+
     static func upstreamRequest(for request: URLRequest, backendURL: String, body: Data?) -> URLRequest? {
         guard let url = request.url, isAPIPath(url.path) else { return nil }
         var base = backendURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,7 +148,8 @@ final class WarpTalkSchemeHandler: NSObject, WKURLSchemeHandler {
             var body = request.httpBody
             if body == nil, let stream = request.httpBodyStream { body = Self.drain(stream) }   // VERIFY (README): POST bodies via scheme tasks
             guard let up = APIProxy.upstreamRequest(for: request, backendURL: backendURL(), body: body) else {
-                return finish(urlSchemeTask, id, status: 502, body: Data("backend URL not configured".utf8))
+                return finish(urlSchemeTask, id, status: 502, mime: "application/json",
+                              body: APIProxy.unreachableBody(backendURL: backendURL(), error: nil))
             }
             let task = session.dataTask(with: up) { [weak self] data, resp, err in
                 DispatchQueue.main.async {
@@ -150,10 +161,13 @@ final class WarpTalkSchemeHandler: NSObject, WKURLSchemeHandler {
                         urlSchemeTask.didReceive(r)
                         urlSchemeTask.didReceive(data)
                         urlSchemeTask.didFinish()
+                        self.active.remove(id)
                     } else {
-                        urlSchemeTask.didFailWithError(err ?? URLError(.badServerResponse))
+                        // Backend down / wrong port: answer like the API would, so the page shows WHERE it tried
+                        // instead of a bare network error (testers saw "cannot connect" with no hint).
+                        self.finish(urlSchemeTask, id, status: 502, mime: "application/json",
+                                    body: APIProxy.unreachableBody(backendURL: self.backendURL(), error: err))
                     }
-                    self.active.remove(id)
                     self.upstream[id] = nil
                 }
             }

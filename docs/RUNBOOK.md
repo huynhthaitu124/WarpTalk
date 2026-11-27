@@ -24,9 +24,20 @@ Mục lục: 1. Yêu cầu máy · 2. Khởi động nhanh · 3. Biến môi tr�
 
 Kiểm tra nhanh: `cargo --version && node --version && docker compose version && jq --version && redis-cli --version`.
 
-Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit, chỉ khi `--translation`), 8080 (API), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
+Cổng cần trống: 5432 (Postgres), 6379 (Redis), 6333/6334 (Qdrant), 7880/7881/UDP 50000-50100 (LiveKit), 8090 (API, `API_PORT`), 3000 (web). Đổi cổng Postgres/Redis/Qdrant trong `deploy/docker/.env` (`POSTGRES_PORT`, `REDIS_PORT`, `QDRANT_HTTP_PORT`) rồi sửa `DATABASE_URL`/`REDIS_URL`/`QDRANT_URL` cho khớp.
 
 ---
+
+## 1.1 Cho tester: cả stack trong Docker (1 lệnh)
+
+Không cần Rust/Node trên máy, chỉ Docker Desktop. Chạy postgres, redis, qdrant, livekit, pipeline, migrator, api, worker, web:
+
+```bash
+scripts/stack.sh up      # lần đầu build vài phút; tự tạo deploy/docker/.env, sinh JWT_SECRET/AI_KEYS_KEK, kiểm tra cổng
+scripts/stack.sh status  # / logs api pipeline / down
+```
+
+Điền `OPENAI_API_KEY` trong `deploy/docker/.env` (thiếu thì WarpBot/pill không có transcript). API ở `http://localhost:8090` (đúng mặc định app macOS), web ở `http://localhost:3000`.
 
 ## 2. Khởi động nhanh (5 lệnh)
 
@@ -86,7 +97,7 @@ Cột "ai dùng": **A** = `warptalk-api`, **W** = `warptalk-worker`, **P** = `wa
 | `JWT_AUDIENCE` | không | `WarpTalk` | | |
 | `JWT_ACCESS_TTL_SECONDS` | không | `900` | | |
 | `JWT_REFRESH_TTL_SECONDS` | không | `2592000` (30 ngày) | | |
-| `HTTP_BIND` | không | `0.0.0.0:8080` | `127.0.0.1:8080` | `dev-up.sh` dùng `127.0.0.1:8080` (khớp mặc định app macOS) |
+| `HTTP_BIND` | không | `0.0.0.0:8080` | `127.0.0.1:8090` | `dev-up.sh` dùng `127.0.0.1:8090` (khớp mặc định app macOS) |
 | `CORS_ORIGINS` | không | rỗng | `http://localhost:3000,http://127.0.0.1:3000` | Phân tách dấu phẩy. Khi web đi qua rewrite `/api` của Next dev (hoặc bản export chạy qua proxy cùng origin) thì không cần |
 | `DEV_MAIL_CAPTURE` | không | tắt | `1` | Phải đúng `1`. **Chỉ dev**: token xác minh email/lời mời lưu thô vào Redis (`dev:mail:verify:{email}`, `dev:mail:workspace-invite:{email}`, TTL 1 giờ). Thiếu biến này và thiếu `RESEND_API_KEY` thì API chỉ log độ dài token, nên không thể xác minh email |
 | `LIVEKIT_URL` | không (cả 3 hoặc không) | không | `ws://localhost:7880` | Thiếu một trong ba: `POST /meetings/{id}/join` và `/bridge-token` trả `503 LIVEKIT_NOT_CONFIGURED`. URL này **được trả cho trình duyệt**, phải truy cập được từ máy người dùng |
@@ -158,7 +169,7 @@ Ngoài ra A và W còn đọc nhóm AI/Qdrant ở 3.3 và 3.4.
 
 | Biến | Đọc ở | Mặc định | Ghi chú |
 |---|---|---|---|
-| `API_PROXY_TARGET` | `next.config.ts` (chỉ `next dev`) | `http://127.0.0.1:8080` | API mà `rewrites` của Next đẩy `/api/**` tới. Bộ E2E đặt `http://127.0.0.1:18080`; `dev-up.sh` đặt theo `HTTP_BIND` |
+| `API_PROXY_TARGET` | `next.config.ts` (chỉ `next dev`) | `http://127.0.0.1:8090` | API mà `rewrites` của Next đẩy `/api/**` tới. Bộ E2E đặt `http://127.0.0.1:18080`; `dev-up.sh` đặt theo `HTTP_BIND` |
 | `NEXT_PUBLIC_API_BASE_URL` | `src/lib/env.ts` (chỉ bản export `out/`) | rỗng (cùng origin) | Gốc backend (không có `/api/v1`) khi không có `window.warptalkNative.config.apiBaseUrl`. Bản bundle macOS dùng giá trị host tiêm vào |
 | `WEB_PORT` | `scripts/dev-up.sh` | `3000` | Truyền cho `next dev -p`. `npm run dev` thuần luôn dùng 3000 |
 | `E2E_WEB_PORT` | `playwright.config.ts` | `3199` | `next dev` của bộ E2E (`-H 127.0.0.1`, distDir `.next-e2e`) |
@@ -179,7 +190,7 @@ Biến chỉ dành cho Docker Compose (code Rust/JS **không đọc**): `POSTGRE
 | Khoá | Mặc định | Ghi chú |
 |---|---|---|
 | `webURL` | `http://localhost:3000` | Origin của web app. Native bridge chỉ hoạt động đúng origin này (scheme + host + port) |
-| `backendURL` | `http://localhost:8080` | Không kèm `/api/v1`. Chỉ dùng khi web không truyền `backendUrl` |
+| `backendURL` | `http://localhost:8090` | Không kèm `/api/v1`. Chỉ dùng khi web không truyền `backendUrl` |
 | `dubOutputDeviceUID` | rỗng (thiết bị hệ thống) | Chọn BlackHole 2ch để đưa tiếng dub vào Meet |
 | `overlayClickThrough`, `overlayHiddenFromScreenShare` | `false` | Overlay phụ đề |
 
@@ -201,14 +212,14 @@ cargo build -p warptalk-migrator -p warptalk-api -p warptalk-worker      # thêm
 target/debug/warptalk-migrator
 
 # Mỗi lệnh một terminal
-target/debug/warptalk-api                        # http://127.0.0.1:8080/health
+target/debug/warptalk-api                        # http://127.0.0.1:8090/health
 target/debug/warptalk-worker
 # Chỉ khi dịch họp (--translation). Pipeline giả (không cần key):
 env -u OPENAI_API_KEY -u CARTESIA_API_KEY MEDIA_TRANSPORT=simulated PIPELINE_FAKE_PROVIDERS=1 \
     SIM_PARTICIPANTS="<id1>,<id2>" target/debug/warptalk-pipeline
 # Pipeline key thật (transport mô phỏng, STT/MT/TTS thật; mục 5):
 env -u PIPELINE_FAKE_PROVIDERS MEDIA_TRANSPORT=simulated target/debug/warptalk-pipeline
-cd apps/web && npm install && npm run dev        # http://localhost:3000 (Next.js; API_PROXY_TARGET mặc định http://127.0.0.1:8080)
+cd apps/web && npm install && npm run dev        # http://localhost:3000 (Next.js; API_PROXY_TARGET mặc định http://127.0.0.1:8090)
 cd apps/web && npm run build && npm start      # bản export tĩnh apps/web/out (macOS bundle), phục vụ ở :3000 bởi scripts/serve-out.mjs
 ```
 
@@ -287,7 +298,7 @@ make gen && make open        # rồi Cmd+R trong Xcode; hoặc: make build && ma
 make test                    # XCTest: bridge, NativeAPI, overlay, AudioActivity, Resampler
 ```
 
-Điều kiện chạy: web đang chạy ở `http://localhost:3000` và API ở `http://localhost:8080` (đúng mặc định `dev-up.sh`). Trang trắng thì bấm Cmd+R trong app. Debug web: Safari > Develop > (tên máy).
+Điều kiện chạy: web đang chạy ở `http://localhost:3000` và API ở `http://localhost:8090` (đúng mặc định `dev-up.sh`). Trang trắng thì bấm Cmd+R trong app. Debug web: Safari > Develop > (tên máy).
 
 **App chưa từng được biên dịch.** Lần build đầu có thể lỗi tên API. Danh sách `// VERIFY:` cần kiểm tra (chạy `grep -rn VERIFY apps/macos/Sources`):
 
@@ -336,7 +347,7 @@ Phạm vi thật của từng kịch bản (đọc trước khi demo):
 
 Đây là đường demo an toàn nhất (không cần BlackHole). Cần: app macOS chạy (mục 7), pipeline `livekit-rtc` + `OPENAI_API_KEY`.
 
-1. Mở WarpTalk.app (web 3000 + API 8080 đang chạy). Đăng nhập, vào trang External (`/external`).
+1. Mở WarpTalk.app (web 3000 + API 8090 đang chạy). Đăng nhập, vào trang External (`/external`).
 2. Mở Meet trong Chrome, vào một cuộc họp, bật loa để Chrome phát tiếng (nếu chưa có tiếng sẽ gặp `NO_AUDIO_PROCESS`).
 3. Trong web: dán link Meet, chọn ngôn ngữ nguồn và đích, chọn ứng dụng Chrome trong danh sách app có audio, bấm bắt đầu. App xin quyền "Ghi âm thanh hệ thống" lần đầu.
 4. Kỳ vọng: overlay phụ đề nổi (Cmd+Shift+O bật/tắt), phụ đề cũng hiện trong web. Tiếng gốc vẫn nghe như cũ.
@@ -453,15 +464,15 @@ Cần `redis-cli` và `psql` trên PATH (fixture gọi chúng, mục 1). Ảnh c
 
 | Triệu chứng | Nguyên nhân / cách xử lý |
 |---|---|
-| `port is already allocated` / `address already in use` | Trùng cổng (Postgres/Redis Homebrew đang chạy ở 5432/6379). `brew services stop postgresql@16 redis` hoặc đổi `POSTGRES_PORT`/`REDIS_PORT` trong `.env` **và** `DATABASE_URL`/`REDIS_URL`. Xem ai giữ cổng: `lsof -nP -iTCP:8080 -sTCP:LISTEN` |
+| `port is already allocated` / `address already in use` | Trùng cổng (Postgres/Redis Homebrew đang chạy ở 5432/6379). `brew services stop postgresql@16 redis` hoặc đổi `POSTGRES_PORT`/`REDIS_PORT` trong `.env` **và** `DATABASE_URL`/`REDIS_URL`. Xem ai giữ cổng: `lsof -nP -iTCP:8090 -sTCP:LISTEN` |
 | API thoát: `database is not migrated (no 'identity' migrations found): run warptalk-migrator first` | Chưa chạy migrator hoặc chạy vào DB khác. `target/debug/warptalk-migrator` với cùng `DATABASE_URL`. Thứ tự do migrator quyết định (outbox, settings, identity, workspace, room, meeting, transcript, knowledge, assistant). Migration forward-only có checksum: **không sửa file migration đã chạy**; nếu đã lỡ, `docker compose ... down -v` rồi migrate lại |
 | Worker thoát: `no 'transcript' / 'meeting' migrations` | Như trên (worker cần `transcript`, `assistant`, `meeting`) |
 | API không khởi động: `JWT_SECRET ... must be at least 32 bytes` | Đặt `JWT_SECRET` >= 32 ký tự |
-| Web: trang trắng hoặc `502` ở `/api/...` | Rewrite của Next dev tới sai cổng. `API_PROXY_TARGET` mặc định là `127.0.0.1:8080` (E2E dùng 18080); đặt lại rồi khởi động lại `npm run dev` (rewrites đọc lúc khởi động) |
+| Web: trang trắng hoặc `502` ở `/api/...` | Rewrite của Next dev tới sai cổng. `API_PROXY_TARGET` mặc định là `127.0.0.1:8090` (E2E dùng 18080); đặt lại rồi khởi động lại `npm run dev` (rewrites đọc lúc khởi động) |
 | Đăng ký xong không xác minh được email | API chạy thiếu `DEV_MAIL_CAPTURE=1` (không có SMTP). Dev: `redis-cli GET dev:mail:verify:<email chữ thường>` rồi dán token vào trang `/verify-email`. `demo-seed.sh` tự làm |
 | `503 LIVEKIT_NOT_CONFIGURED` khi join | API thiếu `LIVEKIT_URL/API_KEY/API_SECRET` (cả ba). Nạp `.env`. Backend E2E cố ý không có LiveKit |
 | Join được nhưng không có hình/tiếng, ICE `failed`, kẹt "Connecting" | LiveKit trong Docker quảng bá `node_ip: 127.0.0.1` (`deploy/docker/livekit.yaml`): chỉ đúng khi trình duyệt/app cùng máy với Docker. Thiết bị khác trong LAN thì đặt `node_ip` = IP LAN, `LIVEKIT_URL=ws://<IP LAN>:7880` và mở UDP 50000-50100. Kiểm tra dải UDP đã publish: `docker compose ... ps`. VPN/Little Snitch/firewall chặn UDP cũng gây lỗi này; thử tắt VPN. Trên Docker Desktop không dùng `network_mode: host` |
-| Webhook LiveKit không tới API (phòng không chuyển trạng thái khi mọi người thoát) | LiveKit gọi `http://host.docker.internal:8080/api/v1/meetings/webhooks/livekit`. Đổi cổng API thì sửa `livekit.yaml` và `docker compose restart livekit`. Linux cần `extra_hosts` (đã có). Xem `docker compose ... logs livekit` |
+| Webhook LiveKit không tới API (phòng không chuyển trạng thái khi mọi người thoát) | LiveKit gọi `http://api:8080/api/v1/meetings/webhooks/livekit` (API trong Docker, profile `apps`; API chạy ngoài Docker thì đổi thành `host.docker.internal:8090` trong `livekit.yaml` rồi `docker compose restart livekit`). Xem `docker compose ... logs livekit` |
 | `curl http://localhost:7880` không trả `OK` | `docker compose -f deploy/docker/docker-compose.yml logs livekit`; thường do lỗi cú pháp `livekit.yaml` hoặc trùng cổng 7880 |
 | Pipeline thoát: `MEDIA_TRANSPORT=livekit needs a build with the livekit-rtc feature` | Bạn đặt `MEDIA_TRANSPORT=livekit` với bản build thường. Bỏ biến đó (mặc định `simulated`) hoặc build `--features livekit-rtc` theo mục 6 |
 | Pipeline thoát: `PIPELINE_FAKE_PROVIDERS is for MEDIA_TRANSPORT=simulated only` | Đừng dùng fake với livekit |

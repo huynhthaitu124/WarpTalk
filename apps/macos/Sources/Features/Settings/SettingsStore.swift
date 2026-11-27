@@ -7,7 +7,9 @@ final class SettingsStore: ObservableObject {
     static let defaultWebURL = "http://localhost:3000"
     /// Tried after the configured URL when it is unreachable (the previous Vite dev server).
     static let defaultWebFallbackURLs = ""
-    static let defaultBackendURL = "http://localhost:8080"      // used when the web app does not pass backendUrl
+    static let defaultBackendURL = "http://localhost:8090"      // API port of the Docker stack (deploy/docker) and dev-up.sh
+    /// Earlier builds defaulted to :8080, which the Docker stack never served (and is often taken by other tools).
+    private static let legacyBackendURL = "http://localhost:8080"
     static let defaultMeetingAppBundleId = "com.google.Chrome"
     private static let legacyViteURL = "http://localhost:5173"
 
@@ -44,7 +46,9 @@ final class SettingsStore: ObservableObject {
         d.set(true, forKey: "webURLMigratedToNext")
         webURL = web
         webFallbackURLs = d.string(forKey: "webFallbackURLs") ?? Self.defaultWebFallbackURLs
-        backendURL = d.string(forKey: "backendURL") ?? Self.defaultBackendURL
+        var backend = d.string(forKey: "backendURL") ?? Self.defaultBackendURL
+        if backend == Self.legacyBackendURL { backend = Self.defaultBackendURL; d.set(backend, forKey: "backendURL") }
+        backendURL = backend
         activeWebURL = web
         dubOutputDeviceUID = d.string(forKey: "dubOutputDeviceUID") ?? ""
         overlayClickThrough = d.bool(forKey: "overlayClickThrough")

@@ -753,7 +753,10 @@ pub async fn build(
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 match room
-                    .end_idle_bridge_rooms(std::time::Duration::from_secs(10 * 60))
+                    .end_idle_bridge_rooms(
+                        std::time::Duration::from_secs(10 * 60),
+                        std::time::Duration::from_secs(2 * 60 * 60),
+                    )
                     .await
                 {
                     Ok(0) => {}

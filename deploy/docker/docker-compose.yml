@@ -3,9 +3,10 @@
 #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
 #   (hoac chay scripts/dev-up.sh, no lam tat ca)
 #
-# Mac dinh (copilot, ADR 0001): chi postgres:16, redis:7, qdrant.
-# Profile "translation": livekit-server (--dev) + pipeline dich/dub (khi co container). Bat bang:
-#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env --profile translation up -d
+# Mac dinh: chi postgres:16, redis:7, qdrant (cho dev-up.sh chay cargo tren host).
+# Profile "apps": toan bo stack trong Docker, gom ca livekit + pipeline (WarpBot/pill can de co transcript).
+#   scripts/stack.sh up      (= docker compose ... --profile apps up -d --build)
+# Profile "translation": chi livekit + pipeline, cho dev-up.sh --translation.
 # Profile "minio": S3 tuong thich (tuy chon).
 name: warptalk
 
@@ -52,10 +53,11 @@ services:
       - qdrantdata:/qdrant/storage
     # Khong healthcheck (anh qdrant khong co curl/wget): scripts/dev-up.sh doi http://localhost:6333/readyz.
 
-  # Dich hop/dub/voice clone da tam an (ADR 0001): LiveKit chi chay voi --profile translation.
+  # LiveKit + pipeline are part of the app stack: WarpBot/pill bridge capture publishes the meeting audio
+  # here and the pipeline transcribes it. Without them a room never gets a transcript.
   livekit:
     image: livekit/livekit-server:latest
-    profiles: ["translation"]
+    profiles: ["apps", "translation"]
     restart: unless-stopped
     command: ["--dev", "--config", "/etc/livekit.yaml", "--bind", "0.0.0.0"]
     volumes:
@@ -161,7 +163,7 @@ services:
   # Realtime pipeline (LiveKit transport, real providers). Shares livekit's network namespace because
   # livekit.yaml advertises node_ip 127.0.0.1: media only works on that loopback.
   pipeline:
-    profiles: ["translation"]
+    profiles: ["apps", "translation"]
     image: warptalk-pipeline:dev
     build: { <<: *rust-build, target: pipeline }
     restart: unless-stopped
