@@ -98,6 +98,10 @@ pub struct SttSegment {
     /// turns release held early sentences without guessing, and carries the turn's final
     /// stamps (`speech_end`). Consumers that only want transcript skip empty text.
     pub utterance_end: bool,
+    /// Display only, not transcript: the live text of audio not committed yet (whole text so
+    /// far, replaces the previous partial of the speaker). Never translated or stored; the
+    /// turn's real segments supersede it.
+    pub is_partial: bool,
     pub stamps: Stamps,
 }
 
@@ -121,6 +125,7 @@ impl SttSegment {
             confidence,
             is_early,
             utterance_end: false,
+            is_partial: false,
             stamps: Stamps::new(Instant::now()),
         }
     }

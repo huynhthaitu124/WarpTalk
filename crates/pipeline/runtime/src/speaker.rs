@@ -326,6 +326,7 @@ async fn relay(
     let mut seq = 0u64;
     let mut out_open = true;
     let mut last_lang = String::new();
+    let mut last_partial = String::new();
     while let Some(ev) = rx.recv().await {
         let now = Instant::now();
         match ev {
@@ -347,6 +348,7 @@ async fn relay(
                     record_stage_latency(STAGE_STT_FINAL, since_ms(now, info.stamps.stt_commit));
                 }
                 last_lang.clone_from(&seg.lang);
+                last_partial.clear();
                 seg.room = room.clone();
                 seg.speaker = speaker.clone();
                 seg.seq = seq;
@@ -359,7 +361,20 @@ async fn relay(
                     debug!(%room, %speaker, "segment receiver gone; discarding output");
                 }
             }
-            SttEvent::Partial { .. } => {}
+            SttEvent::Partial { text } => {
+                // Live text never blocks the transcript path: dropped when the consumer is busy.
+                if !out_open || text == last_partial {
+                    continue;
+                }
+                last_partial.clone_from(&text);
+                let mut p = SttSegment::new(text, last_lang.clone(), None, true);
+                p.is_partial = true;
+                p.room = room.clone();
+                p.speaker = speaker.clone();
+                p.seq = seq;
+                p.utterance_seq = tracker.seq();
+                let _ = out.try_send(p);
+            }
             SttEvent::UtteranceDone { ok } => {
                 if let Some((turn, commit)) = tracker.on_done() {
                     if let Some(commit) = commit {

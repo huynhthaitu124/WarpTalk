@@ -29,6 +29,8 @@ export interface CaptionLine {
   tparts?: Record<string, Record<number, string>>;
   /** Milliseconds between the pipeline's `emittedAtMs` and the moment the web app received the message. */
   latencyMs?: number;
+  /** Live text of audio not committed yet (`partial: true`): replaced as it grows, dropped when the speaker's next real caption arrives. */
+  partial?: boolean;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
@@ -76,8 +78,9 @@ export function parseCaption(payload: Uint8Array, fallbackSpeaker: string, seq: 
     text,
     lang: typeof j.lang === 'string' ? j.lang : typeof j.language === 'string' ? j.language : undefined,
     translations,
-    final: explicitFinal === undefined ? j.is_early !== true : Boolean(explicitFinal),
+    final: j.partial === true ? false : explicitFinal === undefined ? j.is_early !== true : Boolean(explicitFinal),
     latencyMs: lat !== undefined && lat <= MAX_LATENCY_MS ? lat : undefined,
+    ...(j.partial === true ? { partial: true } : {}),
   };
 }
 
@@ -92,6 +95,10 @@ function joinParts(p: Record<number, string>): string {
  * when `translations` is cumulative.
  */
 export function mergeCaption(cur: CaptionLine[], line: CaptionLine, max = 200): CaptionLine[] {
+  // A real caption supersedes the speaker's live text (one live line per speaker at most).
+  if (cur.some((c) => c.partial && c.id !== line.id && c.speakerId !== undefined && c.speakerId === line.speakerId)) {
+    cur = cur.filter((c) => !(c.partial && c.id !== line.id && c.speakerId === line.speakerId));
+  }
   const i = cur.findIndex((c) => c.id === line.id);
   if (i < 0) {
     if (line.sentenceIndex === undefined) return [...cur, line].slice(-max);

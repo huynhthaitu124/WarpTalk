@@ -13,7 +13,7 @@
 //! the same sweep periodically.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -39,6 +39,9 @@ pub struct WarmSocket {
 }
 
 /// Opens one transcription socket (`?intent=transcription`, bearer auth).
+/// Period of the background sweep started by [`WarmPool::warm_up`].
+const MAINTENANCE_EVERY: Duration = Duration::from_secs(15);
+
 pub async fn connect(cfg: &OpenAiSttConfig) -> Result<WsStream, SttError> {
     if cfg.api_key.is_empty() {
         return Err(SttError::Connect("api key not configured".into()));
@@ -91,6 +94,8 @@ pub struct WarmPool {
     cold_connects: AtomicU64,
     discarded: AtomicU64,
     opened: AtomicU64,
+    /// Set once the periodic sweep runs (started by the first `warm_up`).
+    maintained: AtomicBool,
 }
 
 impl WarmPool {
@@ -103,6 +108,7 @@ impl WarmPool {
             cold_connects: AtomicU64::new(0),
             discarded: AtomicU64::new(0),
             opened: AtomicU64::new(0),
+            maintained: AtomicBool::new(false),
         })
     }
 
@@ -124,6 +130,11 @@ impl WarmPool {
     pub async fn warm_up(self: &Arc<Self>) -> usize {
         let want = self.cfg.pool_size;
         let results = futures::future::join_all((0..want).map(|_| self.open_one())).await;
+        // Without a clock the idle sockets die quietly (peer close, age, network blip) and the
+        // first speaker after a quiet spell pays a cold connect: sweep and top up periodically.
+        if want > 0 && !self.maintained.swap(true, Ordering::Relaxed) {
+            self.spawn_maintenance(MAINTENANCE_EVERY);
+        }
         results.into_iter().filter(|ok| *ok).count()
     }
 

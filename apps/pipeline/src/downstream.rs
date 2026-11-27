@@ -123,6 +123,10 @@ impl DownstreamStage for SttOnlyStage {
         // speaker -> (utterance_seq, first caption recorded)
         let mut first: HashMap<String, (u64, bool)> = HashMap::new();
         while let Some(seg) = segments.recv().await {
+            if seg.is_partial {
+                publish_partial_caption(&ctx, &seg).await;
+                continue;
+            }
             handle_segment(&ctx, &seg, &mut first).await;
         }
     }
@@ -158,6 +162,39 @@ async fn handle_segment(
 
 fn epoch_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// Live (uncommitted) text of a speaker: caption only, never stored or translated. One line per
+/// speaker and segment counter (`live-<speaker>-<seq>`), replaced in place as it grows; clients
+/// drop it when the speaker's next real `stt` caption arrives.
+async fn publish_partial_caption(ctx: &DownstreamContext, seg: &SttSegment) {
+    let text = seg.text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let (speaker_name, speaker_user) = ctx.speaker_info(&seg.speaker);
+    let caption = serde_json::json!({
+        "type": "stt",
+        "segment_id": format!("live-{}-{}", seg.speaker, seg.seq),
+        "speaker_id": seg.speaker,
+        "speakerId": seg.speaker,
+        "speakerName": speaker_name,
+        "speakerUserId": speaker_user,
+        "utterance_seq": seg.utterance_seq,
+        "text": text,
+        "lang": (!seg.lang.is_empty()).then_some(seg.lang.as_str()),
+        "partial": true,
+        "final": false,
+        "translations": {},
+        "emittedAtMs": epoch_ms(),
+    });
+    if let Err(e) = ctx
+        .media
+        .publish_data(CAPTION_TOPIC, caption.to_string().into_bytes())
+        .await
+    {
+        debug!(room = %ctx.room, speaker = %seg.speaker, error = %e, "partial caption publish failed");
+    }
 }
 
 /// Writes the `stt:results` entry and the original-language caption (concurrently). The caption
@@ -650,6 +687,10 @@ impl Ingest {
     }
 
     async fn on_segment(&mut self, seg: SttSegment) {
+        if seg.is_partial {
+            publish_partial_caption(&self.ctx, &seg).await;
+            return;
+        }
         if seg.utterance_end {
             self.tracker
                 .turn_ended(&seg.speaker, seg.utterance_seq, seg.stamps.speech_end);

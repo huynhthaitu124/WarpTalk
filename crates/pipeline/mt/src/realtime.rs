@@ -18,7 +18,7 @@
 //! request) and triggers a refill.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -83,6 +83,8 @@ pub struct RealtimeClient {
     warm_claims: AtomicU64,
     cold_connects: AtomicU64,
     discarded: AtomicU64,
+    /// Set once the periodic sweep runs (started by the first `warm_up`).
+    maintained: AtomicBool,
 }
 
 fn still_open(ws: &mut WsStream) -> bool {
@@ -104,6 +106,7 @@ impl RealtimeClient {
             warm_claims: AtomicU64::new(0),
             cold_connects: AtomicU64::new(0),
             discarded: AtomicU64::new(0),
+            maintained: AtomicBool::new(false),
         })
     }
 
@@ -164,7 +167,31 @@ impl RealtimeClient {
     /// Dials `pool_size` sockets concurrently; returns how many succeeded.
     pub async fn warm_up(self: &Arc<Self>) -> usize {
         let r = futures::future::join_all((0..self.cfg.pool_size).map(|_| self.open_one())).await;
+        if self.cfg.pool_size > 0 && !self.maintained.swap(true, Ordering::Relaxed) {
+            let me = self.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(15));
+                tick.tick().await;
+                loop {
+                    tick.tick().await;
+                    me.sweep();
+                }
+            });
+        }
         r.into_iter().filter(|ok| *ok).count()
+    }
+
+    /// Drops dead/aged idle sockets and tops the pool up, so a quiet spell does not leave the
+    /// next translation a stale socket (timeout, then chat fallback).
+    fn sweep(self: &Arc<Self>) {
+        {
+            let mut idle = self.lock();
+            let before = idle.len();
+            idle.retain_mut(|s| self.usable(s));
+            let dropped = (before - idle.len()) as u64;
+            self.discarded.fetch_add(dropped, Ordering::Relaxed);
+        }
+        self.refill();
     }
 
     /// Background top-up to `pool_size`, counting dials in flight.
