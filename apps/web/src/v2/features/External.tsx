@@ -569,7 +569,7 @@ export function ExternalPage() {
             translationLang={listen}
             connection={connection}
             captureState={live.status.state}
-            ended={!running && !!(live.errors[0] ?? actionError)}
+            ended={roomTerminal}
             suggestions={suggestionStream.items.map((x) => ({ id: x.suggestionId, content: x.content, actions: agentActions(x.actions) }))}
             followUps={followUps.data ?? []}
             ask={askState}
