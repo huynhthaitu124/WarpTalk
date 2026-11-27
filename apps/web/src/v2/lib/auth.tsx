@@ -19,6 +19,11 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
+/** 1s, 2s, 4s, ... capped at 10s: an API rebuild/restart takes seconds to a minute. */
+function retryDelay(attempt: number): number {
+  return Math.min(10_000, 1_000 * 2 ** attempt);
+}
+
 function useSessionInfo() {
   return useSyncExternalStore(session.subscribe, () => session.info);
 }
@@ -28,21 +33,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sInfo = useSessionInfo();
   const [booted, setBooted] = useState(() => !session.refreshToken);
 
-  // Silent refresh on boot (single-flight, rotates the refresh token).
+  // Silent refresh on boot (single-flight, rotates the refresh token). session.refresh() resolves
+  // null only when the server rejected the token; a throw means the API could not be reached (a
+  // backend rebuild/restart), so stay in 'loading' and retry instead of dropping to the login page.
   useEffect(() => {
     if (booted) return;
     let alive = true;
-    session.refresh().catch(() => undefined).finally(() => { if (alive) setBooted(true); });
-    return () => { alive = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = (n: number) => {
+      session.refresh().then(
+        () => { if (alive) setBooted(true); },
+        () => { if (alive) timer = setTimeout(() => attempt(n + 1), retryDelay(n)); },
+      );
+    };
+    attempt(0);
+    return () => { alive = false; clearTimeout(timer); };
   }, [booted]);
 
-  // Proactive refresh one minute before the access token expires.
+  // Proactive refresh one minute before the access token expires; a transient failure retries
+  // with backoff (the stored refresh token is kept), a rejection clears the session.
   const expiresAt = sInfo?.expiresAt;
   useEffect(() => {
     if (!expiresAt) return;
-    const ms = Math.max(5_000, expiresAt - Date.now() - 60_000);
-    const t = setTimeout(() => { session.refresh().catch(() => undefined); }, ms);
-    return () => clearTimeout(t);
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const attempt = (n: number) => {
+      session.refresh().catch(() => {
+        if (alive) timer = setTimeout(() => attempt(n + 1), retryDelay(n));
+      });
+    };
+    timer = setTimeout(() => attempt(0), Math.max(5_000, expiresAt - Date.now() - 60_000));
+    return () => { alive = false; clearTimeout(timer); };
   }, [expiresAt]);
 
   const login = useCallback(async (email: string, password: string) => {
