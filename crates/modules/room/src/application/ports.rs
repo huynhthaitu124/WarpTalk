@@ -383,7 +383,8 @@ pub trait RoomRepo: Send + Sync {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord>;
     /// Live `EXTERNAL_BRIDGE` rooms whose capturer last heartbeated before `idle_cutoff`, or whose
     /// capturer never heartbeated at all (lease still equals the claim time) and was claimed before
-    /// `unclaimed_cutoff`, with the user allowed to end each one (effective host).
+    /// `unclaimed_cutoff`, or whose capturer released the seat (Stop / pill Pause) and nothing
+    /// changed for 20 min past `idle_cutoff`, with the user allowed to end each one (effective host).
     async fn idle_bridge_rooms(
         &self,
         idle_cutoff: DateTime<Utc>,

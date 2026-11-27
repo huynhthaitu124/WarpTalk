@@ -706,6 +706,8 @@ impl RoomRepo for PgRoomRepo {
             "SELECT id, COALESCE(active_host_id, host_id) FROM translation_room.translation_rooms \
              WHERE translation_room_type = 'EXTERNAL_BRIDGE' AND status = 'IN_PROGRESS' \
                AND CASE \
+                 WHEN bridge_capturer_lease_at IS NULL AND bridge_epoch > 0 \
+                   THEN COALESCE(updated_at, started_at, created_at) < $1 - interval '20 minutes' \
                  WHEN bridge_capturer_lease_at IS NULL \
                    OR bridge_capturer_lease_at = bridge_capturer_since \
                    THEN COALESCE(bridge_capturer_lease_at, started_at, created_at) < $2 \
