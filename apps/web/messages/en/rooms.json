@@ -185,10 +185,7 @@
       "titleWithProvider": "{provider} meeting",
       "titleDefault": "Translation session",
       "hint": "WarpBot does not join the call as a participant. It listens through the WarpTalk app on this Mac: keep the meeting open here, and the pill appears once capture starts.",
-      "languagesLabel": "Languages in this meeting",
-      "addLanguage": "Add language",
-      "removeLanguage": "Remove {language}",
-      "languagesHint": "Pick every language people will speak. Transcription locks onto these and corrects mixed-language speech."
+      "languagesLabel": "Languages in this meeting"
     }
   },
   "startedBanner": {

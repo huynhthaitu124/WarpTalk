@@ -1,23 +1,17 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Check, ChevronDown, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useClaimExternalMeetingRoom } from "@/hooks/use-translationRooms";
 import { useUserSettings } from "@/hooks/use-user-settings";
-import { getLanguageName, languagesInScope, normalizeLanguageCode } from "@/lib/language/languages";
+import { languagesInScope, normalizeLanguageCode } from "@/lib/language/languages";
 import { getErrorMessage } from "@/lib/api/errors";
 import { EXTERNAL_PROVIDER_LABEL, parseExternalMeetingLink } from "@/lib/meeting/external-meeting-link";
 import { useRouter } from "@/lib/next-shim/navigation";
+import { LanguageSelector } from "./create/language-selector";
 import { roomDetailPath } from "@/lib/workspace/workspace-routes";
 import { useUIStore } from "@/stores/ui-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -94,10 +88,7 @@ export function AddWarpBotDialog() {
   }, [picked, ownLanguage, offered]);
   const listenLanguage = languages.includes(ownLanguage) ? ownLanguage : languages[0];
 
-  function toggleLanguage(code: string) {
-    const next = languages.includes(code) ? languages.filter((c) => c !== code) : [...languages, code];
-    if (next.length) setPicked(next);
-  }
+
 
   function close(next: boolean) {
     setOpen(next);
@@ -208,50 +199,12 @@ export function AddWarpBotDialog() {
           ) : null}
           <div className="mt-4">
             <span className="text-[13px] text-ink">{t("quick.languagesLabel")}</span>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {languages.map((code) => (
-                <span
-                  key={code}
-                  className="inline-flex h-7 items-center gap-1 rounded-full bg-surface-2 pl-2.5 pr-1 text-[12px] text-ink"
-                >
-                  {getLanguageName(code)}
-                  {languages.length > 1 ? (
-                    <button
-                      type="button"
-                      onClick={() => toggleLanguage(code)}
-                      aria-label={t("quick.removeLanguage", { language: getLanguageName(code) })}
-                      className="grid size-5 place-items-center rounded-full text-ink-muted hover:bg-surface-1 hover:text-ink"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  ) : (
-                    <span className="w-1" />
-                  )}
-                </span>
-              ))}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-border px-2.5 text-[12px] text-ink-muted hover:text-ink"
-                >
-                  {t("quick.addLanguage")}
-                  <ChevronDown className="size-3" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="min-w-44">
-                  {offered.map((code) => (
-                    <DropdownMenuItem
-                      key={code}
-                      closeOnClick={false}
-                      onClick={() => toggleLanguage(code)}
-                      className="flex items-center justify-between gap-3 text-[13px]"
-                    >
-                      {getLanguageName(code)}
-                      {languages.includes(code) ? <Check className="size-3.5" /> : null}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <div className="mt-2 flex">
+              <LanguageSelector
+                languages={languages}
+                onLanguagesChange={(next) => next.length && setPicked(next)}
+              />
             </div>
-            <p className="mt-1.5 text-[12px] text-ink-muted">{t("quick.languagesHint")}</p>
           </div>
           <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">{t("quick.hint")}</p>
         </form>
