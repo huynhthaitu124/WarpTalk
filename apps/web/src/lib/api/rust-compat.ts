@@ -24,6 +24,11 @@ export function rustApiBaseUrl(): string {
     ? undefined
     : (window as unknown as { warptalkNative?: { config?: { apiBaseUrl?: string } } }).warptalkNative?.config?.apiBaseUrl;
   const origin = (native || process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/+$/, "");
+  // The macOS app serves the export as `warptalk://app/` and proxies `/api/` itself. axios's XHR
+  // adapter rejects any scheme outside http/https/file/blob/data ("Unsupported protocol warptalk:")
+  // before sending, which surfaced as "Cannot reach the WarpTalk server". A relative path resolves
+  // against the page's own origin, so it reaches the same proxy without naming the scheme.
+  if (/^warptalk:/i.test(origin)) return "/api/v1";
   return `${origin}/api/v1`;
 }
 

@@ -168,7 +168,9 @@ export default function WorkspaceHomePage() {
           <h2 className="text-[15px] font-semibold text-ink">{t("quickJumps")}</h2>
         </div>
 
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+        {/* auto-rows-min + content-start: rows never stretch to fill spare height (the macOS app's
+            web view showed ~210px-tall cards when the page had room to spare). */}
+        <div className="grid auto-rows-min content-start grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
           {quickActions.map((action, index) => (
             <QuickActionCard key={`${action.title}-${action.href || "action"}`} action={action} index={index} />
           ))}
