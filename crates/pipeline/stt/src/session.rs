@@ -121,7 +121,16 @@ impl OpenAiRealtimeStt {
         let socket = self.pool.claim().await?;
         let (mut writer, reader_half) = socket.ws.split();
         let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
-        let config = self.session_config_with(lang.as_deref(), hints);
+        // The room's declared languages join the caller's hints (code-switching set, prompt
+        // language line and guard), so recognition is biased before the first word is heard.
+        let mut hints = hints.clone();
+        for l in &params.languages {
+            if !hints.languages.contains(l) {
+                hints.languages.push(l.clone());
+            }
+        }
+        let config = self.session_config_with(lang.as_deref(), &hints);
+        let turns = TurnMachine::new(self.cfg.logprob_filter()).with_declared(&hints.languages);
         // Fire-and-forget: the server applies events in order, so audio may follow directly.
         send_event(
             &mut writer,
@@ -130,14 +139,16 @@ impl OpenAiRealtimeStt {
             },
         )
         .await?;
-        let context = Arc::new(Mutex::new(RollingContext::default()));
+        let mut rolling = RollingContext::default();
+        rolling.set_languages(turns.meeting_languages());
+        let context = Arc::new(Mutex::new(rolling));
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dead = Arc::new(AtomicBool::new(false));
         let reader = tokio::spawn(read_loop(
             reader_half,
             cmd_rx,
             sink,
-            TurnMachine::new(self.cfg.logprob_filter()),
+            turns,
             self.cfg.event_timeout(),
             dead.clone(),
             context.clone(),

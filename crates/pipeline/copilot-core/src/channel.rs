@@ -524,6 +524,7 @@ impl Worker {
             room: self.ctx.session_id.clone(),
             speaker: self.ctx.channel.as_str().to_string(),
             lang_hint: self.ctx.language.hint(self.cfg.language_hint.as_deref()),
+            languages: Vec::new(),
         };
         match tokio::time::timeout(timeout, stt.open_session(params, tx)).await {
             Ok(Ok(session)) => {

@@ -291,7 +291,11 @@ impl Runner {
             }
             match self
                 .pipeline
-                .add_speaker((*id).clone(), Some(info.source_language.clone()))
+                .add_speaker_with(
+                    (*id).clone(),
+                    Some(info.source_language.clone()),
+                    view.room_languages.clone(),
+                )
                 .await
             {
                 Ok(handle) => {

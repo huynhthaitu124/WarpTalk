@@ -5,7 +5,7 @@ import {
 } from '@phosphor-icons/react';
 import { actionsFor, replyLanguageFor } from '@/lib/meeting/suggestion-actions';
 import { cn } from '@v2/lib/cn';
-import { LANGUAGES, languageLabel } from '@v2/lib/languages';
+import { LANGUAGES, defaultReadingLanguage, languageLabel } from '@v2/lib/languages';
 import { Markdown } from '@v2/lib/markdown';
 import { getNative, useNative, type OverlayAsk, type OverlayCommand, type OverlayLine, type OverlayState } from '@v2/lib/native';
 
@@ -15,7 +15,7 @@ import { getNative, useNative, type OverlayAsk, type OverlayCommand, type Overla
  * events) and sends user actions back with `overlayCommand`.
  */
 const EMPTY: OverlayState = {
-  title: '', status: 'connecting', myLang: 'vi', farLang: 'en', micOn: true, lines: [], suggestions: [], followUps: [], suggestionsAvailable: false,
+  title: '', status: 'connecting', myLang: defaultReadingLanguage(), farLang: 'en', micOn: true, lines: [], suggestions: [], followUps: [], suggestionsAvailable: false,
 };
 
 function readInitial(): OverlayState {

@@ -121,6 +121,7 @@ impl ServerStt for PipelineServerStt {
             room: params.session.to_string(),
             speaker: params.channel.as_str().to_owned(),
             lang_hint: params.language.clone(),
+            languages: Vec::new(),
         };
         let inner = match &self.backend {
             Backend::OpenAi(stt) => {

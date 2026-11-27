@@ -139,6 +139,7 @@ async fn pool_warms_claims_instantly_and_refills() {
                 room: "r".into(),
                 speaker: "s".into(),
                 lang_hint: Some("vi".into()),
+                languages: Vec::new(),
             },
             tx,
         )
@@ -170,6 +171,7 @@ async fn dead_warm_sockets_are_discarded_then_cold_connect() {
                 room: "r".into(),
                 speaker: "s".into(),
                 lang_hint: None,
+                languages: Vec::new(),
             },
             tx,
         )
@@ -190,6 +192,7 @@ async fn missing_api_key_is_a_clean_error() {
                 room: "r".into(),
                 speaker: "s".into(),
                 lang_hint: None,
+                languages: Vec::new(),
             },
             tx,
         )
@@ -211,6 +214,7 @@ async fn end_to_end_flash_session_streams_then_commits() {
                 room: "r".into(),
                 speaker: "s".into(),
                 lang_hint: Some("en".into()),
+                languages: Vec::new(),
             },
             tx,
         )
@@ -303,6 +307,7 @@ async fn closed_chunk_commit_sends_audio_first() {
                 room: "r".into(),
                 speaker: "s".into(),
                 lang_hint: None,
+                languages: Vec::new(),
             },
             tx,
         )

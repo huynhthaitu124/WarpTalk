@@ -55,6 +55,8 @@ pub struct RoutesView {
     pub names: BTreeMap<ParticipantId, String>,
     /// Live routes (paused/ending/completed ones are filtered out).
     pub routes: Vec<AudioRoute>,
+    /// The room's declared languages (`auto` dropped): STT code-switching hints.
+    pub room_languages: Vec<String>,
 }
 
 /// Route states that no longer need audio processed.
@@ -116,6 +118,12 @@ impl RoutesView {
             names,
             targets,
             routes,
+            room_languages: s
+                .room_languages
+                .iter()
+                .filter(|l| !l.is_empty() && l.as_str() != "auto")
+                .cloned()
+                .collect(),
         }
     }
 

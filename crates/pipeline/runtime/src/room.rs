@@ -26,6 +26,7 @@ enum Cmd {
     Add {
         id: ParticipantId,
         lang: Option<String>,
+        languages: Vec<String>,
         reply: oneshot::Sender<Result<SpeakerHandle, PipelineError>>,
     },
     Remove {
@@ -85,10 +86,21 @@ impl RoomPipeline {
         id: impl Into<ParticipantId>,
         lang: Option<String>,
     ) -> Result<SpeakerHandle, PipelineError> {
+        self.add_speaker_with(id, lang, Vec::new()).await
+    }
+
+    /// [`Self::add_speaker`] with the room's declared languages (STT code-switching hints).
+    pub async fn add_speaker_with(
+        &self,
+        id: impl Into<ParticipantId>,
+        lang: Option<String>,
+        languages: Vec<String>,
+    ) -> Result<SpeakerHandle, PipelineError> {
         let (reply, rx) = oneshot::channel();
         self.send(Cmd::Add {
             id: id.into(),
             lang,
+            languages,
             reply,
         })
         .await?;
@@ -182,7 +194,12 @@ impl Actor {
 
     fn handle(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::Add { id, lang, reply } => {
+            Cmd::Add {
+                id,
+                lang,
+                languages,
+                reply,
+            } => {
                 let res = if self.speakers.contains_key(&id) {
                     Err(PipelineError::SpeakerExists(id))
                 } else {
@@ -191,6 +208,7 @@ impl Actor {
                             room: self.deps.room.clone(),
                             id: id.clone(),
                             lang,
+                            languages,
                         },
                         self.deps.stt.clone(),
                         &self.deps.vad_factory,

@@ -52,6 +52,8 @@ pub struct SpeakerSpec {
     pub room: RoomId,
     pub id: ParticipantId,
     pub lang: Option<String>,
+    /// The room's declared languages, passed to STT as code-switching hints.
+    pub languages: Vec<String>,
 }
 
 /// Cheap, cloneable audio entry point of one speaker.
@@ -439,6 +441,7 @@ impl Worker {
             room: self.spec.room.clone(),
             speaker: self.spec.id.clone(),
             lang_hint: self.spec.lang.clone(),
+            languages: self.spec.languages.clone(),
         };
         tokio::spawn(async move { stt.open_session(params, sink).await })
     }

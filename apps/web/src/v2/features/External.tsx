@@ -9,7 +9,7 @@ import { useAuth, useProfile } from '@v2/lib/auth';
 import { useWorkspace } from '@v2/lib/workspace';
 import { useEndMeeting, useMeetingJoin, useRoom, useUpdateMyLanguages } from '@v2/lib/queries';
 import { sendTestLine, useFollowUps, useSuggestionStream, useSuggestionTestMode } from '@v2/lib/suggestions';
-import { languageLabel } from '@v2/lib/languages';
+import { defaultReadingLanguage, languageLabel } from '@v2/lib/languages';
 import { languageOptions } from '@v2/lib/languageOptions';
 import {
   PROVIDER_LABEL, freshAccessToken, leaseIsStale, leaseRemainingSeconds, parseMeetingLink, useBridgeAudioMode, useBridgeRelease, useBridgeTakeover, useClaimBridge, useStartBridgeRoom,
@@ -75,7 +75,7 @@ export function ExternalPage() {
   const [link, setLink] = useState(() => params.get('link') ?? '');
   const [title, setTitle] = useState(() => params.get('title') ?? '');
   const [far, setFar] = useState(() => params.get('far') || 'en');
-  const [listen, setListen] = useState(() => params.get('listen') || 'vi');
+  const [listen, setListen] = useState(() => params.get('listen') || defaultReadingLanguage());
   /** Copilot: the user speaks in the call too, so their mic is published into the room. */
   const copilot = auto;
   const [micOn, setMicOn] = useState(true);

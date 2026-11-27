@@ -184,7 +184,11 @@
       "submit": "WarpBot を追加",
       "titleWithProvider": "{provider} の会議",
       "titleDefault": "翻訳セッション",
-      "hint": "WarpBot は参加者として会議に入りません。この Mac の WarpTalk アプリで音声を聞き取ります。会議をこの Mac で開いたままにすると、キャプチャ開始時にピルが表示されます。"
+      "hint": "WarpBot は参加者として会議に入りません。この Mac の WarpTalk アプリで音声を聞き取ります。会議をこの Mac で開いたままにすると、キャプチャ開始時にピルが表示されます。",
+      "languagesLabel": "この会議の言語",
+      "addLanguage": "言語を追加",
+      "removeLanguage": "{language}を削除",
+      "languagesHint": "会議で話されるすべての言語を選んでください。文字起こしはこれらの言語に合わせ、言語が混ざった発話も補正します。"
     }
   },
   "startedBanner": {

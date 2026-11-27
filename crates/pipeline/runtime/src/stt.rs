@@ -39,6 +39,8 @@ pub struct SessionParams {
     pub speaker: ParticipantId,
     /// Declared spoken language (ISO 639-1), if known.
     pub lang_hint: Option<String>,
+    /// Languages the room expects (code-switching set); empty = none declared.
+    pub languages: Vec<String>,
 }
 
 /// Output of a session towards the speaker pipeline.

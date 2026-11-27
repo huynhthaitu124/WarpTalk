@@ -184,7 +184,11 @@
       "submit": "Thêm WarpBot",
       "titleWithProvider": "Cuộc họp {provider}",
       "titleDefault": "Phiên dịch",
-      "hint": "WarpBot không vào cuộc họp như một người tham gia. Nó nghe qua app WarpTalk trên máy Mac này: giữ cuộc họp mở trên máy, pill sẽ hiện khi bắt đầu thu âm."
+      "hint": "WarpBot không vào cuộc họp như một người tham gia. Nó nghe qua app WarpTalk trên máy Mac này: giữ cuộc họp mở trên máy, pill sẽ hiện khi bắt đầu thu âm.",
+      "languagesLabel": "Ngôn ngữ trong cuộc họp",
+      "addLanguage": "Thêm ngôn ngữ",
+      "removeLanguage": "Bỏ {language}",
+      "languagesHint": "Chọn mọi ngôn ngữ mọi người sẽ nói. Nhận dạng giọng nói sẽ bám theo các ngôn ngữ này và sửa câu nói chen ngôn ngữ."
     }
   },
   "startedBanner": {

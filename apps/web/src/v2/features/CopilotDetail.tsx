@@ -5,7 +5,7 @@ import {
 } from '@phosphor-icons/react';
 import { Brand, Button, ParticipantAvatar, Select } from '@v2/ui';
 import { cn } from '@v2/lib/cn';
-import { languageLabel } from '@v2/lib/languages';
+import { defaultReadingLanguage, languageLabel } from '@v2/lib/languages';
 import { languageOptions } from '@v2/lib/languageOptions';
 import { PROVIDER_LABEL } from '@v2/lib/bridge';
 import { summaryBusy, useActionItems, useRegenerateSummary, useSummary } from '@v2/lib/copilot';
@@ -210,7 +210,7 @@ function MeetingInfo({ room, provider, translationLang }: { room: Room; provider
         </>
       )}
       {when && <span className={chip}><CalendarBlank size={12} />{when}</span>}
-      <span>Spoken {languageLabel(room.sourceLanguage)} · reading in {languageLabel(base(translationLang) ?? 'vi')}</span>
+      <span>Spoken {languageLabel(room.sourceLanguage)} · reading in {languageLabel(base(translationLang) ?? defaultReadingLanguage())}</span>
     </div>
   );
 }
@@ -252,7 +252,7 @@ function MeetingHeader({
         <div className="w-[150px]">
           <Select
             aria-label="Read captions in"
-            value={base(translationLang) ?? 'vi'}
+            value={base(translationLang) ?? defaultReadingLanguage()}
             onValueChange={(v) => onCommand('listen', v)}
             options={langs}
           />

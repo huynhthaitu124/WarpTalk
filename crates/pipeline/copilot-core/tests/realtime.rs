@@ -123,6 +123,7 @@ async fn run_one(stt: &EphemeralRealtimeStt) -> Vec<(String, bool)> {
                 room: "r".into(),
                 speaker: "me".into(),
                 lang_hint: Some("en".into()),
+                languages: Vec::new(),
             },
             tx,
         )

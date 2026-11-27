@@ -222,6 +222,9 @@ pub struct TurnMachine {
     /// Speech heard per detected language (ms) in auto-detect mode: the meeting's languages.
     /// Short turns in a language nobody speaks here are treated as noise hallucinations.
     heard: HashMap<String, u32>,
+    /// Languages the room declared up front (base codes): expected before a word is heard, so
+    /// the guard and the prompt do not have to learn them from the first turns.
+    declared: Vec<String>,
     /// Item whose live text was last shown ([`Out::Partial`]).
     live_item: Option<String>,
     /// Items the client already committed: their late deltas are not live text any more
@@ -243,17 +246,25 @@ fn real_hint(hint: &Option<String>) -> Option<&str> {
 }
 
 /// See [`TurnMachine::meeting_languages`] (a free fn so it can borrow only the tally).
-fn meeting_languages_of(heard: &HashMap<String, u32>) -> Vec<String> {
+/// Heard languages (most spoken first, capped) followed by the declared ones not heard yet.
+fn meeting_languages_of(heard: &HashMap<String, u32>, declared: &[String]) -> Vec<String> {
     let total: u32 = heard.values().sum();
     let mut v: Vec<(&String, &u32)> = heard
         .iter()
         .filter(|(_, ms)| **ms as f32 >= total as f32 * MEETING_LANGUAGE_MIN_SHARE)
         .collect();
     v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    v.into_iter()
+    let mut out: Vec<String> = v
+        .into_iter()
         .take(MEETING_LANGUAGES_MAX)
         .map(|(l, _)| l.clone())
-        .collect()
+        .collect();
+    for d in declared {
+        if !out.contains(d) {
+            out.push(d.clone());
+        }
+    }
+    out
 }
 
 impl TurnMachine {
@@ -265,6 +276,7 @@ impl TurnMachine {
             items: HashMap::new(),
             item_order: VecDeque::new(),
             heard: HashMap::new(),
+            declared: Vec::new(),
             live_item: None,
             closed: VecDeque::new(),
         }
@@ -273,7 +285,19 @@ impl TurnMachine {
     /// Languages this session keeps hearing (auto-detect mode), most spoken first: each has at
     /// least one turn of [`ESTABLISH_MIN_SPEECH_MS`] and [`MEETING_LANGUAGE_MIN_SHARE`] of the speech.
     pub fn meeting_languages(&self) -> Vec<String> {
-        meeting_languages_of(&self.heard)
+        meeting_languages_of(&self.heard, &self.declared)
+    }
+
+    /// Languages the room declared (base codes, `auto`/empty dropped), always counted as heard.
+    pub fn with_declared(mut self, languages: &[String]) -> Self {
+        for l in languages {
+            let l = l.trim().to_ascii_lowercase();
+            let base = l.split(['-', '_']).next().unwrap_or_default().to_owned();
+            if !base.is_empty() && base != "auto" && !self.declared.contains(&base) {
+                self.declared.push(base);
+            }
+        }
+        self
     }
 
     /// Call (before sending the commit) with the speaker's language hint.
@@ -437,7 +461,7 @@ impl TurnMachine {
                     Remainder::Text(text) => {
                         let lang = lang_for(&front.lang_hint, &text);
                         let avg = average_logprob(logprobs.as_deref());
-                        let heard = meeting_languages_of(&self.heard);
+                        let heard = meeting_languages_of(&self.heard, &self.declared);
                         let guard = crate::guard::check_with(
                             &text,
                             front.speech_ms,
@@ -752,6 +776,14 @@ mod tests {
         }
         // ko and th are under 10 % of the speech; at most three languages.
         assert_eq!(m.meeting_languages(), vec!["vi", "en", "ja"]);
+    }
+
+    #[test]
+    fn declared_languages_count_before_anything_is_heard() {
+        let mut m = machine().with_declared(&["vi-VN".into(), "auto".into(), "ja".into()]);
+        assert_eq!(m.meeting_languages(), vec!["vi", "ja"]);
+        m.heard.insert("en".into(), 5_000);
+        assert_eq!(m.meeting_languages(), vec!["en", "vi", "ja"]);
     }
 
     #[test]

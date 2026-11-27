@@ -1,11 +1,20 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { Check, ChevronDown, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useClaimExternalMeetingRoom } from "@/hooks/use-translationRooms";
+import { useUserSettings } from "@/hooks/use-user-settings";
+import { getLanguageName, languagesInScope, normalizeLanguageCode } from "@/lib/language/languages";
 import { getErrorMessage } from "@/lib/api/errors";
 import { EXTERNAL_PROVIDER_LABEL, parseExternalMeetingLink } from "@/lib/meeting/external-meeting-link";
 import { useRouter } from "@/lib/next-shim/navigation";
@@ -15,13 +24,33 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { externalMeetingHref } from "@v2/lib/bridge";
 import { getNative } from "@v2/lib/native";
 
-// The call is spoken in SOURCE and the creator reads captions in LISTEN. They must differ:
-// routes only exist between a speak language and a different listen language, so a room
-// created with listen == source has no routes and the pipeline never transcribes. Bare
-// ISO-639 codes, the same ones the pill's language picker sends (a room of "vi-VN" rejects "vi").
-// "auto": the pipeline detects what the far side speaks (no STT hint) and translates into LISTEN_LANGUAGE.
+// "auto": the pipeline detects what each speaker says (no fixed hint). The languages the user
+// picks are stored as the room's target languages: routes are planned per listener, so extra
+// room languages cost no translation, but the pipeline hands them to STT as the meeting's
+// languages (code-switch hints, prompt, and the guard against stray detections). Bare ISO-639
+// codes, the same ones the pill's language picker sends.
 const SOURCE_LANGUAGE = "auto";
-const LISTEN_LANGUAGE = "vi";
+const STORAGE_KEY = "warptalk.addWarpBot.languages";
+
+function storedLanguages(): string[] | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) && parsed.every((c) => typeof c === "string") && parsed.length
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberLanguages(codes: string[]) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(codes));
+  } catch {
+    // Best effort: the picker still works, it just forgets the choice.
+  }
+}
 
 /**
  * "New meeting": paste a call link, WarpBot joins it. External Meeting is the only kind a room
@@ -39,15 +68,43 @@ export function AddWarpBotDialog() {
   const workspaceSlug = useWorkspaceStore((s) => s.activeWorkspaceSlug);
   const claim = useClaimExternalMeetingRoom();
 
+  const settings = useUserSettings();
+  const offered = useMemo(() => languagesInScope("meeting").map((l) => l.code), []);
+
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // null = untouched: follow the remembered choice, else the user's own language plus English.
+  const [picked, setPicked] = useState<string[] | null>(null);
   const open = createOpen && !editRoomId;
+
+  // The language the creator reads captions in: their profile's listen language, else the
+  // browser's. Never a hardcoded one.
+  const ownLanguage = useMemo(() => {
+    const candidates = [
+      settings.data?.defaultListenLanguage,
+      typeof navigator !== "undefined" ? navigator.language : undefined,
+    ].map((c) => normalizeLanguageCode(c));
+    return candidates.find((c) => offered.includes(c)) ?? "en";
+  }, [settings.data?.defaultListenLanguage, offered]);
+
+  const languages = useMemo(() => {
+    const base = picked ?? storedLanguages() ?? [ownLanguage, "en"];
+    const valid = base.map((c) => normalizeLanguageCode(c)).filter((c) => offered.includes(c));
+    return Array.from(new Set(valid.length ? valid : [ownLanguage]));
+  }, [picked, ownLanguage, offered]);
+  const listenLanguage = languages.includes(ownLanguage) ? ownLanguage : languages[0];
+
+  function toggleLanguage(code: string) {
+    const next = languages.includes(code) ? languages.filter((c) => c !== code) : [...languages, code];
+    if (next.length) setPicked(next);
+  }
 
   function close(next: boolean) {
     setOpen(next);
     if (!next) {
       setLink("");
       setError(null);
+      setPicked(null);
     }
   }
 
@@ -70,6 +127,7 @@ export function AddWarpBotDialog() {
         ? t("quick.titleWithProvider", { provider: EXTERNAL_PROVIDER_LABEL[parsed.provider] })
         : t("quick.titleDefault")
     } · ${when}`;
+    rememberLanguages(languages);
     try {
       const res = await claim.mutateAsync({
         workspaceId,
@@ -81,8 +139,8 @@ export function AddWarpBotDialog() {
           : {}),
         title,
         sourceLanguage: SOURCE_LANGUAGE,
-        targetLanguages: [LISTEN_LANGUAGE],
-        listenLanguage: LISTEN_LANGUAGE,
+        targetLanguages: languages,
+        listenLanguage,
       });
       toast.success(t(res.created ? "externalLink.created" : "externalLink.joined"));
       // macOS app: the copilot pill is the meeting UI, open it straight away.
@@ -92,7 +150,7 @@ export function AddWarpBotDialog() {
             id: res.room.id,
             title: res.room.title,
             sourceLanguage: res.room.sourceLanguage ?? SOURCE_LANGUAGE,
-            targetLanguages: res.room.targetLanguages ?? [LISTEN_LANGUAGE],
+            targetLanguages: res.room.targetLanguages ?? languages,
           }),
         );
         return;
@@ -148,6 +206,53 @@ export function AddWarpBotDialog() {
               {error}
             </p>
           ) : null}
+          <div className="mt-4">
+            <span className="text-[13px] text-ink">{t("quick.languagesLabel")}</span>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {languages.map((code) => (
+                <span
+                  key={code}
+                  className="inline-flex h-7 items-center gap-1 rounded-full bg-surface-2 pl-2.5 pr-1 text-[12px] text-ink"
+                >
+                  {getLanguageName(code)}
+                  {languages.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleLanguage(code)}
+                      aria-label={t("quick.removeLanguage", { language: getLanguageName(code) })}
+                      className="grid size-5 place-items-center rounded-full text-ink-muted hover:bg-surface-1 hover:text-ink"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  ) : (
+                    <span className="w-1" />
+                  )}
+                </span>
+              ))}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-border px-2.5 text-[12px] text-ink-muted hover:text-ink"
+                >
+                  {t("quick.addLanguage")}
+                  <ChevronDown className="size-3" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-44">
+                  {offered.map((code) => (
+                    <DropdownMenuItem
+                      key={code}
+                      closeOnClick={false}
+                      onClick={() => toggleLanguage(code)}
+                      className="flex items-center justify-between gap-3 text-[13px]"
+                    >
+                      {getLanguageName(code)}
+                      {languages.includes(code) ? <Check className="size-3.5" /> : null}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <p className="mt-1.5 text-[12px] text-ink-muted">{t("quick.languagesHint")}</p>
+          </div>
           <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">{t("quick.hint")}</p>
         </form>
       </DialogContent>
