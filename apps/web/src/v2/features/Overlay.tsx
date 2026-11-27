@@ -3,11 +3,11 @@ import {
   ArrowDown, CaretDown, ChatCircleDots, Check, ClosedCaptioning, Globe, Lightbulb, Microphone, MicrophoneSlash, PaperPlaneRight, Sparkle,
   Stop, CheckSquare, X,
 } from '@phosphor-icons/react';
-import { actionsFor } from '@/lib/meeting/suggestion-actions';
+import { actionsFor, replyLanguageFor } from '@/lib/meeting/suggestion-actions';
 import { cn } from '@v2/lib/cn';
 import { LANGUAGES, languageLabel } from '@v2/lib/languages';
 import { Markdown } from '@v2/lib/markdown';
-import { getNative, type OverlayAsk, type OverlayCommand, type OverlayLine, type OverlayState } from '@v2/lib/native';
+import { getNative, useNative, type OverlayAsk, type OverlayCommand, type OverlayLine, type OverlayState } from '@v2/lib/native';
 
 /**
  * Copilot window for external meetings (macOS `OverlayWebController`), modelled on the upstream desktop widget.
@@ -64,6 +64,7 @@ export function OverlayPage() {
   const lastSig = useRef('');
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pillRef = useRef<HTMLDivElement>(null);
+  const pillDrag = usePillDrag();
   const cardRef = useRef<HTMLDivElement>(null);
   /** When speech / a tip last changed, and a 1 s clock while translating: drives the pill's phase label. */
   const [speechAt, setSpeechAt] = useState(0);
@@ -216,6 +217,32 @@ export function OverlayPage() {
     return () => { ro.disconnect(); window.removeEventListener('resize', report); window.removeEventListener('warptalk-native-ready', report); };
   }, [open]);
 
+  // Native app: real refracting glass (NSGlassEffectView) is drawn under the transparent page, so tell it
+  // where the pill and card are every frame (they animate). Sent only when something changed.
+  const nativeGlass = !!useNative();   // inside the macOS app rather than a plain browser tab
+  const lastGlass = useRef('');
+  useEffect(() => {
+    if (!nativeGlass) return;
+    let raf = 0;
+    const shape = (id: string, el: HTMLElement | null, radius: (b: DOMRect, s: number) => number) => {
+      if (!el) return '';
+      const b = el.getBoundingClientRect();
+      const s = el.offsetWidth ? b.width / el.offsetWidth : 1;   // scale of a running transform animation
+      const o = Number(getComputedStyle(el).opacity) || 0;
+      return `${id}:${[b.left, b.top, b.width, b.height, radius(b, s)].map((n) => n.toFixed(1)).join(',')},${o.toFixed(2)}`;
+    };
+    const tick = () => {
+      const v = [
+        shape('p', pillRef.current, (b) => b.height / 2),
+        shape('c', cardRef.current, (_b, s) => 24 * s),
+      ].filter(Boolean).join('|');
+      if (v !== lastGlass.current) { lastGlass.current = v; send('glass', v); }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [nativeGlass]);
+
   // Once the window ignores the mouse WebKit never sees it leave; the native side tells us instead.
   useEffect(() => {
     const on = (e: Event) => {
@@ -235,7 +262,7 @@ export function OverlayPage() {
 
   return (
     // Transparent margins (px/pb) leave room inside the native window for the shadows.
-    <div className="flex h-screen flex-col items-center overflow-hidden bg-transparent px-6 pb-7 pt-2 text-ink">
+    <div className={cn('flex h-screen flex-col items-center overflow-hidden bg-transparent px-6 pb-7 pt-2 text-ink', nativeGlass && 'wt-native')}>
       {/* Light sweep across "Listening…" (gradient clipped to the text). */}
       <style>{`
         .wt-shimmer {
@@ -248,43 +275,87 @@ export function OverlayPage() {
         }
         /* Shift by exactly one tile (200% size => -200% = +2W) so the loop has no jump. */
         @keyframes wt-shimmer { from { background-position: 0 0; } to { background-position: -200% 0; } }
-        @media (prefers-reduced-motion: reduce) { .wt-shimmer { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .wt-shimmer, .wt-dots { animation: none; } }
+        /* Liquid glass, macOS Siri style. Pill = near-black smoked capsule; card = clear glass that
+           shows the refracted desktop behind it. Both: thin bright rim, strongest on the top and bottom edges. */
+        .wt-glass {
+          position: relative; isolation: isolate; color: #f5f5f7;
+          -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+          transition: filter 150ms;
+        }
+        .wt-pill {
+          background: linear-gradient(180deg, rgba(30,30,32,.82), rgba(8,8,10,.88));
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.16), inset 0 -1px 0 rgba(255,255,255,.10), 0 10px 28px rgba(0,0,0,.45);
+        }
+        .wt-glass-card {
+          background: linear-gradient(180deg, rgba(60,60,66,.34) 0%, rgba(30,30,34,.42) 50%, rgba(16,16,18,.50) 100%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1.5px 0 rgba(255,255,255,.28),
+            inset 0 0 28px rgba(255,255,255,.06), 0 16px 40px rgba(0,0,0,.35);
+          text-shadow: 0 1px 2px rgba(0,0,0,.45);
+        }
+        .wt-glass::before { /* 1px rim: bright at the corners where light catches the edge */
+          content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+          background: linear-gradient(170deg, rgba(255,255,255,.60), rgba(255,255,255,.14) 22%, rgba(255,255,255,.04) 50%, rgba(255,255,255,.16) 78%, rgba(255,255,255,.55));
+          -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+        }
+        .wt-glass::after { /* soft sheen inside the glass */
+          content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
+          background: radial-gradient(120% 60% at 50% -25%, rgba(255,255,255,.14), transparent 60%),
+            radial-gradient(60% 40% at 50% 120%, rgba(255,255,255,.08), transparent 70%);
+        }
+        .wt-glass .text-ink-muted { color: rgba(255,255,255,.74); }
+        .wt-glass .text-ink-subtle { color: rgba(255,255,255,.56); }
+        .wt-glass:hover { filter: brightness(1.1); }
+        .wt-glass-card:hover { filter: none; }
+        /* Nested card inside the glass (suggestions). */
+        .wt-inset {
+          background: rgba(255,255,255,.10);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 0 0 1px rgba(255,255,255,.10);
+        }
+        .wt-light-btn { background: linear-gradient(180deg, #ffffff, #d9d9de); color: #111; box-shadow: inset 0 1px 0 #fff, 0 2px 8px rgba(0,0,0,.35); }
+        /* Native app: the refraction comes from NSGlassEffectView under the page (CSS backdrop-filter sees
+           nothing through the transparent window), so the page keeps only a light tint for legibility. */
+        .wt-native .wt-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+        .wt-native .wt-glass::before, .wt-native .wt-glass::after { display: none; }
+        .wt-native .wt-pill { background: transparent; box-shadow: none; }
+        .wt-native .wt-glass-card { background: rgba(0,0,0,.08); box-shadow: none; }
+        .wt-native .wt-glass:hover { filter: none; }
+        .wt-dots { animation: wt-spin 1s steps(8) infinite; transform-origin: center; }
+        @keyframes wt-spin { to { transform: rotate(360deg); } }
       `}</style>
       {/* Pill: always visible at the top centre; click to open / close the card. */}
-      <div ref={pillRef} onMouseEnter={hoverIn} onMouseLeave={hoverOut}
-        style={{ width: wide ? 412 : 208, transition: 'width 380ms cubic-bezier(.34,1.32,.64,1), background-color 150ms' }}
+      <div ref={pillRef} onMouseEnter={hoverIn} onMouseLeave={hoverOut} onPointerDown={pillDrag.onPointerDown} onClickCapture={pillDrag.onClickCapture}
+        style={{ width: wide ? 412 : 208, transition: 'width 380ms cubic-bezier(.34,1.32,.64,1), filter 150ms' }}
         // Only the width animates; the height is fixed.
-        className="flex h-10 shrink-0 items-center gap-1 overflow-hidden rounded-full bg-[#131415]/60 pr-1.5 backdrop-blur shadow-[0_6px_16px_rgba(0,0,0,0.25)] ring-1 ring-white/10 hover:bg-[#1b1c1e]/75">
+        className="wt-glass wt-pill flex h-10 shrink-0 items-center gap-1 overflow-hidden rounded-full pr-1.5">
       <button type="button" onClick={() => void toggle()} aria-expanded={open} data-testid="copilot-pill"
-        className="flex h-full min-w-0 flex-1 items-center gap-2 pl-3.5 text-left">
-        <PillDot status={state.status} />
-        <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[12.5px] font-medium text-ink">
-          {wide && !ended && ticker ? ticker : phase.live ? <span className="wt-shimmer">{phase.label}</span> : <span className="text-ink-muted">{phase.label}</span>}
+        className="flex h-full min-w-0 flex-1 items-center gap-2 pl-4 text-left">
+        <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[13px] font-semibold text-ink">
+          {wide && !ended && ticker ? ticker : phase.live ? <span className="wt-shimmer">{phase.label}</span> : <span className="text-[#f5f5f7]">{phase.label}</span>}
         </span>
         {tips > 0 && (
-          <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-semibold text-primary">
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#ffffff]/15 px-2 py-0.5 text-[11px] font-semibold text-[#ffffff] ring-1 ring-[#ffffff]/25">
             <Lightbulb size={12} weight="fill" />{tips}
           </span>
         )}
-        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-white/5 text-ink-muted">
+        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#ffffff]/[0.08] text-[#e5e5ea]/80">
           <CaretDown size={12} weight="bold" className={cn('transition-transform duration-300', open && !closing && 'rotate-180')} />
         </span>
       </button>
       <button type="button" aria-label="Close copilot" title="Close copilot" data-testid="copilot-pill-close"
         onClick={hideOverlay}
-        className="grid size-7 shrink-0 place-items-center rounded-full bg-white/5 text-ink-muted hover:bg-white/10 hover:text-ink">
+        className="grid size-7 shrink-0 place-items-center rounded-full bg-[#ffffff]/[0.08] text-[#e5e5ea]/80 hover:bg-[#ffffff]/15 hover:text-[#ffffff]">
         <X size={12} weight="bold" />
       </button>
       </div>
 
       {open && (
-        <div ref={cardRef} style={{ transformOrigin: 'top center' }} className="relative mt-2 flex min-h-[150px] w-full flex-1 flex-col overflow-hidden rounded-2xl bg-[#131415]/70 shadow-[0_8px_20px_rgba(0,0,0,0.3)] backdrop-blur ring-1 ring-white/10" data-testid="copilot-card">
+        <div ref={cardRef} style={{ transformOrigin: 'top center' }} className="wt-glass wt-glass-card relative mt-2 flex min-h-[150px] w-full flex-1 flex-col overflow-hidden rounded-[24px]" data-testid="copilot-card">
           {/* Transcript card. One compact header row (status, controls, close) keeps it short. */}
           <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-            <StatusDot status={state.status} />
             {!ended && (
               <>
-                <span className="mx-1 h-5 w-px bg-border" />
                 <DockButton label={state.micOn ? 'Mute my mic' : 'Unmute my mic'} danger={!state.micOn} onClick={() => send('mic', state.micOn ? 'off' : 'on')}>
                   {state.micOn ? <Microphone size={15} weight="bold" /> : <MicrophoneSlash size={15} weight="bold" />}
                 </DockButton>
@@ -293,7 +364,7 @@ export function OverlayPage() {
               </>
             )}
             {state.ask && (
-              <div role="tablist" aria-label="Copilot view" className="ml-auto flex shrink-0 rounded-full bg-white/5 p-0.5">
+              <div role="tablist" aria-label="Copilot view" className="ml-auto flex shrink-0 rounded-full bg-black/20 p-0.5 ring-1 ring-white/5">
                 <TabButton active={tab === 'live'} onClick={() => setTab('live')} label="Live">
                   <ClosedCaptioning size={13} weight="bold" />
                 </TabButton>
@@ -303,7 +374,7 @@ export function OverlayPage() {
               </div>
             )}
             <button type="button" aria-label="Hide copilot" title="Hide copilot" onClick={hideOverlay}
-              className={cn(!state.ask && 'ml-auto', 'grid size-7 place-items-center rounded-full text-ink-muted hover:bg-surface-3 hover:text-ink')}>
+              className={cn(!state.ask && 'ml-auto', 'grid size-7 place-items-center rounded-full text-ink-muted hover:bg-[#ffffff]/15 hover:text-ink')}>
               <X size={14} weight="bold" />
             </button>
           </div>
@@ -319,12 +390,12 @@ export function OverlayPage() {
           ) : tab === 'warpbot' && state.ask ? (
             <WarpBotChat ask={state.ask} onAsk={ask} />
           ) : (
-            <Transcript lines={state.lines} myLang={state.myLang} tips={stamped(state)} onAsk={state.ask ? ask : undefined} />
+            <Transcript lines={state.lines} myLang={state.myLang} tips={stamped(state)} onAsk={state.ask ? ask : undefined} needsJoin={state.needsJoin} link={state.link} />
           )}
 
           {state.testMode && !ended && tab === 'live' && <TestLineBox />}
 
-          {state.error && <div className="shrink-0 border-t border-border bg-danger/10 px-3 py-1.5 text-[12px] text-danger-text">{state.error}</div>}
+          {state.error && !state.needsJoin && <div className="shrink-0 border-t border-white/10 px-3 py-1.5 text-[12px] text-ink-muted">{state.error}</div>}
 
           {/* Drag to resize: bottom edge = height, corner = width + height (window grows around its centre). */}
           <ResizeGrip axes="y" className="absolute inset-x-16 bottom-0 h-2 cursor-ns-resize" />
@@ -369,24 +440,15 @@ function ResizeGrip({ axes, className }: { axes: 'y' | 'xy'; className: string }
   );
 }
 
-function PillDot({ status }: { status: OverlayState['status'] }) {
-  const c = status === 'translating' ? 'bg-emerald-500 animate-pulse' : status === 'connecting' ? 'bg-amber-400' : 'bg-ink-muted';
-  return <span className={cn('size-2 shrink-0 rounded-full', c)} />;
-}
-
-function StatusDot({ status }: { status: OverlayState['status'] }) {
-  const map = {
-    connecting: ['bg-amber-400', 'Connecting'],
-    ready: ['bg-ink-muted', 'Ready'],
-    translating: ['bg-emerald-500 animate-pulse', 'Translating'],
-    stopped: ['bg-ink-muted', 'Translation stopped'],
-    ended: ['bg-ink-muted', 'Ended'],
-  } as const;
-  const [dot, label] = map[status];
+/** Siri-style dotted spinner: eight dots fading around a ring. */
+export function DotSpinner({ size = 14 }: { size?: number }) {
   return (
-    <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-muted">
-      <span className={cn('size-1.5 rounded-full', dot)} />{label}
-    </span>
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden className="wt-dots shrink-0 text-[#ffffff]">
+      {Array.from({ length: 8 }, (_, i) => {
+        const a = (i / 8) * Math.PI * 2;
+        return <circle key={i} cx={8 + 5.6 * Math.sin(a)} cy={8 - 5.6 * Math.cos(a)} r={1.35} fill="currentColor" opacity={0.2 + (i / 7) * 0.8} />;
+      })}
+    </svg>
   );
 }
 
@@ -396,7 +458,7 @@ function initials(name: string) {
 const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 type Tip =
-  | { kind: 'suggestion'; id: string; at: number; category: string; content: string; detail?: string }
+  | { kind: 'suggestion'; id: string; at: number; category: string; content: string; detail?: string; actions?: { label: string; prompt: string }[] }
   | { kind: 'followUp'; id: string; at: number; text: string; owner?: string };
 
 /** Suggestions and follow-ups with the time they first arrived (they carry no segment id). */
@@ -410,13 +472,16 @@ function stamped(state: OverlayState): Tip[] {
   ];
 }
 
-function Transcript({ lines, myLang, tips, onAsk }: { lines: OverlayLine[]; myLang: string; tips: Tip[]; onAsk?: (q: string) => void }) {
+function Transcript({ lines, myLang, tips, onAsk, needsJoin, link }: { lines: OverlayLine[]; myLang: string; tips: Tip[]; onAsk?: (q: string) => void; needsJoin?: boolean; link?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const items = [
     ...lines.map((l) => ({ at: l.at, key: `l:${l.id}`, node: <Bubble line={l} myLang={myLang} /> })),
     ...tips.map((t) => ({ at: t.at, key: `t:${t.kind}:${t.id}`, node: <TipCard tip={t} myLang={myLang} onAsk={onAsk} /> })),
   ].sort((a, b) => a.at - b.at);
+  // Follow the newest line only while the reader is at the bottom. Scrolling up (onWheel below)
+  // unsticks at once; interim lines re-render several times a second and would otherwise snap the
+  // list back down before the reader got 48px away from the bottom.
   useLayoutEffect(() => {
     const el = ref.current;
     if (el && stuck) el.scrollTop = el.scrollHeight;
@@ -425,6 +490,7 @@ function Transcript({ lines, myLang, tips, onAsk }: { lines: OverlayLine[]; myLa
     const el = ref.current;
     if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
   };
+  if (!items.length && needsJoin) return <JoinFirst link={link} />;
   if (!items.length) {
     return (
       <div className="grid flex-1 place-items-center px-8 text-center text-ink-muted">
@@ -437,12 +503,12 @@ function Transcript({ lines, myLang, tips, onAsk }: { lines: OverlayLine[]; myLa
   }
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={ref} onScroll={onScroll} className="h-full space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={ref} onScroll={onScroll} onWheel={(e) => { if (e.deltaY < 0) setStuck(false); }} onTouchMove={() => setStuck(false)} className="h-full space-y-3 overflow-y-auto px-3 py-3">
         {items.map((i) => <div key={i.key}>{i.node}</div>)}
       </div>
       {!stuck && (
         <button type="button" onClick={() => setStuck(true)}
-          className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-surface-3 px-2.5 py-1 text-[11px] font-medium text-ink shadow-sm">
+          className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-[#2c2c2e]/90 px-2.5 py-1 text-[11px] font-medium text-[#f5f5f7] shadow-sm ring-1 ring-[#ffffff]/25 backdrop-blur">
           <ArrowDown size={12} weight="bold" />Latest
         </button>
       )}
@@ -456,11 +522,11 @@ function Bubble({ line: l, myLang }: { line: OverlayLine; myLang: string }) {
   return (
     <div className={cn('flex gap-2', l.self && 'flex-row-reverse')}>
       <div className="relative mt-4 size-7 shrink-0">
-        <div className={cn('grid size-7 place-items-center rounded-full text-[10px] font-semibold', l.self ? 'bg-primary/25 text-primary' : 'bg-surface-3 text-ink-muted')}>
+        <div className={cn('grid size-7 place-items-center rounded-full text-[10px] font-semibold', l.self ? 'bg-[#ffffff]/20 text-[#ffffff] ring-1 ring-[#ffffff]/30' : 'bg-white/[0.08] text-ink-muted ring-1 ring-white/10')}>
           {initials(l.self ? 'You' : l.speaker)}
         </div>
         {src && (
-          <span className="absolute -bottom-0.5 -right-0.5 grid h-4 place-items-center rounded-full bg-surface-1 px-1 text-[9px] font-semibold uppercase leading-none text-ink-muted ring-1 ring-border">
+          <span className="absolute -bottom-0.5 -right-0.5 grid h-4 place-items-center rounded-full bg-[#1c1c1e] px-1 text-[9px] font-semibold uppercase leading-none text-ink-muted ring-1 ring-border">
             {src.slice(0, 2)}
           </span>
         )}
@@ -470,7 +536,7 @@ function Bubble({ line: l, myLang }: { line: OverlayLine; myLang: string }) {
           <span className="text-[11px] font-semibold text-ink-muted">{l.self ? 'You' : l.speaker}</span>
           <span className="font-mono tabular-nums text-ink-subtle">{fmtTime(l.at)}</span>
         </div>
-        <div className={cn('rounded-2xl px-3 py-2 shadow-sm', l.self ? 'rounded-tr-sm bg-primary text-white' : 'rounded-tl-sm border border-border bg-surface-2/60', !l.final && 'opacity-75')}>
+        <div className={cn('rounded-2xl px-3 py-2 shadow-sm', l.self ? 'rounded-tr-sm bg-white/[0.14] text-white ring-1 ring-inset ring-white/15' : 'rounded-tl-sm bg-white/[0.07] ring-1 ring-inset ring-white/10', !l.final && 'opacity-75')}>
           <p className={cn('text-[13px] leading-relaxed', l.self ? 'text-white/80' : showTr ? 'text-ink-muted' : 'text-ink')}>{l.text}</p>
           {showTr && <p className={cn('mt-1.5 text-[13px] font-medium leading-relaxed', l.self ? 'text-white' : 'text-ink')}>{l.translation}</p>}
           {src && (
@@ -484,14 +550,21 @@ function Bubble({ line: l, myLang }: { line: OverlayLine; myLang: string }) {
   );
 }
 
+function withReplyLanguage(prompt: string, myLang: string) {
+  return `${prompt}\n\nReply in ${replyLanguageFor(myLang)}.`;
+}
+
 /** A suggestion / follow-up shown inline, right under the transcript line that prompted it. */
 function TipCard({ tip, myLang, onAsk }: { tip: Tip; myLang: string; onAsk?: (q: string) => void }) {
   const isSuggestion = tip.kind === 'suggestion';
-  // Same next steps as the meeting page's suggestion badge (Ask WarpBot, Research this, ...).
-  const actions = onAsk ? (isSuggestion ? actionsFor(tip, myLang) : actionsFor({ category: 'action', content: tip.text }, myLang)).slice(0, 3) : [];
+  // A suggestion offers only what the agent wrote for it (0-3 buttons, chosen per situation); a follow-up
+  // keeps its one natural next step.
+  const actions = !onAsk ? []
+    : isSuggestion ? (tip.actions ?? []).map((a, i) => ({ id: `agent-${i}`, label: a.label, prompt: withReplyLanguage(a.prompt, myLang) }))
+      : actionsFor({ category: 'action', content: tip.text }, myLang).slice(0, 1);
   return (
-    <div className="ml-9 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2">
-      <div className={cn('mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide', isSuggestion ? 'text-primary' : 'text-ink-muted')}>
+    <div className="wt-inset ml-9 rounded-2xl px-3 py-2">
+      <div className={cn('mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide', isSuggestion ? 'text-[#ffffff]' : 'text-ink-muted')}>
         {isSuggestion ? <Lightbulb size={12} weight="fill" /> : <CheckSquare size={12} />}
         {isSuggestion ? tip.category.replace(/_/g, ' ') : 'Follow-up'}
       </div>
@@ -507,8 +580,8 @@ function TipCard({ tip, myLang, onAsk }: { tip: Tip; myLang: string; onAsk?: (q:
         <div className="mt-1.5 flex flex-wrap gap-1">
           {actions.map((a) => (
             <button key={a.id} type="button" onClick={() => onAsk?.(a.prompt)} data-testid="tip-action"
-              className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-medium text-ink-muted ring-1 ring-white/10 hover:bg-white/10 hover:text-ink">
-              {a.id.startsWith('research') || a.id === 'verifyOnline' ? <Globe size={11} /> : <ChatCircleDots size={11} />}{a.label}
+              className="inline-flex items-center gap-1 rounded-full bg-[#ffffff]/[0.08] px-2.5 py-0.5 text-[11px] font-medium text-[#e5e5ea] ring-1 ring-[#ffffff]/25 hover:bg-[#ffffff]/15 hover:text-[#ffffff]">
+              <ChatCircleDots size={11} />{a.label}
             </button>
           ))}
         </div>
@@ -521,9 +594,9 @@ function TabButton({ active, onClick, label, dot, testId, children }: { active: 
   return (
     <button type="button" role="tab" aria-selected={active} onClick={onClick} data-testid={testId}
       className={cn('relative flex h-6 items-center gap-1 rounded-full px-2 text-[11px] font-semibold transition-colors',
-        active ? 'bg-white/15 text-ink' : 'text-ink-muted hover:text-ink')}>
+        active ? 'bg-[#ffffff]/15 text-[#ffffff] shadow-[inset_0_1px_0_rgba(255,255,255,.2)]' : 'text-ink-muted hover:text-ink')}>
       {children}{label}
-      {dot && <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary" />}
+      {dot && <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[#ffffff]" />}
     </button>
   );
 }
@@ -531,7 +604,7 @@ function TabButton({ active, onClick, label, dot, testId, children }: { active: 
 /** WarpBot strings follow the app locale (the legacy UI's WARPTALK_LOCALE cookie, else the browser). */
 const BOT_TEXT = {
   en: { quick: ['Summarize the meeting so far', 'What has been decided?', 'Any open questions left?'], title: 'Ask WarpBot about this meeting', hint: 'WarpBot reads the transcript and workspace documents.', thinking: 'Thinking…', cut: '(answer was cut off)', placeholder: 'Ask WarpBot…' },
-  vi: { quick: ['Tóm tắt cuộc họp đến giờ', 'Đã chốt những gì?', 'Còn câu hỏi nào chưa được trả lời?'], title: 'Hỏi WarpBot về cuộc họp này', hint: 'WarpBot đọc transcript và tài liệu workspace.', thinking: 'Đang suy nghĩ…', cut: '{t.cut}', placeholder: 'Hỏi WarpBot…' },
+  vi: { quick: ['Tóm tắt cuộc họp đến giờ', 'Đã chốt những gì?', 'Còn câu hỏi nào chưa được trả lời?'], title: 'Hỏi WarpBot về cuộc họp này', hint: 'WarpBot đọc transcript và tài liệu workspace.', thinking: 'Đang suy nghĩ…', cut: '(câu trả lời bị ngắt)', placeholder: 'Hỏi WarpBot…' },
   ja: { quick: ['ここまでの会議を要約', '何が決まりましたか？', '未解決の質問はありますか？'], title: 'この会議について WarpBot に質問', hint: 'WarpBot は文字起こしとワークスペースの資料を参照します。', thinking: '考え中…', cut: '（回答が途中で終了しました）', placeholder: 'WarpBot に質問…' },
 } as const;
 type BotLocale = keyof typeof BOT_TEXT;
@@ -569,47 +642,45 @@ function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }
   };
   return (
     <>
-      <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" data-testid="warpbot-log">
+      <div ref={ref} onScroll={onScroll} onWheel={(e) => { if (e.deltaY < 0) setStuck(false); }} onTouchMove={() => setStuck(false)} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 [&>*]:mx-auto [&>*]:max-w-[640px] [&>*]:px-1" data-testid="warpbot-log">
         {ask.messages.length === 0 ? (
           <div className="grid h-full place-items-center text-center">
             <div>
-              <Sparkle size={26} weight="fill" className="mx-auto mb-2 text-primary" />
               <p className="text-[13px] font-medium">{t.title}</p>
               <p className="mt-0.5 text-[11.5px] text-ink-muted">{t.hint}</p>
               <div className="mt-3 flex flex-wrap justify-center gap-1.5">
                 {t.quick.map((q) => (
                   <button key={q} type="button" onClick={() => onAsk(q)}
-                    className="rounded-full bg-white/5 px-2.5 py-1 text-[11.5px] text-ink-muted ring-1 ring-white/10 hover:bg-white/10 hover:text-ink">{q}</button>
+                    className="rounded-full bg-[#ffffff]/[0.07] px-2.5 py-1 text-[11.5px] text-[#e5e5ea] ring-1 ring-[#ffffff]/20 hover:bg-[#ffffff]/15 hover:text-[#ffffff]">{q}</button>
                 ))}
               </div>
             </div>
           </div>
         ) : ask.messages.map((m) => (m.role === 'user' ? (
           <div key={m.key} className="flex justify-end">
-            <p className="line-clamp-4 max-w-[85%] whitespace-pre-wrap break-words text-right text-[12.5px] text-ink-muted">{m.content}</p>
+            <p className="line-clamp-4 max-w-[85%] whitespace-pre-wrap break-words rounded-[19px] bg-white/[0.09] px-3.5 py-[7px] text-[13.5px] font-medium leading-5 text-[#f5f5f7] ring-1 ring-inset ring-white/10">{m.content}</p>
           </div>
         ) : (
-          <div key={m.key} className="flex gap-2" data-testid="warpbot-answer" data-status={m.status ?? 'done'}>
-            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/20 text-primary"><Sparkle size={12} weight="fill" /></span>
-            <div className="min-w-0 flex-1 text-[13px] font-medium leading-relaxed text-white">
-              {m.content ? <Markdown text={m.content} className="space-y-1.5" /> : m.status === 'streaming' ? <span className="wt-shimmer">{t.thinking}</span> : null}
+          <div key={m.key} data-testid="warpbot-answer" data-status={m.status ?? 'done'}>
+            <div className="min-w-0 text-[14px] font-semibold leading-snug tracking-[-0.005em] text-white">
+              {m.content ? <Markdown text={m.content} className="space-y-1.5" /> : m.status === 'streaming' ? <span className="flex items-center gap-2"><DotSpinner /><span className="wt-shimmer">{t.thinking}</span></span> : null}
               {m.incomplete && <p className="mt-1 text-[11px] text-ink-subtle">(câu trả lời bị ngắt)</p>}
               {m.error && <p className="mt-1 text-[11.5px] text-danger-text">{m.error}</p>}
             </div>
           </div>
         )))}
       </div>
-      <form className="flex shrink-0 items-end gap-1.5 px-3 py-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <form className="mx-auto flex w-full max-w-[640px] shrink-0 items-end gap-1.5 px-3 pb-2.5 pt-1" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={1} maxLength={1000} aria-label="Ask WarpBot" data-testid="warpbot-input"
           placeholder={t.placeholder}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
-          className="max-h-24 min-h-[30px] min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[12.5px] outline-none focus:border-accent" />
+          className="max-h-24 min-h-[32px] min-w-0 flex-1 resize-none rounded-[16px] bg-white/[0.08] px-3.5 py-1.5 text-[13px] leading-5 text-[#f5f5f7] outline-none ring-1 ring-inset ring-white/10 placeholder:text-[#e5e5ea]/45 focus:ring-[#ffffff]/45" />
         {ask.busy ? (
           <button type="button" aria-label="Stop answer" title="Stop" onClick={() => send('askStop')}
-            className="grid size-[30px] shrink-0 place-items-center rounded-lg bg-white/10 text-ink hover:bg-white/15"><Stop size={13} weight="fill" /></button>
+            className="grid size-[32px] shrink-0 place-items-center rounded-full bg-white/10 text-ink hover:bg-white/15"><Stop size={13} weight="fill" /></button>
         ) : (
           <button type="submit" aria-label="Send to WarpBot" title="Send" disabled={!text.trim()}
-            className="grid size-[30px] shrink-0 place-items-center rounded-lg bg-primary text-white disabled:opacity-40"><PaperPlaneRight size={13} weight="fill" /></button>
+            className="wt-light-btn grid size-[32px] shrink-0 place-items-center rounded-full disabled:opacity-40"><PaperPlaneRight size={13} weight="fill" /></button>
         )}
       </form>
     </>
@@ -632,11 +703,76 @@ function TestLineBox() {
   );
 }
 
+/** No meeting audio yet: ask the user to join the call first, and take a Meet/Teams link to open. */
+function JoinFirst({ link }: { link?: string }) {
+  const [url, setUrl] = useState('');
+  const ok = /^(https?:\/\/)?(meet\.google\.com|teams\.(microsoft|live)\.com)\//i.test(url.trim());
+  const submit = () => { if (ok) { send('link', /^https?:/i.test(url.trim()) ? url.trim() : `https://${url.trim()}`); setUrl(''); } };
+  return (
+    <div className="grid flex-1 place-items-center px-8 text-center">
+      <div className="w-full max-w-[520px]">
+        <ClosedCaptioning size={28} className="mx-auto mb-2 text-ink-muted" />
+        <p className="text-[14px] font-medium text-[#f5f5f7]">Join the meeting first</p>
+        <p className="mt-1 text-[12px] text-ink-muted">
+          {link ? 'Open the meeting and join the call; translation starts as soon as there is audio.' : 'Paste the Google Meet or Teams link to open it, then join the call.'}
+        </p>
+        <form className="mt-3 flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <input
+            value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} autoComplete="off"
+            placeholder={link ?? 'https://meet.google.com/abc-defg-hij'}
+            className="h-8 min-w-0 flex-1 rounded-full bg-[#ffffff]/[0.08] px-3 text-[13px] text-[#f5f5f7] ring-1 ring-inset ring-white/10 placeholder:text-ink-muted focus:outline-none focus:ring-white/25"
+          />
+          <button type="submit" disabled={!ok && !link} onClick={(e) => { if (!url.trim() && link) { e.preventDefault(); send('link', link); } }}
+            className="h-8 shrink-0 rounded-full bg-[#ffffff]/15 px-3.5 text-[12.5px] font-medium text-[#f5f5f7] hover:bg-[#ffffff]/25 disabled:opacity-40">
+            Open meeting
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/** Drag the pill to move the copilot window; released near its home it snaps back (native `drag`). */
+function usePillDrag() {
+  const dragged = useRef(false);
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    const sx = e.screenX, sy = e.screenY;
+    let started = false, frame = 0;
+    dragged.current = false;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.screenX - sx, dy = ev.screenY - sy;
+      if (!started) {
+        if (Math.hypot(dx, dy) < 5) return;
+        started = true; dragged.current = true;
+        send('drag', 'begin');
+      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => send('drag', `${Math.round(dx)},${Math.round(dy)}`));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      cancelAnimationFrame(frame);
+      if (started) send('drag', 'end');
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+  // A drag must not also toggle the card / close the copilot.
+  function onClickCapture(e: React.MouseEvent) {
+    if (dragged.current) { e.stopPropagation(); e.preventDefault(); dragged.current = false; }
+  }
+  return { onPointerDown, onClickCapture };
+}
+
 function DockButton({ label, danger, onClick, children }: { label: string; danger?: boolean; onClick(): void; children: React.ReactNode }) {
   return (
     <button type="button" aria-label={label} title={label} onClick={onClick}
-      className={cn('grid size-[34px] shrink-0 place-items-center rounded-[9px] transition-colors',
-        danger ? 'bg-destructive/15 text-destructive hover:bg-destructive/25' : 'bg-surface-3 text-ink hover:bg-surface-3/70')}>
+      className={cn('grid size-[34px] shrink-0 place-items-center rounded-full transition-colors',
+        danger ? 'bg-destructive/15 text-destructive hover:bg-destructive/25' : 'bg-[#ffffff]/[0.08] text-[#f5f5f7] ring-1 ring-inset ring-white/10 hover:bg-[#ffffff]/15')}>
       {children}
     </button>
   );
@@ -652,7 +788,7 @@ function LangPicker({ value, onChange }: { value: string; onChange(v: string): v
     <div className="relative">
       <button type="button" title="My language: you speak it and read everything in it" aria-haspopup="listbox" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-[34px] min-w-0 items-center gap-1.5 rounded-full bg-surface-3 pl-3 pr-2 text-[12px] font-medium text-ink hover:bg-surface-3/70">
+        className="flex h-[34px] min-w-0 items-center gap-1.5 rounded-full bg-[#ffffff]/[0.08] pl-3 pr-2 text-[12px] font-medium text-[#f5f5f7] ring-1 ring-inset ring-white/10 hover:bg-[#ffffff]/15">
         <Globe size={14} />
         <span className="truncate">{languageLabel(value)}</span>
         <CaretDown size={11} weight="bold" className={cn('shrink-0 text-ink-muted transition-transform', open && 'rotate-180')} />
@@ -691,5 +827,5 @@ function pillPhase(s: OverlayState, now: number, speechAt: number, tipAt: number
   if (last && (!last.final || now - speechAt < 2500)) return { label: 'Listening…', live: true };
   // Someone else just finished a sentence: the assistant is weighing whether to suggest something.
   if (s.suggestionsAvailable && last && !last.self && now - speechAt < 8000 && tipAt < speechAt) return { label: 'Thinking…', live: true };
-  return { label: 'Idle', live: false };
+  return { label: 'Listening', live: true };
 }

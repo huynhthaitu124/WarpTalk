@@ -55,6 +55,12 @@ function pickAppFor(apps: AudioApp[], provider: string | undefined): AudioApp | 
 
 type CaptionsState = 'idle' | 'connecting' | 'connected' | 'unavailable' | 'error';
 
+
+/** Only the actions the suggestion agent wrote for this hint (with a prompt); there is no fixed set. */
+function agentActions(list: { label: string; prompt?: unknown }[] | undefined): { label: string; prompt: string }[] {
+  return (list ?? []).flatMap((a) => (typeof a.prompt === 'string' && a.prompt.trim() && a.label.trim() ? [{ label: a.label.trim(), prompt: a.prompt.trim() }] : [])).slice(0, 3);
+}
+
 export function ExternalPage() {
   const native = useNative();
   const { userId } = useAuth();
@@ -363,16 +369,19 @@ export function ExternalPage() {
       : running && st === 'running' ? 'translating'
         : !roomId || busy === 'start' || st === 'starting' ? 'connecting'
           : hasRun ? 'stopped' : 'ready';
-    const err = live.errors[0]?.message ?? actionError?.message ?? (captionsState === 'error' ? captionsMsg : undefined);
+    const needsJoin = !running && (live.errors[0] ?? actionError)?.code === 'NO_AUDIO_PROCESS';
+    const err = needsJoin ? undefined : live.errors[0]?.message ?? actionError?.message ?? (captionsState === 'error' ? captionsMsg : undefined);
     return {
       title: title.trim() || r?.title || '',
       status, myLang: listen, farLang: far, micOn, lines: out,
-      suggestions: suggestionStream.items.map((s) => ({ id: s.suggestionId, category: s.category, content: s.content, ...(s.detail ? { detail: s.detail } : {}) })),
+      suggestions: suggestionStream.items.map((s) => ({ id: s.suggestionId, category: s.category, content: s.content, ...(s.detail ? { detail: s.detail } : {}), actions: agentActions(s.actions) })),
       followUps: (followUps.data ?? []).map((f) => ({ id: f.id, text: f.text, ...(f.owner ? { owner: f.owner } : {}) })),
       suggestionsAvailable: suggestionStream.status !== 'unavailable',
       ...(testMode ? { testMode: true } : {}),
       ...(roomId ? { ask: askState } : {}),
       ...(err ? { error: err } : {}),
+      ...(needsJoin ? { needsJoin: true } : {}),
+      ...(parsed.ok ? { link: link.trim() } : {}),
     };
   }, [askState, testMode, lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
   const overlayStateRef = useRef(overlayState);
@@ -423,7 +432,20 @@ export function ExternalPage() {
     switch (command) {
       case 'start': {
         const app = apps.find((a) => a.bundleId === appId) ?? pickAppFor(apps, parsed.ok ? parsed.provider : undefined);
-        if (app && !running) void startCapture(app.bundleId);
+        if (running) break;
+        if (app) void startCapture(app.bundleId);
+        // Silent no-op before: say why nothing happened.
+        else setActionError({ code: 'NO_AUDIO_PROCESS', message: `No meeting audio found. Open ${parsed.ok && parsed.provider === 'teams' ? 'Microsoft Teams' : 'the meeting in your browser'} and join the call` });
+        break;
+      }
+      case 'link': {
+        // Pasted in the copilot: remember it, open it so the user can join, then auto-start once audio shows up.
+        const url = (value ?? '').trim();
+        if (!url || !parseMeetingLink(url).ok) break;
+        setLink(url);
+        setActionError(null);
+        autoStarted.current = false;
+        window.open(url, '_blank');
         break;
       }
       case 'stop': if (running) void stopCapture(); break;
@@ -431,7 +453,7 @@ export function ExternalPage() {
         if (!value) break;
         setListen(value);
         // One language per person: the user speaks it and reads everything in it. The server adds it as a target.
-        if (roomId) void updateLangs.mutateAsync({ speakLanguage: value, listenLanguage: value }).catch((e) => setActionError({ code: errCode(e), message: errMsg(e) }));
+        if (roomId) void updateLangs.mutateAsync({ speakLanguage: value, listenLanguage: value }).then(() => setActionError(null)).catch((e) => setActionError({ code: errCode(e), message: errMsg(e) }));
         break;
       case 'far': if (value) setFar(value); break;
       case 'mic': setMicOn(value === 'on'); break;
@@ -547,7 +569,8 @@ export function ExternalPage() {
             translationLang={listen}
             connection={connection}
             captureState={live.status.state}
-            suggestions={suggestionStream.items.map((x) => ({ id: x.suggestionId, content: x.content }))}
+            ended={!running && !!(live.errors[0] ?? actionError)}
+            suggestions={suggestionStream.items.map((x) => ({ id: x.suggestionId, content: x.content, actions: agentActions(x.actions) }))}
             followUps={followUps.data ?? []}
             ask={askState}
             onAsk={(q) => void assistant.ask(q, 'meeting+docs')}
@@ -555,6 +578,8 @@ export function ExternalPage() {
             onShowCopilot={openCopilot}
             onEnd={() => void endSession().finally(() => window.location.assign('/'))}
             ending={busy === 'stop'}
+            micOn={micOn}
+            onCommand={(command, value) => cmdRef.current(command, value)}
           />
         ) : (
           <div className="flex min-h-[60vh] items-center justify-center text-body-sm text-ink-subtle" data-testid="copilot-host">Loading meeting…</div>

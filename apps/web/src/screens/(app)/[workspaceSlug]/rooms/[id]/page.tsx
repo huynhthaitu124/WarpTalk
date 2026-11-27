@@ -1097,11 +1097,9 @@ export default function RoomInformationPage() {
    * invited, who attended", which is not the question anyone has while reading a transcript, and
    * any other tab brings it straight back.
    */
-  const readingLayoutOpen =
-    recordSectionShown &&
-    recordTab === "recap" &&
-    Boolean(endedRecordQuery.data);
-  const railHidden = recordExpanded || readingLayoutOpen;
+  // The people rail stays visible on every tab (user request 2026-11-27); only the expand
+  // toggle hides it.
+  const railHidden = recordExpanded;
 
   const rosterGroups = groupRoster(participants, isEnded, t);
   return (
@@ -2025,15 +2023,13 @@ function MeetingRecordSection({
         ) : null}
       </div>
 
-      {sharing.message ? (
+      {sharing.message && sharing.tone !== "draft" ? (
         <div
           className={cn(
             "mt-3 rounded-[8px] border px-3.5 py-2.5 text-[13px] leading-relaxed",
             sharing.tone === "shared" || sharing.tone === "scheduled"
               ? "border-emerald-500/25 bg-emerald-500/5 text-ink"
-              : sharing.tone === "draft"
-                ? "border-amber-500/25 bg-amber-500/5 text-ink"
-                : "border-border bg-surface-2 text-ink-muted",
+              : "border-border bg-surface-2 text-ink-muted",
           )}
         >
           {sharing.message}

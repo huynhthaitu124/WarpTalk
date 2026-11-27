@@ -103,7 +103,10 @@ export function describeTranscriptAbsence(
   if (input.isEnded && input.saveTranscript === false && isNotFound(input.errorCode)) {
     return "not-kept";
   }
-  if (input.errorCode != null) return "unavailable";
+  // The Rust API creates the transcript row on the first segment, so a finished meeting where no
+  // speech was ever transcribed answers NOT_FOUND. That is "none", not a load failure.
+  const missing = input.isEnded && isNotFound(input.errorCode);
+  if (input.errorCode != null && !missing) return "unavailable";
 
   if (!input.isEnded) return "not-yet";
 
@@ -145,7 +148,7 @@ const DEFAULT_TRANSCRIPT_ABSENCE_MESSAGES: Record<TranscriptAbsence, string> = {
   // WT-828: said as the reason, not only the fact. The transcript is saved whenever people
   // speak — Start Translation controls translation and dubbing only — so an empty record of a
   // finished meeting means nobody spoke while it was open.
-  none: "No transcript was captured for this meeting because nobody spoke while it was open. WarpTalk saves what people say whether or not translation is started, so there was also nothing for an AI summary to be written from.",
+  none: "No transcript was captured for this meeting: no speech reached WarpTalk while it was open (nobody spoke, or the meeting audio was not being captured). There was also nothing for an AI summary to be written from.",
 };
 
 function defaultTranscriptAbsenceCopy(key: string): string {

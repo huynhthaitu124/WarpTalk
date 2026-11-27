@@ -6,7 +6,7 @@ APP     := $(BUILD)/Build/Products/Debug/WarpTalk.app
 WEB_DIR := ../web
 XCB     := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -destination 'platform=macOS' -derivedDataPath $(BUILD) MACOSX_DEPLOYMENT_TARGET=14.2  # packages (LiveKit) declare 10.15; Xcode 27 SDK needs 13+
 
-.PHONY: core gen build run test clean open web-export bundle run-bundled
+.PHONY: core gen build run test clean open web-export bundle run-bundled release
 
 # Rust copilot-core -> CopilotCore/CopilotCore.xcframework + CopilotCore.swift (UniFFI). Run once before `make gen`/`build`, and after Rust changes.
 core:
@@ -38,6 +38,20 @@ bundle: gen web-export
 
 run-bundled: bundle
 	open $(APP)
+
+# Distributable: Release, universal (Apple silicon + Intel), web embedded, ad-hoc re-signed, zipped into ../../dist.
+REL_APP := $(BUILD)/Build/Products/Release/WarpTalk.app
+VERSION := $(shell grep -m1 'MARKETING_VERSION' project.yml | sed 's/.*"\(.*\)"/\1/')
+release: gen web-export
+	REQUIRE_WEB_BUNDLE=YES xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release \
+	  -destination 'generic/platform=macOS' -derivedDataPath $(BUILD) MACOSX_DEPLOYMENT_TARGET=14.2 \
+	  ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
+	rm -rf $(BUILD)/dist && mkdir -p $(BUILD)/dist ../../dist
+	ditto --norsrc $(REL_APP) $(BUILD)/dist/WarpTalk.app
+	codesign --force --deep --sign - --preserve-metadata=entitlements,requirements,flags,runtime $(BUILD)/dist/WarpTalk.app
+	codesign -v --strict --deep $(BUILD)/dist/WarpTalk.app
+	lipo -info $(BUILD)/dist/WarpTalk.app/Contents/MacOS/WarpTalk
+	COPYFILE_DISABLE=1 ditto -c -k --norsrc --keepParent $(BUILD)/dist/WarpTalk.app ../../dist/WarpTalk-$(VERSION)-macos.zip
 
 clean:
 	rm -rf $(BUILD) $(PROJECT)

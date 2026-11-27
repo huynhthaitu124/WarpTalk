@@ -28,7 +28,15 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
     /// Interactive area in page coordinates (top-left origin, points). Default: roughly the wide pill.
     private var hitRect = NSRect(x: (OverlayWebController.defaultCardSize.width - 400) / 2, y: 0, width: 400, height: 60)
     private var pointerInside = false
+    /// Where the user dragged the pill to, relative to its home (top centre). Zero = home.
+    private var dragOffset = NSPoint.zero
+    private var dragStartOffset = NSPoint.zero
+    /// Released this close to home, the window snaps back (magnet).
+    private static let snapRadius: CGFloat = 90
     private var pointerTimer: Timer?
+    /// Native glass shapes under the transparent page, keyed by the page's shape id ("p" pill, "c" card).
+    private var glassViews: [String: NSView] = [:]
+    private var container: NSView?
     /// Called when the user closes the window with the title-bar button.
     var onClosed: (() -> Void)?
 
@@ -42,7 +50,7 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
     func open(bridge: NativeBridge) {
         if panel == nil { build(bridge: bridge) }
         if let panel, !panel.isVisible {
-            panel.setFrame(Self.frame(for: cardSize, on: panel.screen ?? NSScreen.main), display: true, animate: false)
+            panel.setFrame(placed(Self.frame(for: cardSize, on: panel.screen ?? NSScreen.main)), display: true, animate: false)
         }
         applySharing()
         load()
@@ -81,6 +89,63 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
         guard n.count == 4, n.allSatisfy(\.isFinite) else { return }
         hitRect = NSRect(x: n[0], y: n[1], width: n[2], height: n[3])
         updatePointer()
+    }
+
+    /// Real (refracting) glass under the page: `value` is "id:x,y,w,h,r,alpha|..." in page points.
+    /// The page cannot render it itself: its backdrop-filter sees nothing through a transparent window.
+    func setGlass(_ value: String) {
+        guard let container, let webView else { return }
+        var seen = Set<String>()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for part in value.split(separator: "|") {
+            let kv = part.split(separator: ":", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            let id = String(kv[0])
+            let n = kv[1].split(separator: ",").compactMap { Double($0) }
+            guard n.count == 6, n.allSatisfy(\.isFinite), n[2] > 0, n[3] > 0 else { continue }
+            seen.insert(id)
+            let v = glassViews[id] ?? {
+                let v = Self.makeGlass(pill: id == "p")
+                container.addSubview(v, positioned: .below, relativeTo: webView)
+                glassViews[id] = v
+                return v
+            }()
+            v.frame = NSRect(x: n[0], y: n[1], width: n[2], height: n[3])
+            Self.setCorner(v, radius: n[4])
+            v.alphaValue = min(max(n[5], 0), 1)
+            v.isHidden = false
+        }
+        for (id, v) in glassViews where !seen.contains(id) { v.isHidden = true }
+        CATransaction.commit()
+    }
+
+    private static func makeGlass(pill: Bool) -> NSView {
+        if #available(macOS 26.0, *) {
+            let g = NSGlassEffectView()
+            // Both use .regular (frosted: a light blur so the card is not see-through) with a
+            // light smoke tint; a heavier tint hides the edge refraction, so keep it low.
+            g.style = .regular
+            g.tintColor = NSColor(white: 0, alpha: pill ? 0.38 : 0.26)
+            if #available(macOS 27.0, *) { g.effectIsInteractive = pill }
+            return g
+        }
+        let v = NSVisualEffectView()
+        v.material = .hudWindow
+        v.blendingMode = .behindWindow
+        v.state = .active
+        v.wantsLayer = true
+        v.layer?.masksToBounds = true
+        return v
+    }
+
+    private static func setCorner(_ v: NSView, radius r: Double) {
+        let radius = CGFloat(r)
+        if #available(macOS 26.0, *), let g = v as? NSGlassEffectView {
+            if g.cornerRadius != radius { g.cornerRadius = radius }
+        } else if v.layer?.cornerRadius != radius {
+            v.layer?.cornerRadius = radius
+        }
     }
 
     // MARK: Click-through outside the pill / card
@@ -125,7 +190,40 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
         cardSize = NSSize(width: min(max(width, Self.minCardSize.width), vf.width - 16),
                           height: min(max(height, Self.minCardSize.height), vf.height - 16))
         guard let panel else { return }
-        panel.setFrame(Self.frame(for: cardSize, on: panel.screen ?? NSScreen.main), display: true, animate: false)
+        panel.setFrame(placed(Self.frame(for: cardSize, on: panel.screen ?? NSScreen.main)), display: true, animate: false)
+    }
+
+    private func placed(_ home: NSRect) -> NSRect { home.offsetBy(dx: dragOffset.x, dy: dragOffset.y) }
+
+    /// Pill drag from the page: "begin", "dx,dy" (screen points since begin, y down), "end".
+    func drag(_ value: String) {
+        guard let panel else { return }
+        let home = Self.frame(for: cardSize, on: panel.screen ?? NSScreen.main)
+        switch value {
+        case "begin":
+            dragStartOffset = dragOffset
+        case "end":
+            if hypot(dragOffset.x, dragOffset.y) < Self.snapRadius {
+                dragOffset = .zero
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.28
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.3, 0.64, 1)
+                    panel.animator().setFrame(home, display: true)
+                }
+            }
+        default:
+            let p = value.split(separator: ",").compactMap { Double($0) }
+            guard p.count == 2, p[0].isFinite, p[1].isFinite else { return }
+            var o = NSPoint(x: dragStartOffset.x + p[0], y: dragStartOffset.y - p[1])
+            // Light magnet while dragging: very close to home sticks to it.
+            if hypot(o.x, o.y) < 24 { o = .zero }
+            // Keep the pill (top of the window) on screen.
+            let vf = (panel.screen ?? NSScreen.main)?.visibleFrame ?? home
+            o.x = min(max(o.x, vf.minX - home.minX - home.width / 2 + 120), vf.maxX - home.maxX + home.width / 2 - 120)
+            o.y = min(max(o.y, vf.minY - home.maxY + 60), 0)
+            dragOffset = o
+            panel.setFrameOrigin(NSPoint(x: home.minX + o.x, y: home.minY + o.y))
+        }
     }
 
     private static func frame(for size: NSSize, on screen: NSScreen?) -> NSRect {
@@ -168,7 +266,13 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
         p.appearance = NSAppearance(named: .darkAqua)
         p.isReleasedWhenClosed = false
         p.delegate = self
-        p.contentView = wv
+        // Glass views sit under the transparent page (see setGlass); flipped so frames use page coordinates.
+        let root = FlippedView()
+        wv.frame = root.bounds
+        wv.autoresizingMask = [.width, .height]
+        root.addSubview(wv)
+        container = root
+        p.contentView = root
         p.ignoresMouseEvents = true                         // until the pointer is over the pill (see updatePointer)
         panel = p
     }
@@ -217,8 +321,23 @@ final class OverlayWebController: NSObject, WKNavigationDelegate, NSWindowDelega
     }
 }
 
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// Borderless panels refuse key status by default; the card needs it for its language pickers.
 private final class CopilotPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    // Glass and vibrancy draw their dimmed "inactive" look once the window resigns key/main (a
+    // click anywhere else). The overlay floats over other apps, so it always reports itself active.
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+    // Key/main is not enough: AppKit greys glass whenever the APP is inactive (another app in
+    // front), which is the normal state for this overlay. These AppKit-internal hooks decide the
+    // "active appearance"; overriding them keeps the glass lit. Private selectors: if a future
+    // macOS drops them, nothing calls these and the glass simply dims again (no crash).
+    @objc func _hasActiveAppearance() -> Bool { true }
+    @objc func _hasActiveAppearanceIgnoringKeyFocus() -> Bool { true }
+    @objc func _hasKeyAppearance() -> Bool { true }
 }

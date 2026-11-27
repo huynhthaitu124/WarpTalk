@@ -1,7 +1,7 @@
 // Loaded lazily (livekit-client is large). Joins the bridge room as a silent listener: no audio is
 // subscribed or played here; the macOS app plays the dub natively and only captions are read.
-import { useRef } from 'react';
-import { LiveKitRoom, useDataChannel } from '@livekit/components-react';
+import { useEffect, useRef } from 'react';
+import { LiveKitRoom, useDataChannel, useLocalParticipant } from '@livekit/components-react';
 import { parseCaption, senderLabel, type CaptionLine } from '@v2/lib/captions';
 import type { JoinGrant } from '@v2/lib/schemas';
 
@@ -11,6 +11,17 @@ function Listener({ onCaption }: { onCaption(l: CaptionLine): void }) {
     const line = parseCaption(msg.payload, senderLabel(msg.from) || 'Speaker', ++seq.current);
     if (line) onCaption(line);
   });
+  return null;
+}
+
+// `LiveKitRoom` only applies its `audio` prop when it connects, so muting later would keep the
+// microphone published. Follow the prop for the whole session.
+function MicSync({ on }: { on: boolean }) {
+  const { localParticipant } = useLocalParticipant();
+  useEffect(() => {
+    if (localParticipant.isMicrophoneEnabled === on) return;
+    localParticipant.setMicrophoneEnabled(on).catch(() => undefined);
+  }, [localParticipant, on]);
   return null;
 }
 
@@ -33,11 +44,13 @@ export default function ExternalCaptions({
       audio={audio}
       video={false}
       connectOptions={{ autoSubscribe: false }}
+      options={{ publishDefaults: { stopMicTrackOnMute: true } }}
       onConnected={onConnected}
       onDisconnected={onDisconnected}
       onError={(e) => onError(e.message)}
     >
       <Listener onCaption={onCaption} />
+      <MicSync on={audio} />
     </LiveKitRoom>
   );
 }

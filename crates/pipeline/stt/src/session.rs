@@ -9,9 +9,9 @@
 //! The reader is told about each commit (over an unbounded channel, *before* the commit is
 //! written) so `committed` events can be matched to commits in order.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -23,6 +23,9 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing::{debug, warn};
 use warptalk_audio::{SAMPLE_RATE_16K, f32_to_i16, resample};
+
+use crate::context::{RollingContext, compose_prompt};
+use crate::upsample::Upsampler16To24;
 use warptalk_pipeline_runtime::{
     CommitRequest, SessionParams, SpeechToText, SttError, SttEvent, SttMode, SttSegment, SttSession,
 };
@@ -118,14 +121,16 @@ impl OpenAiRealtimeStt {
         let socket = self.pool.claim().await?;
         let (mut writer, reader_half) = socket.ws.split();
         let lang = params.lang_hint.or_else(|| self.cfg.language_hint.clone());
+        let config = self.session_config_with(lang.as_deref(), hints);
         // Fire-and-forget: the server applies events in order, so audio may follow directly.
         send_event(
             &mut writer,
             &ClientEvent::SessionUpdate {
-                session: self.session_config_with(lang.as_deref(), hints),
+                session: config.clone(),
             },
         )
         .await?;
+        let context = Arc::new(Mutex::new(RollingContext::default()));
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dead = Arc::new(AtomicBool::new(false));
         let reader = tokio::spawn(read_loop(
@@ -135,6 +140,7 @@ impl OpenAiRealtimeStt {
             TurnMachine::new(self.cfg.logprob_filter()),
             self.cfg.event_timeout(),
             dead.clone(),
+            context.clone(),
         ));
         Ok(Box::new(OpenAiSession {
             writer,
@@ -143,6 +149,11 @@ impl OpenAiRealtimeStt {
             dead,
             lang,
             event_timeout: self.cfg.event_timeout(),
+            base_prompt: config.audio.input.transcription.prompt.clone(),
+            config,
+            context,
+            sent_context: 0,
+            upsampler: Upsampler16To24::new(),
         }))
     }
 }
@@ -157,7 +168,7 @@ pub struct SessionHints {
 }
 
 enum ReaderCmd {
-    Commit(Option<String>),
+    Commit(Option<String>, Option<u32>),
     /// Stop once every outstanding commit has finished.
     Shutdown,
 }
@@ -169,6 +180,16 @@ struct OpenAiSession {
     dead: Arc<AtomicBool>,
     lang: Option<String>,
     event_timeout: Duration,
+    /// The session's `session.update`, resent with a fresh prompt as the context grows.
+    config: SessionConfig,
+    /// Vocabulary prompt the session was opened with (kept in front of the context).
+    base_prompt: Option<String>,
+    /// The speaker's recent transcript, filled by the reader (see [`crate::context`]).
+    context: Arc<Mutex<RollingContext>>,
+    /// Context version last sent to the server.
+    sent_context: u64,
+    /// Continuous 16 -> 24 kHz resampling across frames.
+    upsampler: Upsampler16To24,
 }
 
 #[async_trait]
@@ -195,9 +216,13 @@ async fn send_event(
 
 /// 16 kHz f32 -> base64 of little-endian pcm16 at 24 kHz.
 pub fn encode_pcm16_24k(pcm_16k: &[f32]) -> String {
-    let up = resample(pcm_16k, SAMPLE_RATE_16K, REALTIME_SAMPLE_RATE);
+    encode_pcm16(&resample(pcm_16k, SAMPLE_RATE_16K, REALTIME_SAMPLE_RATE))
+}
+
+/// 24 kHz f32 -> base64 of little-endian pcm16.
+fn encode_pcm16(up: &[f32]) -> String {
     let mut bytes = Vec::with_capacity(up.len() * 2);
-    for s in f32_to_i16(&up) {
+    for s in f32_to_i16(up) {
         bytes.extend_from_slice(&s.to_le_bytes());
     }
     B64.encode(bytes)
@@ -214,10 +239,28 @@ impl OpenAiSession {
 
     async fn append(&mut self, pcm_16k: &[f32]) -> Result<(), SttError> {
         for chunk in pcm_16k.chunks(APPEND_CHUNK_SAMPLES) {
-            let audio = encode_pcm16_24k(chunk);
+            let audio = encode_pcm16(&self.upsampler.process(chunk));
             send_event(&mut self.writer, &ClientEvent::Append { audio }).await?;
         }
         Ok(())
+    }
+
+    /// Before a commit: if the speaker's transcript moved on since the last prompt, send it
+    /// as the prompt so this utterance is transcribed as the continuation of what came before.
+    async fn refresh_prompt(&mut self) -> Result<(), SttError> {
+        let (version, tail) = {
+            let mut c = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+            let tail = c.snapshot(Instant::now());
+            (c.version(), tail)
+        };
+        if version == self.sent_context {
+            return Ok(());
+        }
+        self.sent_context = version;
+        let mut session = self.config.clone();
+        session.audio.input.transcription.prompt =
+            compose_prompt(self.base_prompt.as_deref(), &tail);
+        send_event(&mut self.writer, &ClientEvent::SessionUpdate { session }).await
     }
 }
 
@@ -235,15 +278,19 @@ impl SttSession for OpenAiSession {
             let audio = req.utterance.audio.clone();
             self.append(&audio).await?;
         }
+        self.refresh_prompt().await?;
         let hint = req.utterance.lang.clone().or_else(|| self.lang.clone());
         self.cmd
-            .send(ReaderCmd::Commit(hint))
+            .send(ReaderCmd::Commit(hint, Some(req.utterance.speech_ms)))
             .map_err(|_| SttError::Closed)?;
+        // The next utterance does not continue this audio: start the filter clean.
+        self.upsampler.reset();
         send_event(&mut self.writer, &ClientEvent::Commit).await
     }
 
     async fn discard(&mut self) -> Result<(), SttError> {
         self.check_alive()?;
+        self.upsampler.reset();
         send_event(&mut self.writer, &ClientEvent::Clear).await
     }
 
@@ -265,6 +312,7 @@ async fn read_loop(
     mut turns: TurnMachine,
     event_timeout: Duration,
     dead: Arc<AtomicBool>,
+    context: Arc<Mutex<RollingContext>>,
 ) {
     let mut shutting_down = false;
     let mut cmd_open = true;
@@ -276,7 +324,7 @@ async fn read_loop(
         let outs = tokio::select! {
             cmd = cmd_rx.recv(), if cmd_open => {
                 match cmd {
-                    Some(ReaderCmd::Commit(hint)) => turns.expect_commit(hint),
+                    Some(ReaderCmd::Commit(hint, speech_ms)) => turns.expect_commit_with(hint, speech_ms),
                     Some(ReaderCmd::Shutdown) => shutting_down = true,
                     None => { cmd_open = false; shutting_down = true; }
                 }
@@ -301,7 +349,13 @@ async fn read_loop(
                     lang,
                     confidence,
                     is_early,
-                } => SttEvent::Segment(SttSegment::new(text, lang, confidence, is_early)),
+                } => {
+                    context
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(&text, Instant::now());
+                    SttEvent::Segment(SttSegment::new(text, lang, confidence, is_early))
+                }
                 Out::Done { ok } => SttEvent::UtteranceDone { ok },
             };
             if sink.send(ev).await.is_err() {

@@ -18,7 +18,7 @@ export interface Suggestion {
   severity?: string;
   ttlSeconds?: number;
   followUp?: string;
-  actions?: { label: string; [k: string]: unknown }[];
+  actions?: { label: string; prompt?: string; [k: string]: unknown }[];
   sources?: { title?: string; url?: string; [k: string]: unknown }[];
   /** Client clock when it arrived (for ttl). */
   receivedAt: number;

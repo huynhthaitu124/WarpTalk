@@ -137,6 +137,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                 return NSNull()
             }
             if command == "hide" { overlayWeb.hide(); return NSNull() }
+            if command == "glass" { overlayWeb.setGlass(r.optString("value") ?? ""); return NSNull() }
+            if command == "drag" { overlayWeb.drag(r.optString("value") ?? ""); return NSNull() }
             if command == "hitrect" { overlayWeb.setHitRect(r.optString("value") ?? ""); return NSNull() }
             if command == "resize" {                                     // value "WxH" in points
                 let parts = (r.optString("value") ?? "").split(separator: "x").compactMap { Double($0) }

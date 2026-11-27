@@ -15,7 +15,12 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 import { externalMeetingHref } from "@v2/lib/bridge";
 import { getNative } from "@v2/lib/native";
 
-const DEFAULT_LANGUAGES = ["en-US", "vi-VN"];
+// The call is spoken in SOURCE and the creator reads captions in LISTEN. They must differ:
+// routes only exist between a speak language and a different listen language, so a room
+// created with listen == source has no routes and the pipeline never transcribes. Bare
+// ISO-639 codes, the same ones the pill's language picker sends (a room of "vi-VN" rejects "vi").
+const SOURCE_LANGUAGE = "en";
+const LISTEN_LANGUAGE = "vi";
 
 /**
  * "New meeting": paste a call link, WarpBot joins it. External Meeting is the only kind a room
@@ -56,9 +61,14 @@ export function AddWarpBotDialog() {
       setError(t("errors.selectWorkspace"));
       return;
     }
-    const title = parsed?.ok
-      ? t("quick.titleWithProvider", { provider: EXTERNAL_PROVIDER_LABEL[parsed.provider] })
-      : t("quick.titleDefault");
+    // "Google Meet meeting · Thu, Nov 27, 10:15" so each meeting in the list is distinguishable;
+    // the user can rename it inline on the meeting page.
+    const when = new Date().toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const title = `${
+      parsed?.ok
+        ? t("quick.titleWithProvider", { provider: EXTERNAL_PROVIDER_LABEL[parsed.provider] })
+        : t("quick.titleDefault")
+    } · ${when}`;
     try {
       const res = await claim.mutateAsync({
         workspaceId,
@@ -69,8 +79,9 @@ export function AddWarpBotDialog() {
             }
           : {}),
         title,
-        sourceLanguage: DEFAULT_LANGUAGES[0],
-        targetLanguages: DEFAULT_LANGUAGES,
+        sourceLanguage: SOURCE_LANGUAGE,
+        targetLanguages: [LISTEN_LANGUAGE],
+        listenLanguage: LISTEN_LANGUAGE,
       });
       toast.success(t(res.created ? "externalLink.created" : "externalLink.joined"));
       // macOS app: the copilot pill is the meeting UI, open it straight away.
@@ -79,8 +90,8 @@ export function AddWarpBotDialog() {
           externalMeetingHref({
             id: res.room.id,
             title: res.room.title,
-            sourceLanguage: res.room.sourceLanguage ?? DEFAULT_LANGUAGES[0],
-            targetLanguages: res.room.targetLanguages ?? DEFAULT_LANGUAGES,
+            sourceLanguage: res.room.sourceLanguage ?? SOURCE_LANGUAGE,
+            targetLanguages: res.room.targetLanguages ?? [LISTEN_LANGUAGE],
           }),
         );
         return;

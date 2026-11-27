@@ -66,6 +66,11 @@ pub const MIGRATIONS: ModuleMigrations = ModuleMigrations {
             name: "conversations",
             sql: include_str!("../migrations/0040_conversations.sql"),
         },
+        Migration {
+            version: 50,
+            name: "meeting_minutes",
+            sql: include_str!("../migrations/0050_meeting_minutes.sql"),
+        },
     ],
 };
 

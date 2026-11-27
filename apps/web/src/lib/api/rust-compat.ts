@@ -129,7 +129,7 @@ function addLegacyAliases(data: unknown): unknown {
 // ── rooms ──────────────────────────────────────────────────────────────────
 
 type Params = Record<string, unknown>;
-type LegacyRoom = { status: string; title: string; scheduledAt?: string | null; createdAt: string };
+type LegacyRoom = { id: string; status: string; title: string; scheduledAt?: string | null; createdAt: string };
 type RoomPage = { rooms: LegacyRoom[]; total: number; page: number; pageSize: number };
 
 const ROOM_LIST = /^\/translation-rooms$/;
@@ -172,11 +172,130 @@ async function listRooms(client: AxiosInstance, params: Params): Promise<RoomPag
   return data;
 }
 
+// ── transcript + summary (Rust: /transcripts/{roomId}, /meetings/{roomId}/summary) ──────────
+
+type RustSegment = {
+  id: string;
+  speakerParticipantId?: string | null;
+  speakerName: string;
+  originalText: string;
+  originalLanguage: string;
+  startTimeMs?: number | null;
+  endTimeMs?: number | null;
+  confidence?: number | null;
+  sequenceOrder: number;
+  isCorrected: boolean;
+  translation?: { language: string; text: string; isStale: boolean } | null;
+};
+type RustTranscript = {
+  id: string;
+  workspaceId: string;
+  translationRoomId: string;
+  version: number;
+  status: string;
+  sourceLanguage: string;
+  totalSegments: number;
+  totalDurationMs: number;
+  finalizedAt?: string | null;
+  createdAt: string;
+  segments: RustSegment[];
+};
+
+/** The Rust transcript is read by ROOM; the old screens page it by transcript id. */
+const transcriptRoom = new Map<string, string>();
+
+async function rustTranscript(client: AxiosInstance, roomId: string, lang?: string): Promise<RustTranscript> {
+  const { data } = await client.get<RustTranscript>(`/transcripts/${roomId}`, { params: lang ? { lang } : undefined });
+  transcriptRoom.set(data.id, roomId);
+  return data;
+}
+
+function page<T>(items: T[], params: Params): { items: T[]; totalCount: number } {
+  const skip = Number(params.skip ?? 0) || 0;
+  const take = Number(params.take ?? items.length) || items.length;
+  return { items: items.slice(skip, skip + take), totalCount: items.length };
+}
+
+function roomOfTranscript(id: string): string {
+  const room = transcriptRoom.get(id);
+  if (!room) throw compatError(404, "NOT_FOUND", "transcript not loaded");
+  return room;
+}
+
+type RustSummary = {
+  status: string;
+  latest?: RustSummaryView | null;
+  lastCompleted?: RustSummaryView | null;
+};
+type RustSummaryView = {
+  id: string;
+  status: string;
+  createdAt: string;
+  completedAt?: string | null;
+  content?: {
+    summaryShort: string;
+    summaryDetailed: string;
+    decisions: string[];
+    actionItems: Array<{ task: string; owner?: string | null; due?: string | null }>;
+    openQuestions: string[];
+    topics: string[];
+    language: string;
+  } | null;
+};
+
+/** The Rust summary as the old `summary_export` artifact (its `content` is the summary JSON). */
+async function summaryArtifact(client: AxiosInstance, roomId: string): Promise<unknown[]> {
+  try {
+    const { data } = await client.get<RustSummary>(`/meetings/${roomId}/summary`);
+    const view = data.latest?.content ? data.latest : data.lastCompleted;
+    const pending = data.status === "pending" || data.status === "running";
+    if (!view?.content) {
+      return pending
+        ? [{ id: `summary-${roomId}`, translationRoomId: roomId, type: "SUMMARY_EXPORT", title: "Summary", status: "PROCESSING", containsRawAudio: false, containsRawVideo: false, consentRequired: false, createdAt: data.latest?.createdAt ?? new Date().toISOString() }]
+        : [];
+    }
+    const c = view.content;
+    const summary = [c.summaryShort, c.summaryDetailed].filter((s) => s?.trim()).join("\n\n");
+    const content = {
+      summary,
+      templateKey: "general",
+      summaryLanguage: c.language || undefined,
+      insufficientData: !summary.trim() && !c.decisions.length && !c.actionItems.length,
+      topics: c.topics,
+      decisions: c.decisions,
+      actionItems: c.actionItems.map((a) => ({ text: a.task, owner: a.owner ?? "" })),
+      openQuestions: c.openQuestions,
+    };
+    return [{
+      id: view.id,
+      translationRoomId: roomId,
+      type: "SUMMARY_EXPORT",
+      title: "Summary",
+      status: "COMPLETED",
+      containsRawAudio: false,
+      containsRawVideo: false,
+      consentRequired: false,
+      createdAt: view.completedAt ?? view.createdAt,
+      updatedAt: view.completedAt ?? null,
+      content: JSON.stringify(content),
+    }];
+  } catch {
+    return [];
+  }
+}
+
 /** history / my-meetings: room + roster + artifacts per row; Rust has rooms only. */
 async function roomHistory(client: AxiosInstance, params: Params, pastOnly: boolean): Promise<unknown> {
   const status = params.status ?? (pastOnly ? PAST.join(",") : undefined);
   const page = await listRooms(client, { ...params, status });
-  return { ...page, rooms: page.rooms.map((room) => ({ room, participants: [], artifacts: [] })) };
+  const rooms = await Promise.all(
+    page.rooms.map(async (room) => ({
+      room,
+      participants: [],
+      artifacts: room.status.toUpperCase() === "ENDED" ? await summaryArtifact(client, room.id) : [],
+    })),
+  );
+  return { ...page, rooms };
 }
 
 function splitUrl(url: string): { path: string; query: string } {
@@ -329,6 +448,43 @@ const SYNTHETIC: Array<[string, RegExp, (client: AxiosInstance, m: RegExpExecArr
   }],
   ["get", /^\/translation-rooms\/history$/, (client, _m, params) => roomHistory(client, params, true)],
   ["get", /^\/translation-rooms\/my-meetings$/, (client, _m, params) => roomHistory(client, params, false)],
+  ["get", /^\/transcripts\/by-room\/([^/]+)\/pause-windows$/, async () => []],
+  ["get", /^\/translation-rooms\/([^/]+)\/sessions$/, async () => []],
+  ["get", /^\/transcripts\/by-room\/([^/]+)$/, async (client, m) => {
+    const { segments: _s, ...t } = await rustTranscript(client, m[1]);
+    return { ...t, updatedAt: t.finalizedAt ?? t.createdAt, timelineAnchorAt: null };
+  }],
+  ["get", /^\/transcripts\/([^/]+)\/segments$/, async (client, m, params) => {
+    const t = await rustTranscript(client, roomOfTranscript(m[1]));
+    const items = t.segments.map((s) => ({
+      id: s.id,
+      speakerParticipantId: s.speakerParticipantId ?? undefined,
+      speakerName: s.speakerName,
+      originalText: s.originalText,
+      originalLanguage: s.originalLanguage,
+      confidence: s.confidence ?? undefined,
+      startTimeMs: s.startTimeMs ?? 0,
+      endTimeMs: s.endTimeMs ?? s.startTimeMs ?? 0,
+      sequenceOrder: s.sequenceOrder,
+      isCorrected: s.isCorrected,
+    }));
+    return page(items, params);
+  }],
+  // One Rust read per language the room was translated into.
+  ["get", /^\/transcripts\/([^/]+)\/translations$/, async (client, m, params) => {
+    const roomId = roomOfTranscript(m[1]);
+    const { data: room } = await client.get<{ targetLanguages?: string[]; sourceLanguage?: string }>(`/translation-rooms/${roomId}`);
+    const langs = [...new Set((room.targetLanguages ?? []).filter((l) => l && l !== room.sourceLanguage))];
+    const reads = await Promise.all(langs.map((lang) => rustTranscript(client, roomId, lang).catch(() => null)));
+    const items = reads.flatMap((t) =>
+      (t?.segments ?? []).flatMap((s) =>
+        s.translation && s.translation.text.trim() && s.translation.language !== s.originalLanguage
+          ? [{ id: `${s.id}:${s.translation.language}`, segmentId: s.id, targetLanguage: s.translation.language, translatedText: s.translation.text, translatorModel: "", isRetranslated: false }]
+          : [],
+      ),
+    );
+    return page(items, params);
+  }],
 ];
 
 /** Request bodies reach the adapter already serialized by axios. */

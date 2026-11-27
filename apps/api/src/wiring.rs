@@ -745,6 +745,24 @@ pub async fn build(
     });
 
     let _ = room_queries_cell.set(room.queries());
+    // Bridge rooms whose capture went silent (meeting closed, app quit) end on their own so they
+    // never stay "In Progress" and their summary gets written.
+    {
+        let room = room.queries();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                match room
+                    .end_idle_bridge_rooms(std::time::Duration::from_secs(10 * 60))
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(ended = n, "auto-ended idle bridge rooms"),
+                    Err(e) => tracing::warn!(error = %e, "idle bridge sweep failed"),
+                }
+            }
+        });
+    }
     let _ = effects.rooms.set(room.queries());
     let _ = effects.workspaces.set(workspace.queries());
     if let Some(conn) = policy_conn {

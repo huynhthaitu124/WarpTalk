@@ -21,7 +21,7 @@ export function hasClientSession(): boolean {
 
 export function landingPathForSession(): string {
   const slug = normalizeWorkspaceSlug(cookie("active_workspace_slug"));
-  if (slug) return `/${slug}/dashboard`;
+  if (slug) return `/${slug}/rooms`;
   if (ADMIN_CONSOLE_ENABLED && isPlatformAdminToken(cookie(ACCESS_TOKEN_COOKIE))) return "/admin";
   return "/workspace";
 }

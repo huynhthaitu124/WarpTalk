@@ -195,6 +195,22 @@ impl RoomQueries {
             .map(|_| ())
     }
 
+    /// End live bridge rooms whose capture went silent for `idle` (the meeting tab closed, the
+    /// app quit, the call ended) so they stop showing "In Progress" and the summary runs.
+    /// Returns how many were ended; one failing room does not stop the others.
+    pub async fn end_idle_bridge_rooms(&self, idle: std::time::Duration) -> AppResult<usize> {
+        let idle = chrono::Duration::from_std(idle).unwrap_or(chrono::Duration::minutes(10));
+        let rooms = self.repo.idle_bridge_rooms(self.clock.now() - idle).await?;
+        let mut ended = 0;
+        for (room, host) in rooms {
+            match self.end_room(room, host).await {
+                Ok(()) => ended += 1,
+                Err(e) => tracing::warn!(%room, error = %e, "auto-end of idle bridge room failed"),
+            }
+        }
+        Ok(ended)
+    }
+
     /// Create an `IN_PROGRESS` room of type `COPILOT_SESSION` hosted by `user` (ADR 0001). No
     /// pipeline command is published: the caller wires whatever side effects it needs.
     pub async fn create_copilot_room(

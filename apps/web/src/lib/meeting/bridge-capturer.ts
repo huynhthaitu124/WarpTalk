@@ -108,6 +108,8 @@ export type BridgeClaimRequest = {
   title?: string;
   sourceLanguage?: string;
   targetLanguages?: string[];
+  /** Caption language the creator listens in; must differ from the source or no audio routes exist. */
+  listenLanguage?: string;
   externalMeetingLanguage?: string;
   displayName?: string;
   /** Room options, applied only when this claim creates the room. */

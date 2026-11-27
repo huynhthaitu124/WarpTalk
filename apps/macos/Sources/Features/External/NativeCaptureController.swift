@@ -167,6 +167,7 @@ final class NativeCaptureController {
             lastError = (e.code, e.message)
             await teardown()
             setState(.error)
+            NSLog("[WarpTalk] capture start failed: %@ %@", e.code, e.message)
             emit("error", ["code": e.code, "message": e.message, "fatal": true])
             throw e
         }

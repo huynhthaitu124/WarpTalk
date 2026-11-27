@@ -381,6 +381,12 @@ pub struct Mutation {
 #[async_trait]
 pub trait RoomRepo: Send + Sync {
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord>;
+    /// Live `EXTERNAL_BRIDGE` rooms whose capturer has not heartbeated since `cutoff` (or never
+    /// captured and started before it), with the user allowed to end each one (effective host).
+    async fn idle_bridge_rooms(&self, cutoff: DateTime<Utc>) -> AppResult<Vec<(RoomId, UserId)>> {
+        let _ = cutoff;
+        Ok(Vec::new())
+    }
     /// Pending invitation emails of a room, oldest first.
     async fn invitations(&self, room: RoomId) -> AppResult<Vec<String>>;
     /// Make the room's PENDING invitations exactly `emails` (`replace`) or add `emails` to them;

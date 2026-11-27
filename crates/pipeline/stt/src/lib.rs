@@ -20,21 +20,27 @@
 //!   and abbreviations, and handles `。！？` without whitespace.
 //! - **No ordering waits**: turns are emitted in commit order from a single reader, so the
 //!   runtime does not need the original's 10 s publish-order wait.
-//! - **Resampling is per frame** (16 -> 24 kHz, linear): a one-sample interpolation edge per
-//!   32 ms frame, inaudible to the recognizer; stateless so frames can be fed from any task.
+//! - **Resampling is continuous per speaker** (16 -> 24 kHz polyphase windowed sinc,
+//!   [`upsample`]): no 8-12 kHz images and no restart at each 32 ms frame.
+//! - **Rolling context prompt** ([`context`]): before each commit the speaker's recent
+//!   transcript is sent as the transcription `prompt`, so short fast utterances are decoded
+//!   as the continuation of the conversation instead of in isolation.
 //! - Not done: coalescing several frames per `append` (32 ms granularity costs ~31 small
 //!   messages/s per speaker, which keeps the model fed as early as possible).
 //!
 //! Protocol types and the documentation URL: [`protocol`].
 
 mod config;
+pub mod context;
 pub mod far_side_dedupe;
+pub mod guard;
 pub mod lang;
 mod pool;
 pub mod protocol;
 pub mod sentence;
 mod session;
 pub mod turns;
+pub mod upsample;
 
 pub use config::{LogprobFilter, OpenAiSttConfig, base_language};
 pub use lang::{Detected, Dominant, LangDetectConfig, detect, resolve_language};

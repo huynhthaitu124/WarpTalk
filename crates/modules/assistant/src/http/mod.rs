@@ -3,6 +3,7 @@
 pub mod chat;
 mod dto;
 mod handlers;
+pub mod minutes;
 pub mod summary;
 
 use std::sync::Arc;
@@ -30,10 +31,10 @@ impl FromRef<AppState> for JwtKeys {
 
 /// Paths relative to `/api/v1`.
 pub fn router(state: AppState) -> Router {
-    let summary = state
-        .summary
-        .clone()
-        .map(|api| summary::router(api, state.jwt.clone()));
+    let summary = state.summary.clone().map(|api| {
+        summary::router(api.clone(), state.jwt.clone())
+            .merge(minutes::router(api, state.jwt.clone()))
+    });
     let router = Router::new()
         .route(
             "/ai/workspaces/{id}/config",

@@ -5,7 +5,7 @@
     "notYet": "Bản ghi sẽ xuất hiện ở đây khi cuộc họp được chuyển thành văn bản.",
     "notKept": "Cuộc họp này được đặt là không lưu bản ghi. Phụ đề và dịch vẫn hoạt động trực tiếp, nhưng không có gì được lưu lại, nên không có bản ghi, tóm tắt AI hay biên bản.",
     "paused": "Không có bản ghi nào được lưu. Bản ghi đã bị tạm dừng trong cuộc họp này, và không có gì được nói trong lúc đó được ghi lại.",
-    "none": "Không có bản ghi nào được thu lại cho cuộc họp này vì không ai phát biểu khi nó diễn ra. WarpTalk lưu lại lời nói dù Bắt đầu dịch có được bật hay không, nên cũng không có gì để viết tóm tắt AI."
+    "none": "Cuộc họp này không có transcript: WarpTalk không nhận được giọng nói nào trong lúc họp (không ai nói, hoặc âm thanh cuộc họp không được thu). Vì vậy cũng không có gì để tạo tóm tắt AI."
   },
   "followPlayback": {
     "srTitle": "Cuộn theo bản ghi âm một lần nữa",

@@ -197,6 +197,8 @@ pub enum Outcome {
     BudgetExhausted,
     /// A pipeline for this room is already running (bounded concurrency 1); stage 1 skipped.
     Busy,
+    /// The decide gate held the call back (too little new speech since the previous decide).
+    Throttled,
     DecideDeclined,
     DecideFailed,
     BelowConfidence,
@@ -232,6 +234,7 @@ impl Outcome {
             Self::CooldownActive => "cooldown_active",
             Self::BudgetExhausted => "budget_exhausted",
             Self::Busy => "busy",
+            Self::Throttled => "throttled",
             Self::DecideDeclined => "decide_declined",
             Self::DecideFailed => "decide_failed",
             Self::BelowConfidence => "below_confidence",

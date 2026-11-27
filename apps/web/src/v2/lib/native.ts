@@ -106,7 +106,8 @@ export interface OverlayState {
   farLang: string;
   micOn: boolean;
   lines: OverlayLine[];
-  suggestions: { id: string; category: string; content: string; detail?: string }[];
+  /** `actions`: follow-ups the agent wrote for this hint (0-3); none means no buttons. */
+  suggestions: { id: string; category: string; content: string; detail?: string; actions?: { label: string; prompt: string }[] }[];
   followUps: { id: string; text: string; owner?: string }[];
   suggestionsAvailable: boolean;
   /** Dev test mode: the API runs with a suggestion test script, so the copilot shows a box to type script lines. */
@@ -114,13 +115,17 @@ export interface OverlayState {
   /** WarpBot conversation for this meeting (the main page runs it; the copilot sends `ask` / `askStop`). */
   ask?: OverlayAsk;
   error?: string;
+  /** No meeting audio yet: the copilot asks the user to join the call (and can take a Meet/Teams link). */
+  needsJoin?: boolean;
+  /** The meeting link on file, if any. */
+  link?: string;
 }
 export interface OverlayAskMessage {
   key: string; role: 'user' | 'assistant'; content: string; status?: 'streaming' | 'done' | 'error'; error?: string; incomplete?: boolean;
 }
 export interface OverlayAsk { messages: OverlayAskMessage[]; busy: boolean }
 /** `expand` / `collapse` / `hide` / `resize` (value `WxH`) / `hitrect` (value `x,y,w,h`) only affect the native window and never reach the main page. */
-export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'testLine' | 'ask' | 'askStop';
+export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'glass' | 'testLine' | 'ask' | 'askStop' | 'link' | 'drag';
 
 export type NativeEvent =
   | ({ type: 'status'; ts: string } & CaptureStatus)

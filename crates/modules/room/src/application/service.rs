@@ -764,6 +764,12 @@ impl RoomService {
                 targets.push(t);
             }
         }
+        // A claim that names no caption language listens in the first target that differs from
+        // the source: with listen == speak no audio route exists and nothing is transcribed.
+        let listen_language = req
+            .listen_language
+            .clone()
+            .or_else(|| targets.iter().find(|t| **t != req.source_language).cloned());
         for _ in 0..8 {
             let new = NewBridgeRoom {
                 id: RoomId::new(),
@@ -782,7 +788,7 @@ impl RoomService {
                 source_language: req.source_language.clone(),
                 target_languages: targets.clone(),
                 display_name: req.display_name.clone(),
-                listen_language: req.listen_language.clone(),
+                listen_language: listen_language.clone(),
                 settings: req.settings.apply(RoomSettings {
                     requires_approval: false,
                     ..RoomSettings::default()

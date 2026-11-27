@@ -139,7 +139,7 @@
      ("màu trắng làm các component khác bị chìm"). A card reads as a card because the ground
      behind it is darker, so the ground is what moved — not the card. */
   --canvas: #f1f2f4;
-  --panel: #f7f8f9;
+  --panel: #ffffff; /* main content ground is white (owner, 2026-11-26) */
   --surface-1: #ffffff;
   --surface-2: #f0f1f4;
   --surface-3: #e4e6ea;

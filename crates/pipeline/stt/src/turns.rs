@@ -193,6 +193,8 @@ struct ItemBuf {
 struct BoundTurn {
     item_id: String,
     lang_hint: Option<String>,
+    /// Detected speech in the committed audio (ms), for the hallucination guard.
+    speech_ms: Option<u32>,
     emitter: EarlyEmitter,
     poisoned: bool,
 }
@@ -203,7 +205,7 @@ const MAX_ITEMS: usize = 16;
 pub struct TurnMachine {
     filter: LogprobFilter,
     /// Commits issued, awaiting `input_audio_buffer.committed` (language hint of each).
-    pending: VecDeque<Option<String>>,
+    pending: VecDeque<(Option<String>, Option<u32>)>,
     bound: VecDeque<BoundTurn>,
     items: HashMap<String, ItemBuf>,
     item_order: VecDeque<String>,
@@ -222,7 +224,12 @@ impl TurnMachine {
 
     /// Call (before sending the commit) with the speaker's language hint.
     pub fn expect_commit(&mut self, lang_hint: Option<String>) {
-        self.pending.push_back(lang_hint);
+        self.expect_commit_with(lang_hint, None);
+    }
+
+    /// As [`Self::expect_commit`], with the speech duration the endpointer measured.
+    pub fn expect_commit_with(&mut self, lang_hint: Option<String>, speech_ms: Option<u32>) {
+        self.pending.push_back((lang_hint, speech_ms));
     }
 
     /// Commits whose outcome is still unknown.
@@ -244,11 +251,12 @@ impl TurnMachine {
         let mut out = Vec::new();
         match ev {
             ServerEvent::Committed { item_id, .. } => {
-                if let Some(lang_hint) = self.pending.pop_front() {
+                if let Some((lang_hint, speech_ms)) = self.pending.pop_front() {
                     self.touch(&item_id);
                     self.bound.push_back(BoundTurn {
                         item_id,
                         lang_hint,
+                        speech_ms,
                         emitter: EarlyEmitter::default(),
                         poisoned: false,
                     });
@@ -356,7 +364,11 @@ impl TurnMachine {
                     Remainder::Text(text) => {
                         let lang = lang_for(&front.lang_hint, &text);
                         let avg = average_logprob(logprobs.as_deref());
-                        if self.filter.keeps(&lang, avg) {
+                        let guard =
+                            crate::guard::check(&text, front.speech_ms, front.lang_hint.as_deref());
+                        if let Err(why) = guard {
+                            debug!(?why, %lang, text = %text, "dropped implausible transcript");
+                        } else if self.filter.keeps(&lang, avg) {
                             out.push(Out::Segment {
                                 text,
                                 lang,

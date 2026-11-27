@@ -9,6 +9,7 @@ pub mod config;
 pub mod config_source;
 pub mod engine;
 pub mod feedback_http;
+pub mod gate;
 pub mod hygiene;
 pub mod model;
 pub mod ports;

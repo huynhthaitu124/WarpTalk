@@ -44,6 +44,8 @@
 //!   "safety": { "enabled": true, "block_unknown_urls": true, "block_credential_requests": true,
 //!               "allow_transcript_urls": true, "allowed_hosts": [] },
 //!   "dedup": { "window_seconds": 900 },                           // 0 disables
+//!   "decide_gate": { "enabled": true, "min_new_words": 10, "max_new_words": 60,
+//!                    "backoff_factor": 1.6, "min_interval_seconds": 5 },   // decide spend control
 //!   "retrieval": { "top_k": 3, "timeout_ms": 3000, "max_snippet_chars": 1200 },
 //!   "follow_up": { "verify_in_transcript": true, "task_max_chars": 1000,
 //!                  "owner_max_chars": 200, "due_max_chars": 100 },
@@ -99,6 +101,10 @@ pub struct ActionSpec {
     pub kind: String,
     #[serde(default)]
     pub label: String,
+    /// The request handed to WarpBot when the action was written by the model for this hint
+    /// (`kind == "ask"`); configured actions leave it empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// Overlay on a built-in category rule; every field is optional.
@@ -283,6 +289,32 @@ impl Default for HygieneConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct DecideGateConfig {
+    pub enabled: bool,
+    /// Words that must arrive since the previous decide before the next one.
+    pub min_new_words: u32,
+    /// Upper bound of the backed-off word requirement.
+    pub max_new_words: u32,
+    /// Each consecutive decline multiplies the word requirement by this (>= 1).
+    pub backoff_factor: f32,
+    /// Minimum spacing between decide calls in one room.
+    pub min_interval_seconds: u32,
+}
+
+impl Default for DecideGateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_new_words: 10,
+            max_new_words: 60,
+            backoff_factor: 1.6,
+            min_interval_seconds: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DedupConfig {
     /// Identical normalised hints within this window are suppressed (0 disables).
     pub window_seconds: u32,
@@ -403,6 +435,8 @@ pub struct SuggestionConfig {
     /// Output validation against prompt injection (ungrounded URLs, credential requests).
     pub safety: crate::safety::OutputPolicy,
     pub dedup: DedupConfig,
+    /// Spends the decide call only when the conversation moved enough (see `gate`).
+    pub decide_gate: DecideGateConfig,
     pub retrieval: RetrievalConfig,
     pub follow_up: FollowUpConfig,
     pub delivery: DeliveryConfig,
@@ -444,6 +478,7 @@ impl Default for SuggestionConfig {
             hygiene: HygieneConfig::default(),
             safety: crate::safety::OutputPolicy::default(),
             dedup: DedupConfig::default(),
+            decide_gate: DecideGateConfig::default(),
             retrieval: RetrievalConfig::default(),
             follow_up: FollowUpConfig::default(),
             delivery: DeliveryConfig::default(),
@@ -463,6 +498,27 @@ impl Validate for SuggestionConfig {
         check_range("cooldown_seconds", self.cooldown_seconds, 0, 600)?;
         check_range("max_per_meeting", self.max_per_meeting, 0, 200)?;
         check_range("min_words", self.min_words, 1, 20)?;
+        check_range(
+            "decide_gate.min_new_words",
+            self.decide_gate.min_new_words,
+            0,
+            500,
+        )?;
+        check_range(
+            "decide_gate.max_new_words",
+            self.decide_gate.max_new_words,
+            0,
+            2000,
+        )?;
+        check_range(
+            "decide_gate.min_interval_seconds",
+            self.decide_gate.min_interval_seconds,
+            0,
+            600,
+        )?;
+        if !(1.0..=8.0).contains(&self.decide_gate.backoff_factor) {
+            return Err("decide_gate.backoff_factor must be within 1..=8".into());
+        }
         check_range("min_question_words", self.min_question_words, 1, 20)?;
         check_range("min_stt_confidence", self.min_stt_confidence, -5.0, 0.0)?;
         check_range("temperature", self.temperature, 0.0, 2.0)?;

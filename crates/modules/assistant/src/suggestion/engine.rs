@@ -20,9 +20,11 @@ use warptalk_telemetry::{
 };
 
 use super::config::{
-    CategoryKind, LanguageMode, ResolvedCategory, RetrievalMode, SuggestionConfig, primary_language,
+    ActionSpec, CategoryKind, HygieneConfig, LanguageMode, ResolvedCategory, RetrievalMode,
+    SuggestionConfig, primary_language,
 };
 use super::config_source::ConfigSource;
+use super::gate::{DecideGate, word_count};
 use super::hygiene;
 use super::model::{
     AI_ASSISTANT_RESULTS, ASSISTANT_FOLLOWUPS, FollowUp, FollowUpEvent, Outcome, Role, SourceRef,
@@ -101,6 +103,7 @@ pub struct SuggestionEngine {
     usage: Option<SharedUsageSink>,
     store: Option<Arc<dyn SuggestionStore>>,
     windows: Mutex<HashMap<RoomId, RollingWindow>>,
+    gates: Mutex<HashMap<RoomId, DecideGate>>,
     inflight: Arc<Mutex<HashSet<RoomId>>>,
 }
 
@@ -134,9 +137,53 @@ struct Generated {
     source: String,
     conflict: bool,
     translations: BTreeMap<String, (String, String)>,
+    /// `None` when the model did not return the field (configured actions apply).
+    actions: Option<Vec<ActionSpec>>,
+    translated_actions: BTreeMap<String, Vec<ActionSpec>>,
     follow_up: Option<Value>,
     tokens: u32,
     model: String,
+}
+
+/// Upper bound of model-written actions per hint (the badge has room for this many buttons).
+const MAX_GENERATED_ACTIONS: usize = 3;
+const MAX_ACTION_LABEL_CHARS: usize = 40;
+const MAX_ACTION_PROMPT_CHARS: usize = 800;
+
+/// Model-written actions of a hint (`actions` of the generate output). `None` when the field is
+/// missing (an older prompt override), `Some(vec![])` when the model decided none is useful.
+fn parse_actions(v: &Value) -> Option<Vec<ActionSpec>> {
+    let items = v.get("actions")?.as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(|it| {
+                let label = hygiene::clean_text(&str_field(it, "label"), MAX_ACTION_LABEL_CHARS);
+                let prompt = hygiene::clean_text(&str_field(it, "prompt"), MAX_ACTION_PROMPT_CHARS);
+                (!label.is_empty() && !prompt.is_empty()).then(|| ActionSpec {
+                    kind: "ask".into(),
+                    label,
+                    prompt: Some(prompt),
+                })
+            })
+            .take(MAX_GENERATED_ACTIONS)
+            .collect(),
+    )
+}
+
+/// Drops actions whose text trips the hygiene block list.
+fn unblocked(actions: &[ActionSpec], h: &HygieneConfig) -> Vec<ActionSpec> {
+    actions
+        .iter()
+        .filter(|a| {
+            !hygiene::contains_blocked(&a.label, h)
+                && !a
+                    .prompt
+                    .as_deref()
+                    .is_some_and(|p| hygiene::contains_blocked(p, h))
+        })
+        .cloned()
+        .collect()
 }
 
 fn fin(outcome: Outcome) -> Outcome {
@@ -195,6 +242,7 @@ impl SuggestionEngine {
             usage: None,
             store: None,
             windows: Mutex::new(HashMap::new()),
+            gates: Mutex::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -238,7 +286,18 @@ impl SuggestionEngine {
         if let Ok(mut w) = self.windows.lock() {
             w.remove(&room);
         }
+        if let Ok(mut g) = self.gates.lock() {
+            g.remove(&room);
+        }
         self.deps.config.forget(room);
+    }
+
+    fn with_gate<T>(&self, room: RoomId, f: impl FnOnce(&mut DecideGate) -> T) -> T {
+        let mut gates = match self.gates.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        f(gates.entry(room).or_default())
     }
 
     /// Number of rooms with a live window (diagnostics / leak tests).
@@ -311,6 +370,7 @@ impl SuggestionEngine {
             w.push(turn.clone(), &cfg, now_ms);
             w.context()
         };
+        self.with_gate(room, |g| g.observe(word_count(&turn.text)));
 
         // Stage 0.
         if let Stage0::Reject(why) = stage0::check(&cfg, &turn.text, &stt.language, stt.confidence)
@@ -322,6 +382,12 @@ impl SuggestionEngine {
         // Gate 6: cap zero disables.
         if cfg.max_per_meeting == 0 {
             return Admission::Rejected(fin(Outcome::CapZero));
+        }
+        // Decide gate: too little new speech since the previous decide waits for more.
+        if !self.with_gate(room, |g| {
+            g.allows(&cfg.decide_gate, now_ms, answer_candidate)
+        }) {
+            return Admission::Rejected(fin(Outcome::Throttled));
         }
         // Bounded concurrency: one pipeline per room.
         let acquired = match self.inflight.lock() {
@@ -422,10 +488,16 @@ impl SuggestionEngine {
         if categories.is_empty() {
             return fin(Outcome::CategoryDisabled);
         }
+        let decided_at = self.deps.clock.now().timestamp_millis();
+        self.with_gate(room, |g| g.decided(decided_at));
         let decision = match self.decide(&a, &decide_llm, &categories).await {
             Ok(d) => d,
-            Err(()) => return fin(Outcome::DecideFailed),
+            Err(()) => {
+                self.with_gate(room, |g| g.verdict(false));
+                return fin(Outcome::DecideFailed);
+            }
         };
+        self.with_gate(room, |g| g.verdict(decision.should_suggest));
         if !decision.should_suggest {
             tracing::debug!(%room, reason = %decision.reason, "decide declined");
             return fin(Outcome::DecideDeclined);
@@ -935,11 +1007,17 @@ impl SuggestionEngine {
         uvars.insert("documents", docs);
         let user = prompt::render(&user_t.text, &uvars);
 
+        let action_items = json!({"type": "array", "maxItems": MAX_GENERATED_ACTIONS, "items": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}, "prompt": {"type": "string"}},
+            "required": ["label", "prompt"]
+        }});
         let mut props = json!({
             "content": {"type": "string"},
             "detail": {"type": "string"},
             "source": {"type": "string"},
-            "conflict": {"type": "boolean"}
+            "conflict": {"type": "boolean"},
+            "actions": action_items
         });
         if let Some(p) = props.as_object_mut() {
             if !readers.is_empty() {
@@ -947,7 +1025,7 @@ impl SuggestionEngine {
                     "translations".into(),
                     json!({"type": "object", "additionalProperties": {
                         "type": "object",
-                        "properties": {"content": {"type": "string"}, "detail": {"type": "string"}}
+                        "properties": {"content": {"type": "string"}, "detail": {"type": "string"}, "actions": action_items}
                     }}),
                 );
             }
@@ -1004,12 +1082,16 @@ impl SuggestionEngine {
             return Err(());
         };
         let mut translations = BTreeMap::new();
+        let mut translated_actions = BTreeMap::new();
         if let Some(obj) = v.get("translations").and_then(Value::as_object) {
             for code in readers {
                 if let Some(e) = obj.get(code) {
                     let c = str_field(e, "content");
                     if !c.is_empty() {
                         translations.insert(code.clone(), (c, str_field(e, "detail")));
+                        if let Some(acts) = parse_actions(e) {
+                            translated_actions.insert(code.clone(), acts);
+                        }
                     }
                 }
             }
@@ -1020,6 +1102,8 @@ impl SuggestionEngine {
             source: str_field(&v, "source"),
             conflict: v.get("conflict").and_then(Value::as_bool).unwrap_or(false),
             translations,
+            actions: parse_actions(&v),
+            translated_actions,
             follow_up: v.get("follow_up").filter(|f| f.is_object()).cloned(),
             tokens,
             model: req.model.clone(),
@@ -1180,6 +1264,15 @@ impl SuggestionEngine {
                 outs.push(c);
                 outs.push(d);
             }
+            for a in g
+                .actions
+                .iter()
+                .flatten()
+                .chain(g.translated_actions.values().flatten())
+            {
+                outs.push(&a.label);
+                outs.extend(a.prompt.as_deref());
+            }
             let fu_text: Vec<String> = g
                 .follow_up
                 .as_ref()
@@ -1267,7 +1360,11 @@ impl SuggestionEngine {
             ttl_seconds: category.ttl_seconds,
             conflict: g.conflict,
             follow_up,
-            actions: category.actions.clone(),
+            actions: g
+                .actions
+                .as_ref()
+                .map(|acts| unblocked(acts, &cfg.hygiene))
+                .unwrap_or_else(|| category.actions.clone()),
             prompt_version,
         };
 
@@ -1283,6 +1380,9 @@ impl SuggestionEngine {
                 copy.detail = clean(d, cfg.max_detail_chars);
                 copy.language = code.clone();
                 copy.token_count = 0;
+                if let Some(acts) = g.translated_actions.get(code) {
+                    copy.actions = unblocked(acts, &cfg.hygiene);
+                }
                 copies.push(copy);
             }
         }
@@ -1339,5 +1439,31 @@ impl SuggestionEngine {
             "suggestion published"
         );
         fin(Outcome::Published)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_actions_are_parsed_capped_and_optional() {
+        assert_eq!(parse_actions(&json!({"content": "x"})), None);
+        assert_eq!(parse_actions(&json!({"actions": []})), Some(vec![]));
+        let v = json!({"actions": [
+            {"label": "Tra cứu", "prompt": "Tra cứu giá thuê nhà ở Quận 1"},
+            {"label": "", "prompt": "no label"},
+            {"label": "A", "prompt": "Do A"},
+            {"label": "B", "prompt": "Do B"},
+            {"label": "C", "prompt": "Do C"}
+        ]});
+        let acts = parse_actions(&v).unwrap_or_default();
+        assert_eq!(acts.len(), MAX_GENERATED_ACTIONS);
+        assert_eq!(acts[0].kind, "ask");
+        assert_eq!(acts[0].label, "Tra cứu");
+        assert_eq!(
+            acts[0].prompt.as_deref(),
+            Some("Tra cứu giá thuê nhà ở Quận 1")
+        );
     }
 }

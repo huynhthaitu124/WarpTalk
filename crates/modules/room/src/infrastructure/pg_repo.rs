@@ -697,6 +697,23 @@ async fn ensure_bridge_listener(
 
 #[async_trait]
 impl RoomRepo for PgRoomRepo {
+    async fn idle_bridge_rooms(&self, cutoff: DateTime<Utc>) -> AppResult<Vec<(RoomId, UserId)>> {
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT id, COALESCE(active_host_id, host_id) FROM translation_room.translation_rooms \
+             WHERE translation_room_type = 'EXTERNAL_BRIDGE' AND status = 'IN_PROGRESS' \
+               AND COALESCE(bridge_capturer_lease_at, started_at, created_at) < $1 \
+             LIMIT 100",
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(rows
+            .into_iter()
+            .map(|(r, u)| (RoomId::from(r), UserId::from(u)))
+            .collect())
+    }
+
     async fn create(&self, new: NewRoom) -> AppResult<RoomRecord> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
         let settings =
