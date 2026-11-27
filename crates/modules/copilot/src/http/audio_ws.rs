@@ -34,7 +34,7 @@ use crate::application::service::{AudioContext, CopilotService, LanguagePrefs};
 use crate::domain::audio::{
     ClientMsg, SAMPLE_RATE_HZ, ServerMsg, UtteranceClock, parse_audio_frame, server_segment_id,
 };
-use crate::domain::{Channel, LanguageMode, MAX_SEGMENT_TEXT_CHARS, Segment};
+use crate::domain::{CHANNEL_COUNT, Channel, LanguageMode, MAX_SEGMENT_TEXT_CHARS, Segment};
 
 #[derive(Debug, Deserialize)]
 pub struct AudioQuery {
@@ -107,7 +107,7 @@ struct Conn {
     ctx: AudioContext,
     out: mpsc::Sender<ServerMsg>,
     ev_tx: Option<mpsc::Sender<(Channel, ServerSttEvent)>>,
-    chans: [Chan; 2],
+    chans: [Chan; CHANNEL_COUNT],
     prefs: LanguagePrefs,
     run: String,
     credits_warned: bool,
@@ -322,6 +322,7 @@ impl Conn {
                 seq,
                 start_ms,
                 end_ms,
+                speaker,
             } => {
                 let c = &mut self.chans[channel.index()];
                 if c.fed == 0 || c.session.is_none() {
@@ -341,8 +342,9 @@ impl Conn {
                     return;
                 }
                 c.fed = 0;
-                c.pending
-                    .push_back(UtteranceClock::new(seq, start_ms, end_ms));
+                let mut clock = UtteranceClock::new(seq, start_ms, end_ms);
+                clock.speaker = crate::domain::clean_speaker_name(speaker.as_deref());
+                c.pending.push_back(clock);
                 let res = match c.session.as_mut() {
                     Some(s) => s.commit().await,
                     None => return,
@@ -413,6 +415,7 @@ impl Conn {
         };
         let (start, end) = clock.next(&text, early, est);
         let (seq, n, partial) = (clock.seq, clock.emitted - 1, clock.text.clone());
+        let speaker_name = clock.speaker.clone();
         let id = server_segment_id(&self.run, ch, seq, n);
         let language = language
             .filter(|l| crate::domain::valid_language(l))
@@ -426,6 +429,7 @@ impl Conn {
             end_ms: end,
             confidence: confidence.map(|c| f64::from(c).clamp(0.0, 1.0)),
             is_final: true,
+            speaker_name,
         };
         let confidence = seg.confidence;
         match self.service.ingest_audio_segment(&self.ctx, seg).await {
@@ -537,7 +541,7 @@ async fn run(
         ctx,
         out: out_tx,
         ev_tx: Some(ev_tx),
-        chans: [Chan::new(), Chan::new()],
+        chans: std::array::from_fn(|_| Chan::new()),
         prefs: LanguagePrefs::default(),
         run: run.clone(),
         credits_warned: false,

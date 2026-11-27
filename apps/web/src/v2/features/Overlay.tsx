@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowDown, CaretDown, ChatCircleDots, Check, ClosedCaptioning, Globe, Lightbulb, Microphone, MicrophoneSlash, PaperPlaneRight, Sparkle,
-  Stop, CheckSquare, X,
+  Pause, Play, Stop, CheckSquare, X,
 } from '@phosphor-icons/react';
 import { actionsFor, replyLanguageFor } from '@/lib/meeting/suggestion-actions';
 import { cn } from '@v2/lib/cn';
@@ -343,6 +343,14 @@ export function OverlayPage() {
           <CaretDown size={12} weight="bold" className={cn('transition-transform duration-300', open && !closing && 'rotate-180')} />
         </span>
       </button>
+      {(translating || state.status === 'stopped') && (
+        <button type="button" aria-label={translating ? 'Pause translation' : 'Resume translation'} title={translating ? 'Pause translation' : 'Resume translation'}
+          data-testid="copilot-pill-pause" onClick={() => send(translating ? 'stop' : 'start')}
+          className={cn('grid size-7 shrink-0 place-items-center rounded-full hover:bg-[#ffffff]/15 hover:text-[#ffffff]',
+            translating ? 'bg-[#ffffff]/[0.08] text-[#e5e5ea]/80' : 'bg-[#ffffff]/20 text-[#ffffff]')}>
+          {translating ? <Pause size={12} weight="fill" /> : <Play size={12} weight="fill" />}
+        </button>
+      )}
       <button type="button" aria-label="Close copilot" title="Close copilot" data-testid="copilot-pill-close"
         onClick={hideOverlay}
         className="grid size-7 shrink-0 place-items-center rounded-full bg-[#ffffff]/[0.08] text-[#e5e5ea]/80 hover:bg-[#ffffff]/15 hover:text-[#ffffff]">
@@ -472,24 +480,95 @@ function stamped(state: OverlayState): Tip[] {
   ];
 }
 
-function Transcript({ lines, myLang, tips, onAsk, needsJoin, link }: { lines: OverlayLine[]; myLang: string; tips: Tip[]; onAsk?: (q: string) => void; needsJoin?: boolean; link?: string }) {
+/**
+ * Follow the newest message only while the reader is at the bottom. Any upward scroll (wheel,
+ * trackpad, touch, scrollbar drag) releases it at once and nothing pulls the list down again until
+ * the reader scrolls back to the very bottom or presses the jump button. Our own programmatic
+ * scrolls are ignored, so a stream of interim lines cannot fight the reader.
+ */
+function useStickToBottom() {
   const ref = useRef<HTMLDivElement>(null);
-  const [stuck, setStuck] = useState(true);
+  const [stuck, setStuckState] = useState(true);
+  const stuckRef = useRef(true);
+  const lastTop = useRef(0);
+  const programmatic = useRef(false);
+  const setStuck = useCallback((v: boolean) => {
+    stuckRef.current = v;
+    setStuckState(v);
+  }, []);
+  const stick = useCallback(() => {
+    const el = ref.current;
+    if (!el || !stuckRef.current) return;
+    programmatic.current = true;
+    el.scrollTop = el.scrollHeight;
+    lastTop.current = el.scrollTop;
+  }, []);
+  const release = useCallback(() => { if (stuckRef.current) setStuck(false); }, [setStuck]);
+  const handlers = {
+    onScroll: () => {
+      const el = ref.current;
+      if (!el) return;
+      const top = el.scrollTop;
+      if (programmatic.current) {
+        programmatic.current = false;
+        lastTop.current = top;
+        return;
+      }
+      if (top < lastTop.current - 1) release();
+      else if (!stuckRef.current && el.scrollHeight - top - el.clientHeight < 4) setStuck(true);
+      lastTop.current = top;
+    },
+    onWheel: (e: React.WheelEvent) => { if (e.deltaY < 0) release(); },
+    onTouchMove: release,
+  };
+  return { ref, stuck, setStuck, stick, handlers };
+}
+
+/**
+ * A long sentence reaches us as several segments (the endpointer cuts on pauses). Show them as one
+ * bubble: consecutive lines of the same speaker join while the previous one did not end a sentence
+ * (within MERGE_OPEN_MS) or followed right on (within MERGE_GAP_MS), up to MERGE_MAX_CHARS.
+ */
+const MERGE_GAP_MS = 4_000;
+const MERGE_OPEN_MS = 15_000;
+const MERGE_MAX_CHARS = 420;
+const SENTENCE_END = /[.!?。！？…]["')\]」』]*$/;
+const NO_SPACE = /[\u3040-\u30ff\u3400-\u9fff\u0e00-\u0e7f]/;
+function joinText(a: string, b: string) {
+  if (!a) return b;
+  if (!b) return a;
+  return NO_SPACE.test(a.slice(-1)) && NO_SPACE.test(b[0]) ? a + b : `${a} ${b}`;
+}
+function mergeLines(lines: OverlayLine[]): OverlayLine[] {
+  const out: OverlayLine[] = [];
+  let lastAt = 0;
+  for (const l of lines) {
+    const prev = out[out.length - 1];
+    const gap = l.at - lastAt;
+    const join = prev && prev.self === l.self && prev.speaker === l.speaker
+      && (gap < MERGE_GAP_MS || (gap < MERGE_OPEN_MS && !SENTENCE_END.test(prev.text.trim())))
+      && prev.text.length + l.text.length <= MERGE_MAX_CHARS;
+    if (join) {
+      const tr = prev.translation || l.translation ? joinText(prev.translation ?? prev.text, l.translation ?? l.text) : undefined;
+      out[out.length - 1] = {
+        ...prev, text: joinText(prev.text, l.text), ...(tr ? { translation: tr } : {}),
+        lang: prev.lang ?? l.lang, final: prev.final && l.final,
+      };
+    } else {
+      out.push(l);
+    }
+    lastAt = l.at;
+  }
+  return out;
+}
+
+function Transcript({ lines, myLang, tips, onAsk, needsJoin, link }: { lines: OverlayLine[]; myLang: string; tips: Tip[]; onAsk?: (q: string) => void; needsJoin?: boolean; link?: string }) {
+  const { ref, stuck, setStuck, stick, handlers } = useStickToBottom();
   const items = [
-    ...lines.map((l) => ({ at: l.at, key: `l:${l.id}`, node: <Bubble line={l} myLang={myLang} /> })),
+    ...mergeLines(lines).map((l) => ({ at: l.at, key: `l:${l.id}`, node: <Bubble line={l} myLang={myLang} /> })),
     ...tips.map((t) => ({ at: t.at, key: `t:${t.kind}:${t.id}`, node: <TipCard tip={t} myLang={myLang} onAsk={onAsk} /> })),
   ].sort((a, b) => a.at - b.at);
-  // Follow the newest line only while the reader is at the bottom. Scrolling up (onWheel below)
-  // unsticks at once; interim lines re-render several times a second and would otherwise snap the
-  // list back down before the reader got 48px away from the bottom.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el && stuck) el.scrollTop = el.scrollHeight;
-  }, [items.length, lines, stuck]);
-  const onScroll = () => {
-    const el = ref.current;
-    if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
-  };
+  useLayoutEffect(() => { stick(); }, [items.length, lines, stuck, stick]);
   if (!items.length && needsJoin) return <JoinFirst link={link} />;
   if (!items.length) {
     return (
@@ -503,7 +582,7 @@ function Transcript({ lines, myLang, tips, onAsk, needsJoin, link }: { lines: Ov
   }
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={ref} onScroll={onScroll} onWheel={(e) => { if (e.deltaY < 0) setStuck(false); }} onTouchMove={() => setStuck(false)} className="h-full space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={ref} {...handlers} className="h-full space-y-3 overflow-y-auto px-3 py-3">
         {items.map((i) => <div key={i.key}>{i.node}</div>)}
       </div>
       {!stuck && (
@@ -622,17 +701,9 @@ function botLocale(): BotLocale {
 function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }) {
   const [text, setText] = useState('');
   const [t] = useState(() => BOT_TEXT[botLocale()]);
-  const ref = useRef<HTMLDivElement>(null);
-  const [stuck, setStuck] = useState(true);
+  const { ref, stuck, setStuck, stick, handlers } = useStickToBottom();
   const last = ask.messages[ask.messages.length - 1];
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el && stuck) el.scrollTop = el.scrollHeight;
-  }, [ask.messages.length, last?.content, stuck]);
-  const onScroll = () => {
-    const el = ref.current;
-    if (el) setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
-  };
+  useLayoutEffect(() => { stick(); }, [ask.messages.length, last?.content, stuck, stick]);
   const submit = () => {
     const q = text.trim();
     if (!q || ask.busy) return;
@@ -642,7 +713,7 @@ function WarpBotChat({ ask, onAsk }: { ask: OverlayAsk; onAsk(q: string): void }
   };
   return (
     <>
-      <div ref={ref} onScroll={onScroll} onWheel={(e) => { if (e.deltaY < 0) setStuck(false); }} onTouchMove={() => setStuck(false)} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 [&>*]:mx-auto [&>*]:max-w-[640px] [&>*]:px-1" data-testid="warpbot-log">
+      <div ref={ref} {...handlers} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 [&>*]:mx-auto [&>*]:max-w-[640px] [&>*]:px-1" data-testid="warpbot-log">
         {ask.messages.length === 0 ? (
           <div className="grid h-full place-items-center text-center">
             <div>

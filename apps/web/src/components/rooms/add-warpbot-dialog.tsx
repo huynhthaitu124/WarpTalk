@@ -19,7 +19,8 @@ import { getNative } from "@v2/lib/native";
 // routes only exist between a speak language and a different listen language, so a room
 // created with listen == source has no routes and the pipeline never transcribes. Bare
 // ISO-639 codes, the same ones the pill's language picker sends (a room of "vi-VN" rejects "vi").
-const SOURCE_LANGUAGE = "en";
+// "auto": the pipeline detects what the far side speaks (no STT hint) and translates into LISTEN_LANGUAGE.
+const SOURCE_LANGUAGE = "auto";
 const LISTEN_LANGUAGE = "vi";
 
 /**

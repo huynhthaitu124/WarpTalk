@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 use crate::config::LogprobFilter;
 use crate::protocol::{ErrorBody, ServerEvent, TokenLogprob};
@@ -68,6 +68,11 @@ pub fn guess_language(text: &str) -> &'static str {
         match c {
             '\u{3040}'..='\u{30FF}' => return "ja",
             '\u{AC00}'..='\u{D7AF}' => return "ko",
+            '\u{0E00}'..='\u{0E7F}' => return "th",
+            '\u{3400}'..='\u{9FFF}' => return "zh",
+            '\u{0400}'..='\u{04FF}' => return "ru",
+            '\u{0600}'..='\u{06FF}' => return "ar",
+            '\u{0900}'..='\u{097F}' => return "hi",
             'ă'
             | 'â'
             | 'đ'
@@ -209,6 +214,36 @@ pub struct TurnMachine {
     bound: VecDeque<BoundTurn>,
     items: HashMap<String, ItemBuf>,
     item_order: VecDeque<String>,
+    /// Speech heard per detected language (ms) in auto-detect mode: the meeting's languages.
+    /// Short turns in a language nobody speaks here are treated as noise hallucinations.
+    heard: HashMap<String, u32>,
+}
+
+/// Share of the speech a language needs to count as one of the meeting's languages.
+const MEETING_LANGUAGE_MIN_SHARE: f32 = 0.10;
+/// At most this many meeting languages are preferred.
+const MEETING_LANGUAGES_MAX: usize = 3;
+
+/// A turn at least this long is real enough to establish the speaker's language.
+const ESTABLISH_MIN_SPEECH_MS: u32 = 1_500;
+
+/// `"auto"` / empty hints mean "detect": no hint at all.
+fn real_hint(hint: &Option<String>) -> Option<&str> {
+    hint.as_deref().filter(|h| !h.is_empty() && *h != "auto")
+}
+
+/// See [`TurnMachine::meeting_languages`] (a free fn so it can borrow only the tally).
+fn meeting_languages_of(heard: &HashMap<String, u32>) -> Vec<String> {
+    let total: u32 = heard.values().sum();
+    let mut v: Vec<(&String, &u32)> = heard
+        .iter()
+        .filter(|(_, ms)| **ms as f32 >= total as f32 * MEETING_LANGUAGE_MIN_SHARE)
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    v.into_iter()
+        .take(MEETING_LANGUAGES_MAX)
+        .map(|(l, _)| l.clone())
+        .collect()
 }
 
 impl TurnMachine {
@@ -219,7 +254,14 @@ impl TurnMachine {
             bound: VecDeque::new(),
             items: HashMap::new(),
             item_order: VecDeque::new(),
+            heard: HashMap::new(),
         }
+    }
+
+    /// Languages this session keeps hearing (auto-detect mode), most spoken first: each has at
+    /// least one turn of [`ESTABLISH_MIN_SPEECH_MS`] and [`MEETING_LANGUAGE_MIN_SHARE`] of the speech.
+    pub fn meeting_languages(&self) -> Vec<String> {
+        meeting_languages_of(&self.heard)
     }
 
     /// Call (before sending the commit) with the speaker's language hint.
@@ -326,8 +368,7 @@ impl TurnMachine {
                 return;
             };
             let lang_for = |hint: &Option<String>, text: &str| {
-                hint.clone()
-                    .unwrap_or_else(|| guess_language(text).to_string())
+                real_hint(hint).map_or_else(|| guess_language(text).to_string(), str::to_owned)
             };
             if !buf.deltas.is_empty() {
                 let d = std::mem::take(&mut buf.deltas);
@@ -335,6 +376,9 @@ impl TurnMachine {
                     match front.emitter.push_delta(&d) {
                         Ok(sentences) => {
                             for s in sentences {
+                                if crate::guard::mixed_scripts(&s) {
+                                    continue;
+                                }
                                 out.push(Out::Segment {
                                     lang: lang_for(&front.lang_hint, &s),
                                     text: s,
@@ -364,11 +408,23 @@ impl TurnMachine {
                     Remainder::Text(text) => {
                         let lang = lang_for(&front.lang_hint, &text);
                         let avg = average_logprob(logprobs.as_deref());
-                        let guard =
-                            crate::guard::check(&text, front.speech_ms, front.lang_hint.as_deref());
+                        let heard = meeting_languages_of(&self.heard);
+                        let guard = crate::guard::check_with(
+                            &text,
+                            front.speech_ms,
+                            front.lang_hint.as_deref(),
+                            &heard,
+                        );
                         if let Err(why) = guard {
-                            debug!(?why, %lang, text = %text, "dropped implausible transcript");
+                            info!(?why, %lang, chars = text.chars().count(), speech_ms = ?front.speech_ms, "dropped implausible transcript");
                         } else if self.filter.keeps(&lang, avg) {
+                            if real_hint(&front.lang_hint).is_none()
+                                && lang != "und"
+                                && let Some(ms) =
+                                    front.speech_ms.filter(|ms| *ms >= ESTABLISH_MIN_SPEECH_MS)
+                            {
+                                *self.heard.entry(lang.clone()).or_default() += ms;
+                            }
                             out.push(Out::Segment {
                                 text,
                                 lang,
@@ -376,7 +432,7 @@ impl TurnMachine {
                                 is_early: false,
                             });
                         } else {
-                            debug!(?avg, %lang, "dropped low-confidence transcript");
+                            info!(?avg, %lang, chars = text.chars().count(), "dropped low-confidence transcript");
                         }
                     }
                     Remainder::Empty => {}
@@ -626,6 +682,23 @@ mod tests {
         });
         assert_eq!(out, vec![Out::Done { ok: false }]);
         assert_eq!(m.outstanding(), 0);
+    }
+
+    #[test]
+    fn meeting_languages_by_share() {
+        let mut m = machine();
+        assert!(m.meeting_languages().is_empty());
+        for (l, ms) in [
+            ("vi", 40_000),
+            ("en", 25_000),
+            ("ja", 9_000),
+            ("ko", 4_000),
+            ("th", 1_500),
+        ] {
+            m.heard.insert(l.into(), ms);
+        }
+        // ko and th are under 10 % of the speech; at most three languages.
+        assert_eq!(m.meeting_languages(), vec!["vi", "en", "ja"]);
     }
 
     #[test]

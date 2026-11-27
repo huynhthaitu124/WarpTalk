@@ -25,6 +25,8 @@ const MIN_SEGMENT_CHARS: usize = 2;
 pub struct RollingContext {
     tail: String,
     updated_at: Option<Instant>,
+    /// Languages heard in this meeting so far (auto-detect), most spoken first.
+    languages: Vec<String>,
     /// Bumped on every change, so the writer knows when to resend the prompt.
     version: u64,
 }
@@ -56,6 +58,18 @@ impl RollingContext {
         self.version += 1;
     }
 
+    /// Records the meeting's languages; the prompt names them so the model prefers them.
+    pub fn set_languages(&mut self, languages: Vec<String>) {
+        if languages != self.languages {
+            self.languages = languages;
+            self.version += 1;
+        }
+    }
+
+    pub fn languages(&self) -> &[String] {
+        &self.languages
+    }
+
     /// The current tail, empty once expired.
     pub fn snapshot(&mut self, now: Instant) -> String {
         self.expire(now);
@@ -71,6 +85,34 @@ impl RollingContext {
             self.updated_at = None;
             self.version += 1;
         }
+    }
+}
+
+/// One prompt line naming the meeting's languages ("" when none are known yet). Written in
+/// English: a soft bias, the model still detects any other language.
+pub fn languages_line(languages: &[String]) -> String {
+    if languages.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = languages.iter().map(|l| language_name(l)).collect();
+    format!("This meeting is in {}.", names.join(", "))
+}
+
+fn language_name(code: &str) -> &str {
+    match code {
+        "en" => "English",
+        "vi" => "Vietnamese",
+        "ja" => "Japanese",
+        "ko" => "Korean",
+        "zh" => "Chinese",
+        "th" => "Thai",
+        "ru" => "Russian",
+        "ar" => "Arabic",
+        "hi" => "Hindi",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        other => other,
     }
 }
 
@@ -169,5 +211,21 @@ mod tests {
             compose_prompt(Some("WarpTalk"), "a b"),
             Some("WarpTalk\na b".into())
         );
+    }
+
+    #[test]
+    fn languages_line_names_the_meeting_languages() {
+        assert_eq!(languages_line(&[]), "");
+        assert_eq!(
+            languages_line(&["vi".into(), "en".into(), "ja".into()]),
+            "This meeting is in Vietnamese, English, Japanese."
+        );
+        let mut c = RollingContext::default();
+        let v = c.version();
+        c.set_languages(vec!["vi".into()]);
+        assert!(c.version() > v);
+        let v = c.version();
+        c.set_languages(vec!["vi".into()]);
+        assert_eq!(c.version(), v);
     }
 }

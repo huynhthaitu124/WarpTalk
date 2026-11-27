@@ -151,6 +151,7 @@ impl SegmentBody {
             end_ms: self.end_ms,
             confidence: self.confidence,
             is_final: self.is_final,
+            speaker_name: None,
         })
     }
 }

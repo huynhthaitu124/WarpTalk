@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing::{debug, warn};
 use warptalk_audio::{SAMPLE_RATE_16K, f32_to_i16, resample};
 
-use crate::context::{RollingContext, compose_prompt};
+use crate::context::{RollingContext, compose_prompt, languages_line};
 use crate::upsample::Upsampler16To24;
 use warptalk_pipeline_runtime::{
     CommitRequest, SessionParams, SpeechToText, SttError, SttEvent, SttMode, SttSegment, SttSession,
@@ -248,18 +248,23 @@ impl OpenAiSession {
     /// Before a commit: if the speaker's transcript moved on since the last prompt, send it
     /// as the prompt so this utterance is transcribed as the continuation of what came before.
     async fn refresh_prompt(&mut self) -> Result<(), SttError> {
-        let (version, tail) = {
+        let (version, tail, langs) = {
             let mut c = self.context.lock().unwrap_or_else(PoisonError::into_inner);
             let tail = c.snapshot(Instant::now());
-            (c.version(), tail)
+            (c.version(), tail, languages_line(c.languages()))
         };
         if version == self.sent_context {
             return Ok(());
         }
         self.sent_context = version;
         let mut session = self.config.clone();
-        session.audio.input.transcription.prompt =
-            compose_prompt(self.base_prompt.as_deref(), &tail);
+        let base = [self.base_prompt.as_deref().unwrap_or(""), &langs]
+            .iter()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        session.audio.input.transcription.prompt = compose_prompt(Some(&base), &tail);
         send_event(&mut self.writer, &ClientEvent::SessionUpdate { session }).await
     }
 }
@@ -342,6 +347,13 @@ async fn read_loop(
             },
         };
         let lost = dead.load(Ordering::Relaxed);
+        if !outs.is_empty() {
+            let langs = turns.meeting_languages();
+            context
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .set_languages(langs);
+        }
         for out in outs {
             let ev = match out {
                 Out::Segment {

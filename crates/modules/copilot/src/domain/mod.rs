@@ -58,13 +58,27 @@ pub enum Channel {
     Me,
     /// Process tap of the meeting app (everybody else).
     Others,
+    /// One of the meeting bot's received audio tracks (`0..BOT_CHANNELS`). Google Meet sends
+    /// the three loudest speakers on three tracks; the bot labels each utterance with the
+    /// speaker's name (commit `speaker`).
+    Bot(u8),
 }
+
+/// Number of bot audio tracks the audio socket accepts.
+pub const BOT_CHANNELS: u8 = 3;
+/// Every channel of one audio socket (`me`, `others`, `bot0..bot2`).
+pub const CHANNEL_COUNT: usize = 2 + BOT_CHANNELS as usize;
+/// Longest speaker label kept on a segment.
+pub const MAX_SPEAKER_NAME_CHARS: usize = 80;
 
 impl Channel {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Me => "me",
             Self::Others => "others",
+            Self::Bot(0) => "bot0",
+            Self::Bot(1) => "bot1",
+            Self::Bot(_) => "bot2",
         }
     }
 
@@ -72,8 +86,16 @@ impl Channel {
         match s {
             "me" => Some(Self::Me),
             "others" => Some(Self::Others),
+            "bot0" => Some(Self::Bot(0)),
+            "bot1" => Some(Self::Bot(1)),
+            "bot2" => Some(Self::Bot(2)),
             _ => None,
         }
+    }
+
+    /// Far side of the meeting (everything but the user's own microphone).
+    pub fn is_far(&self) -> bool {
+        !matches!(self, Self::Me)
     }
 }
 
@@ -150,6 +172,8 @@ pub struct Segment {
     pub end_ms: i64,
     pub confidence: Option<f64>,
     pub is_final: bool,
+    /// Real name of the person speaking (meeting bot); `None` = the channel's default label.
+    pub speaker_name: Option<String>,
 }
 
 /// Why a segment was refused.
@@ -201,6 +225,24 @@ pub fn segment_uuid(room: RoomId, client_segment_id: &str) -> Uuid {
     Uuid::new_v5(&room.as_uuid(), client_segment_id.as_bytes())
 }
 
+/// Stable speaker id of a named far-side participant (same name = same id within a room).
+pub fn named_speaker_uuid(room: RoomId, name: &str) -> Uuid {
+    let key = format!("copilot:speaker:{}", name.trim().to_lowercase());
+    Uuid::new_v5(&room.as_uuid(), key.as_bytes())
+}
+
+/// Trimmed, length-capped speaker label; `None` when empty.
+pub fn clean_speaker_name(name: Option<&str>) -> Option<String> {
+    let n: String = name?
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_SPEAKER_NAME_CHARS)
+        .collect();
+    let n = n.trim().to_owned();
+    (!n.is_empty()).then_some(n)
+}
+
 /// Fixed pseudo-speaker of the "others" channel of a session.
 pub fn others_speaker_uuid(room: RoomId) -> Uuid {
     Uuid::new_v5(&room.as_uuid(), b"copilot:others")
@@ -215,9 +257,11 @@ pub fn to_stt_result(
     now: DateTime<Utc>,
     chunk_index: i64,
 ) -> SttResult {
-    let (speaker_id, name) = match seg.channel {
-        Channel::Me => (facts.host_participant_id, facts.name_me.clone()),
-        Channel::Others => (facts.others_speaker_id, facts.name_others.clone()),
+    let named = clean_speaker_name(seg.speaker_name.as_deref()).filter(|_| seg.channel.is_far());
+    let (speaker_id, name) = match (seg.channel, named) {
+        (Channel::Me, _) => (facts.host_participant_id, facts.name_me.clone()),
+        (_, Some(n)) => (named_speaker_uuid(facts.room_id, &n), n),
+        (_, None) => (facts.others_speaker_id, facts.name_others.clone()),
     };
     SttResult {
         segment_id: segment_uuid(facts.room_id, &seg.client_segment_id).to_string(),
@@ -255,6 +299,7 @@ mod tests {
             end_ms: 20,
             confidence: Some(0.9),
             is_final: true,
+            speaker_name: None,
         }
     }
 
@@ -320,5 +365,49 @@ mod tests {
         assert_eq!(r.segment_id.len(), 36);
         let r = to_stt_result(&facts, &seg(), started, 0);
         assert_eq!(r.speaker_id, facts.host_participant_id.to_string());
+
+        // Meeting bot: a named utterance gets the real name and a stable per-name id.
+        let mut b = seg();
+        b.channel = Channel::Bot(1);
+        b.speaker_name = Some("  Tú Huỳnh ".into());
+        let r = to_stt_result(&facts, &b, started, 0);
+        assert_eq!(r.far_speaker_name.as_deref(), Some("Tú Huỳnh"));
+        assert_eq!(r.channel.as_deref(), Some("bot1"));
+        assert_eq!(
+            r.speaker_id,
+            named_speaker_uuid(room, "tú huỳnh").to_string()
+        );
+        assert_ne!(r.speaker_id, facts.others_speaker_id.to_string());
+        // Unnamed bot utterance falls back to the "others" label.
+        b.speaker_name = Some(" ".into());
+        let r = to_stt_result(&facts, &b, started, 0);
+        assert_eq!(r.speaker_id, facts.others_speaker_id.to_string());
+        // The user's own microphone never takes a foreign name.
+        let mut m = seg();
+        m.speaker_name = Some("Someone".into());
+        let r = to_stt_result(&facts, &m, started, 0);
+        assert_eq!(r.far_speaker_name.as_deref(), Some("Tôi"));
+    }
+
+    #[test]
+    fn bot_channels_round_trip() {
+        for c in [
+            Channel::Me,
+            Channel::Others,
+            Channel::Bot(0),
+            Channel::Bot(1),
+            Channel::Bot(2),
+        ] {
+            assert_eq!(Channel::parse(c.as_str()), Some(c));
+            assert_eq!(Channel::from_tag(c.tag()), Some(c));
+            assert!(c.index() < CHANNEL_COUNT);
+        }
+        assert_eq!(Channel::parse("bot3"), None);
+        assert_eq!(Channel::from_tag(5), None);
+        assert_eq!(
+            clean_speaker_name(Some(&"x".repeat(200))).map(|n| n.chars().count()),
+            Some(80)
+        );
+        assert_eq!(clean_speaker_name(Some("\n")), None);
     }
 }

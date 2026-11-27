@@ -680,13 +680,13 @@ impl CopilotService {
         let (mode, extra) = Self::language_inputs(&ctx.record, prefs);
         let own = match channel {
             Channel::Me => &ctx.record.language_me,
-            Channel::Others => &ctx.record.language_others,
+            Channel::Others | Channel::Bot(_) => &ctx.record.language_others,
         };
         let mut plan = plan_languages(mode, own, &extra);
         // The other channel's language is expected too (code-switching), without changing the hint.
         let other = base_language(match channel {
             Channel::Me => &ctx.record.language_others,
-            Channel::Others => &ctx.record.language_me,
+            Channel::Others | Channel::Bot(_) => &ctx.record.language_me,
         });
         if mode != LanguageMode::Fixed && !other.is_empty() && !plan.languages.contains(&other) {
             plan.languages.push(other);

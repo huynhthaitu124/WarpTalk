@@ -29,11 +29,30 @@ const FILLER_MAX_SPEECH_MS: u32 = 1_500;
 pub enum Rejection {
     TooLongForAudio,
     OffLanguageFiller,
+    /// Two unrelated scripts in one short turn ("それ kiểu sách", "| 특"): a decoder that
+    /// switched language mid-noise, never real speech.
+    MixedScripts,
 }
 
 /// Checks a final transcript against the turn it came from. `speech_ms == None` (unknown)
 /// skips the duration-based rules.
 pub fn check(text: &str, speech_ms: Option<u32>, declared: Option<&str>) -> Result<(), Rejection> {
+    check_with(text, speech_ms, declared, &[])
+}
+
+/// [`check`] that also knows the language this speaker has been heard speaking in longer turns
+/// (`heard`: the meeting's languages so far). With no declared language (auto-detect) a short turn
+/// must be in English, one of the meeting's languages, or a script we cannot tell apart; anything else is the model guessing a
+/// language for noise ("ค่ะ", "특").
+pub fn check_with(
+    text: &str,
+    speech_ms: Option<u32>,
+    declared: Option<&str>,
+    heard: &[String],
+) -> Result<(), Rejection> {
+    if mixed_scripts(text) {
+        return Err(Rejection::MixedScripts);
+    }
     let Some(ms) = speech_ms else { return Ok(()) };
     let syllables = syllables(text) as f32;
     let allowed = RATE_SLACK_SYLLABLES + MAX_SYLLABLES_PER_S * ms as f32 / 1000.0;
@@ -49,7 +68,47 @@ pub fn check(text: &str, speech_ms: Option<u32>, declared: Option<&str>) -> Resu
             return Err(Rejection::OffLanguageFiller);
         }
     }
+    let auto = declared
+        .map(base)
+        .is_none_or(|d| d.is_empty() || d == "auto");
+    if auto && ms < FILLER_MAX_SPEECH_MS && words(text) <= FILLER_MAX_WORDS {
+        let got = guess_language(text);
+        let known = got == "und" || got == "en" || heard.iter().any(|h| base(h) == got);
+        if !known {
+            return Err(Rejection::OffLanguageFiller);
+        }
+    }
     Ok(())
+}
+
+/// Script family of a letter (`None` for punctuation, digits and symbols).
+fn script(c: char) -> Option<&'static str> {
+    match c {
+        '\u{3040}'..='\u{30FF}' | '\u{3400}'..='\u{9FFF}' => Some("cjk"),
+        '\u{AC00}'..='\u{D7AF}' | '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' => {
+            Some("hangul")
+        }
+        '\u{0E00}'..='\u{0E7F}' => Some("thai"),
+        '\u{0400}'..='\u{04FF}' => Some("cyrillic"),
+        '\u{0600}'..='\u{06FF}' => Some("arabic"),
+        '\u{0900}'..='\u{097F}' => Some("devanagari"),
+        c if c.is_alphabetic() && (c < '\u{0250}' || ('\u{1E00}'..='\u{1EFF}').contains(&c)) => {
+            Some("latin")
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn mixed_scripts(text: &str) -> bool {
+    let mut first: Option<&str> = None;
+    for s in text.chars().filter_map(script) {
+        match first {
+            None => first = Some(s),
+            Some(f) if f != s => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn base(code: &str) -> String {
@@ -134,6 +193,43 @@ mod tests {
         assert_eq!(check("Yeah.", Some(500), Some("en")), Ok(()));
         // A Vietnamese speaker's short Vietnamese reply is fine.
         assert_eq!(check("Chưa.", Some(400), Some("vi")), Ok(()));
+    }
+
+    #[test]
+    fn mixed_scripts_are_rejected() {
+        assert_eq!(
+            check("それ kiểu sách", Some(1_200), None),
+            Err(Rejection::MixedScripts)
+        );
+        assert_eq!(
+            check("| 특", Some(400), Some("en")),
+            Err(Rejection::OffLanguageFiller)
+        );
+        assert_eq!(
+            check("東京 Tokyo", Some(1_200), Some("ja")),
+            Err(Rejection::MixedScripts)
+        );
+        assert_eq!(check("Xin chào, OK nhé", Some(1_500), None), Ok(()));
+        assert_eq!(check("Hello world", Some(1_000), Some("en")), Ok(()));
+    }
+
+    #[test]
+    fn auto_mode_drops_short_turns_in_unheard_languages() {
+        assert_eq!(
+            check("ค่ะ", Some(500), None),
+            Err(Rejection::OffLanguageFiller)
+        );
+        assert_eq!(
+            check("특", Some(400), Some("auto")),
+            Err(Rejection::OffLanguageFiller)
+        );
+        assert_eq!(check("Yeah.", Some(500), None), Ok(()));
+        assert_eq!(check_with("はい", Some(500), None, &["ja".into()]), Ok(()));
+        assert_eq!(
+            check_with("Dạ.", Some(400), Some("auto"), &["vi".into(), "en".into()]),
+            Ok(())
+        );
+        assert_eq!(check("สวัสดีครับ ยินดีที่ได้รู้จัก วันนี้", Some(2_500), None), Ok(()));
     }
 
     #[test]

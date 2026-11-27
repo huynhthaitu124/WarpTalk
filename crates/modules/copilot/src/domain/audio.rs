@@ -3,7 +3,8 @@
 //!
 //! # Framing (one socket carries both channels)
 //!
-//! * **Binary frame, client -> server**: byte 0 = channel (`0` me, `1` others), the rest is
+//! * **Binary frame, client -> server**: byte 0 = channel (`0` me, `1` others, `2..=4` the
+//!   meeting bot's tracks `bot0..bot2`), the rest is
 //!   PCM16 little-endian, 16 kHz, mono (even length, at most `max_frame_bytes`). Only speech
 //!   regions are sent (copilot-core's endpointer already gates).
 //! * **Text frames** (JSON, `type` tag): client -> server [`ClientMsg`], server -> client
@@ -13,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{Channel, LanguageMode};
+use super::{BOT_CHANNELS, Channel, LanguageMode};
 
 pub const SAMPLE_RATE_HZ: u32 = 16_000;
 
@@ -26,7 +27,8 @@ impl Serialize for Channel {
 impl<'de> Deserialize<'de> for Channel {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        Channel::parse(&s).ok_or_else(|| serde::de::Error::custom("channel must be me or others"))
+        Channel::parse(&s)
+            .ok_or_else(|| serde::de::Error::custom("channel must be me, others or bot0..bot2"))
     }
 }
 
@@ -36,6 +38,7 @@ impl Channel {
         match self {
             Self::Me => 0,
             Self::Others => 1,
+            Self::Bot(n) => 2 + (*n).min(BOT_CHANNELS - 1),
         }
     }
 
@@ -43,6 +46,7 @@ impl Channel {
         match b {
             0 => Some(Self::Me),
             1 => Some(Self::Others),
+            n if (2..2 + BOT_CHANNELS).contains(&n) => Some(Self::Bot(n - 2)),
             _ => None,
         }
     }
@@ -128,6 +132,9 @@ pub enum ClientMsg {
         seq: u64,
         start_ms: i64,
         end_ms: i64,
+        /// Who spoke this utterance (meeting bot: the caption name); far-side channels only.
+        #[serde(default)]
+        speaker: Option<String>,
     },
     /// Throw away the audio sent since the last commit on `channel`.
     Discard {
@@ -212,6 +219,8 @@ pub struct UtteranceClock {
     last_end: i64,
     pub emitted: u32,
     pub text: String,
+    /// Speaker label of the utterance (from its commit).
+    pub speaker: Option<String>,
 }
 
 impl UtteranceClock {
@@ -224,6 +233,7 @@ impl UtteranceClock {
             last_end: start_ms,
             emitted: 0,
             text: String::new(),
+            speaker: None,
         }
     }
 
@@ -345,9 +355,22 @@ mod tests {
                 channel: Channel::Me,
                 seq: 3,
                 start_ms: 1000,
-                end_ms: 2500
+                end_ms: 2500,
+                speaker: None
             }
         ));
+        let b: ClientMsg = serde_json::from_str(
+            r#"{"type":"commit","channel":"bot2","seq":1,"startMs":0,"endMs":900,"speaker":"Ana"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            b,
+            ClientMsg::Commit { channel: Channel::Bot(2), speaker: Some(ref n), .. } if n == "Ana"
+        ));
+        assert_eq!(
+            parse_audio_frame(&[4, 1, 0], 64).unwrap().0,
+            Channel::Bot(2)
+        );
         assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"commit","channel":"x"}"#).is_err());
         let h: ClientMsg =
             serde_json::from_str(r#"{"type":"hello","runId":"r1","vocabulary":["Kubernetes"]}"#)
