@@ -157,7 +157,8 @@ impl ServerStt for PipelineServerStt {
                             early: seg.is_early,
                         }
                     }
-                    SttEvent::Segment(_) => continue,
+                    // The server-side session reports final segments only.
+                    SttEvent::Segment(_) | SttEvent::Partial { .. } => continue,
                     SttEvent::UtteranceDone { ok } => ServerSttEvent::UtteranceDone { ok },
                 };
                 if events.send(out).await.is_err() {
