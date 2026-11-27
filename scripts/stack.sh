@@ -10,6 +10,7 @@
 # Ports on the host (change in deploy/docker/.env): API 8090, web 3000, LiveKit 7880/7881 + UDP 50000-50100,
 # Postgres 5432, Redis 6379, Qdrant 6333/6334. The macOS app talks to http://localhost:8090 by default.
 set -euo pipefail
+trap 'printf "\033[1;31mLOI:\033[0m stack.sh dung o dong %s (lenh: %s)\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 cd "$(dirname "$0")/.."
 COMPOSE_FILE=deploy/docker/docker-compose.yml
@@ -50,15 +51,40 @@ prepare_env() {
 }
 
 # Something else on a host port = the container fails to start, or worse, the app talks to the wrong server.
+# Prints the non-Docker processes listening on TCP port $1 (empty = free or held by our own stack).
+port_holder() {
+  # lsof exits 1 when nothing listens (the normal case on a clean machine); with pipefail that
+  # would abort the whole script silently, so the pipeline must not fail.
+  local who
+  who="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1}' | sort -u | tr '\n' ' ' || true)"
+  case "$who" in ""|*com.docke*|*docker*|*vpnkit*) ;; *) printf '%s' "$who" ;; esac
+}
+# Next port from $1 that nothing outside Docker holds and that is not in $TAKEN (already given out).
+free_port() {
+  local p="$1"
+  while [ -n "$(port_holder "$p")" ] || [[ " $TAKEN " == *" $p "* ]]; do p=$((p + 1)); done
+  printf '%s' "$p"
+}
+
 check_ports() {
   command -v lsof >/dev/null || return 0
-  local p who bad=0
-  for p in "$(env_get API_PORT)" "$(env_get WEB_PORT)" 7880 "$(env_get POSTGRES_PORT)" "$(env_get REDIS_PORT)"; do
-    [ -n "$p" ] || continue
-    who="$(lsof -nP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1}' | sort -u | tr '\n' ' ')"
-    case "$who" in ""|*com.docke*|*docker*|*vpnkit*) ;; *) warn "cong $p dang bi chiem boi: $who"; bad=1 ;; esac
+  local p who var new bad=0
+  TAKEN="$(for var in POSTGRES_PORT REDIS_PORT QDRANT_HTTP_PORT QDRANT_GRPC_PORT API_PORT WEB_PORT; do env_get "$var"; done | tr '\n' ' ') 7880 7881"
+  # Infra ports are only host conveniences (containers talk by service name), so a local
+  # Postgres/Redis/Qdrant from Homebrew just moves ours to the next free port.
+  for var in POSTGRES_PORT REDIS_PORT QDRANT_HTTP_PORT QDRANT_GRPC_PORT; do
+    p="$(env_get "$var")"; [ -n "$p" ] || continue
+    who="$(port_holder "$p")"; [ -n "$who" ] || continue
+    new="$(free_port "$((p + 1))")"
+    env_set "$var" "$new"; TAKEN="$TAKEN $new"; warn "cong $p ($var) dang bi $who giu -> dung $new"
   done
-  [ "$bad" = 0 ] || die "tat chuong trinh tren hoac doi cong trong $ENV_FILE (API_PORT, WEB_PORT, POSTGRES_PORT, REDIS_PORT)"
+  # These the app and the browser connect to directly: moving them silently would break things.
+  for p in "$(env_get API_PORT)" "$(env_get WEB_PORT)" 7880 7881; do
+    [ -n "$p" ] || continue
+    who="$(port_holder "$p")"
+    [ -z "$who" ] || { warn "cong $p dang bi chiem boi: $who"; bad=1; }
+  done
+  [ "$bad" = 0 ] || die "tat chuong trinh tren hoac doi cong trong $ENV_FILE (API_PORT, WEB_PORT; LiveKit can 7880/7881)"
 }
 
 wait_api() {
