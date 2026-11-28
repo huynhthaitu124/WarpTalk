@@ -207,7 +207,6 @@ export function AddWarpBotDialog() {
               />
             </div>
           </div>
-          <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">{t("quick.hint")}</p>
         </form>
       </DialogContent>
     </Dialog>
