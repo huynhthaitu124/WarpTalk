@@ -81,14 +81,20 @@ export function OverlayPage() {
   /** Ask WarpBot from the composer or a suggestion's action; the answer shows on the WarpBot tab. */
   const ask = (q: string) => { send('ask', q); setTab('warpbot'); setUnread(false); };
 
+  /** Mirrors `active` for the event handler: partials arrive many times a second and must not re-run the bounce. */
+  const activeRef = useRef(false);
   function wake() {
-    setActive(true);
-    pillRef.current?.animate(
-      [{ transform: 'scale(1)' }, { transform: 'scale(1.08)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1.02)' }, { transform: 'scale(1)' }],
-      { duration: 520, easing: 'ease-out' },
-    );
+    // Bounce only when the pill wakes from idle; while speech keeps streaming just keep it wide.
+    if (!activeRef.current) {
+      activeRef.current = true;
+      setActive(true);
+      pillRef.current?.animate(
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.04)' }, { transform: 'scale(1)' }],
+        { duration: 360, easing: 'ease-out' },
+      );
+    }
     clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setActive(false), 4000);
+    idleTimer.current = setTimeout(() => { activeRef.current = false; setActive(false); }, 6000);
   }
 
   // Card entrance: grows down out of the pill.
@@ -164,6 +170,7 @@ export function OverlayPage() {
     noHoverWiden.current = true;
     clearTimeout(hoverTimer.current);
     setHover(false);
+    activeRef.current = false;
     setActive(false);
     setPinned(false);
     setClosing(true);
