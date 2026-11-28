@@ -1,13 +1,14 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useClaimExternalMeetingRoom } from "@/hooks/use-translationRooms";
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { languagesInScope, normalizeLanguageCode } from "@/lib/language/languages";
+import { browserLanguageSignals, likelyLanguages, type LanguageSignals } from "@/lib/language/likely-languages";
 import { getErrorMessage } from "@/lib/api/errors";
 import { EXTERNAL_PROVIDER_LABEL, parseExternalMeetingLink } from "@/lib/meeting/external-meeting-link";
 import { useRouter } from "@/lib/next-shim/navigation";
@@ -70,6 +71,15 @@ export function AddWarpBotDialog() {
   // null = untouched: follow the remembered choice, else the user's own language plus English.
   const [picked, setPicked] = useState<string[] | null>(null);
   const open = createOpen && !editRoomId;
+  // The macOS app knows every OS language and the region (the web view only sees one language).
+  const [nativeSignals, setNativeSignals] = useState<LanguageSignals | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    void getNative()
+      ?.getCapabilities()
+      .then((c) => setNativeSignals({ preferred: c.preferredLanguages, region: c.region }))
+      .catch(() => undefined);
+  }, [open]);
 
   // The language the creator reads captions in: their profile's listen language, else the
   // browser's. Never a hardcoded one.
@@ -81,11 +91,15 @@ export function AddWarpBotDialog() {
     return candidates.find((c) => offered.includes(c)) ?? "en";
   }, [settings.data?.defaultListenLanguage, offered]);
 
+  // Multilingual by default, with nothing to pick: the user's own language, English, and what
+  // the OS languages, region and time zone suggest they speak. Extra room languages cost no
+  // translation (routes follow listeners) but tell STT which languages to expect.
   const languages = useMemo(() => {
-    const base = picked ?? storedLanguages() ?? [ownLanguage, "en"];
+    const likely = likelyLanguages(nativeSignals ?? {}, browserLanguageSignals());
+    const base = picked ?? [...(storedLanguages() ?? [ownLanguage]), ...likely, "en"];
     const valid = base.map((c) => normalizeLanguageCode(c)).filter((c) => offered.includes(c));
     return Array.from(new Set(valid.length ? valid : [ownLanguage]));
-  }, [picked, ownLanguage, offered]);
+  }, [picked, ownLanguage, offered, nativeSignals]);
   const listenLanguage = languages.includes(ownLanguage) ? ownLanguage : languages[0];
 
 

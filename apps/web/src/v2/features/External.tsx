@@ -452,8 +452,9 @@ export function ExternalPage() {
       case 'listen':
         if (!value) break;
         setListen(value);
-        // One language per person: the user speaks it and reads everything in it. The server adds it as a target.
-        if (roomId) void updateLangs.mutateAsync({ speakLanguage: value, listenLanguage: value }).then(() => setActionError(null)).catch((e) => setActionError({ code: errCode(e), message: errMsg(e) }));
+        // The picker is the language the user READS. What they speak is detected ('auto'): people
+        // often read English but speak Vietnamese, and an English hint garbles Vietnamese speech.
+        if (roomId) void updateLangs.mutateAsync({ speakLanguage: 'auto', listenLanguage: value }).then(() => setActionError(null)).catch((e) => setActionError({ code: errCode(e), message: errMsg(e) }));
         break;
       case 'far': if (value) setFar(value); break;
       case 'mic': setMicOn(value === 'on'); break;

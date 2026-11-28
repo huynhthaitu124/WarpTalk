@@ -191,6 +191,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             "supportedApps": MeetingAppSpec.all.map { ["name": $0.name, "bundleIds": $0.bundleIDs] },
             "outputDevices": outs.map { ["uid": $0.uid, "name": $0.name, "isVirtual": DeviceManager.isVirtual($0)] },
             "blackHoleInstalled": outs.contains { $0.name.lowercased().contains("blackhole") },
+            // Every language in System Settings > Language & Region (the web view only sees the
+            // first), plus the region: people often run macOS in English but speak another language.
+            "preferredLanguages": Locale.preferredLanguages,
+            "region": Locale.current.region?.identifier ?? "",
         ]
     }
 

@@ -19,6 +19,10 @@ export interface Capabilities {
   supportedApps: { name: string; bundleIds: string[] }[];
   outputDevices: { uid: string; name: string; isVirtual: boolean }[];
   blackHoleInstalled: boolean;
+  /** macOS preferred languages, most preferred first (BCP-47, e.g. "en-US", "vi-VN"). */
+  preferredLanguages?: string[];
+  /** ISO 3166 region of the Mac, e.g. "VN"; empty when unknown. */
+  region?: string;
 }
 export interface AudioApp { bundleId: string; name: string; pid: number; producingAudio: boolean }
 export interface StartExternalCaptureOptions {

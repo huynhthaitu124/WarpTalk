@@ -101,7 +101,9 @@ impl OpenAiRealtimeStt {
             } else {
                 t.language = Some(l.to_string());
             }
-        } else if self.cfg.uses_plural_languages() && !extras.is_empty() {
+        } else if self.cfg.uses_plural_languages() && extras.len() >= 2 {
+            // Auto-detect: a set of the meeting's languages helps code-switching, but a single
+            // one would pin the speaker to it (a room read in English, spoken in Vietnamese).
             for extra in extras {
                 if !t.languages.contains(&extra) {
                     t.languages.push(extra);
