@@ -24,7 +24,8 @@ export interface Capabilities {
   /** ISO 3166 region of the Mac, e.g. "VN"; empty when unknown. */
   region?: string;
 }
-export interface AudioApp { bundleId: string; name: string; pid: number; producingAudio: boolean }
+/** `callOpen`: a call window is showing (from window titles); absent when the app cannot tell. */
+export interface AudioApp { bundleId: string; name: string; pid: number; producingAudio: boolean; callOpen?: boolean }
 export interface StartExternalCaptureOptions {
   appBundleId: string;
   roomId: string;
@@ -123,13 +124,15 @@ export interface OverlayState {
   needsJoin?: boolean;
   /** The meeting link on file, if any. */
   link?: string;
+  /** The call looks over: seconds until the copilot ends the meeting (`keepGoing` cancels). */
+  endingIn?: number;
 }
 export interface OverlayAskMessage {
   key: string; role: 'user' | 'assistant'; content: string; status?: 'streaming' | 'done' | 'error'; error?: string; incomplete?: boolean;
 }
 export interface OverlayAsk { messages: OverlayAskMessage[]; busy: boolean }
 /** `expand` / `collapse` / `hide` / `resize` (value `WxH`) / `hitrect` (value `x,y,w,h`) only affect the native window and never reach the main page. */
-export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'glass' | 'testLine' | 'ask' | 'askStop' | 'link' | 'drag';
+export type OverlayCommand = 'start' | 'stop' | 'listen' | 'far' | 'mic' | 'end' | 'closed' | 'ready' | 'expand' | 'collapse' | 'hide' | 'resize' | 'hitrect' | 'glass' | 'testLine' | 'ask' | 'askStop' | 'link' | 'drag' | 'keepGoing';
 
 export type NativeEvent =
   | ({ type: 'status'; ts: string } & CaptureStatus)

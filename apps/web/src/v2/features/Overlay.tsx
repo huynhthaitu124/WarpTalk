@@ -339,7 +339,8 @@ export function OverlayPage() {
       <button type="button" onClick={() => void toggle()} aria-expanded={open} data-testid="copilot-pill"
         className="flex h-full min-w-0 flex-1 items-center gap-2 pl-4 text-left">
         <span className="min-w-0 flex-1 truncate whitespace-nowrap text-[13px] font-semibold text-ink">
-          {wide && !ended && ticker ? ticker : phase.live ? <span className="wt-shimmer">{phase.label}</span> : <span className="text-[#f5f5f7]">{phase.label}</span>}
+          {state.endingIn !== undefined ? <span className="text-[#f5f5f7]">Call ended · closing in {state.endingIn}s</span>
+            : wide && !ended && ticker ? ticker : phase.live ? <span className="wt-shimmer">{phase.label}</span> : <span className="text-[#f5f5f7]">{phase.label}</span>}
         </span>
         {tips > 0 && (
           <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#ffffff]/15 px-2 py-0.5 text-[11px] font-semibold text-[#ffffff] ring-1 ring-[#ffffff]/25">
@@ -350,7 +351,12 @@ export function OverlayPage() {
           <CaretDown size={12} weight="bold" className={cn('transition-transform duration-300', open && !closing && 'rotate-180')} />
         </span>
       </button>
-      {(translating || state.status === 'stopped') && (
+      {state.endingIn !== undefined ? (
+        <button type="button" data-testid="copilot-pill-keep" onClick={() => send('keepGoing')}
+          className="h-7 shrink-0 rounded-full bg-[#ffffff]/20 px-3 text-[12px] font-semibold text-[#ffffff] hover:bg-[#ffffff]/30">
+          Keep going
+        </button>
+      ) : (translating || state.status === 'stopped') && (
         <button type="button" aria-label={translating ? 'Pause translation' : 'Resume translation'} title={translating ? 'Pause translation' : 'Resume translation'}
           data-testid="copilot-pill-pause" onClick={() => send(translating ? 'stop' : 'start')}
           className={cn('grid size-7 shrink-0 place-items-center rounded-full hover:bg-[#ffffff]/15 hover:text-[#ffffff]',

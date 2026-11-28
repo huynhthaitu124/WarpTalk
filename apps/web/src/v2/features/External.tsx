@@ -35,6 +35,8 @@ const ExternalCaptions = lazy(() => import('./ExternalCaptions'));
 const LANG_OPTIONS = languageOptions();
 const LIVE = ['IN_PROGRESS', 'PAUSED'];
 const TERMINAL = ['ENDED', 'CANCELLED', 'EXPIRED', 'FAILED'];
+/** Grace between "the call looks over" and ending the meeting: time to say it is not. */
+const END_COUNTDOWN_MS = 10_000;
 const BROWSER_RE = /chrome|safari|firefox|edge|brave|arc|opera|vivaldi|browser/i;
 
 /** The running audio app that most likely plays this provider's call (Teams app, a browser for Meet, else any audible app). */
@@ -107,6 +109,10 @@ export function ExternalPage() {
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null);
   const [hasRun, setHasRun] = useState(false);
   const endMeeting = useEndMeeting(roomId ?? '');
+  /** The call looks over (its window closed or the app quit): end the meeting at this time unless the user keeps going. */
+  const [endingAt, setEndingAt] = useState<number | null>(null);
+  /** Re-renders the pill each second only while the countdown runs. */
+  const endTick = endingAt !== null ? now : 0;
   const [actionError, setActionError] = useState<{ code?: string; message: string } | null>(null);
 
   const r = room.data;
@@ -382,16 +388,50 @@ export function ExternalPage() {
       ...(err ? { error: err } : {}),
       ...(needsJoin ? { needsJoin: true } : {}),
       ...(parsed.ok ? { link: link.trim() } : {}),
+      ...(endingAt !== null && !roomTerminal ? { endingIn: Math.max(0, Math.ceil((endingAt - now) / 1000)) } : {}),
     };
-  }, [askState, testMode, lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
+  }, [endingAt, endTick, askState, testMode, lines, userId, listen, far, micOn, title, r?.title, roomTerminal, running, roomId, busy, hasRun, live.status.state, live.errors, actionError, captionsState, captionsMsg, suggestionStream.items, suggestionStream.status, followUps.data]);
   const overlayStateRef = useRef(overlayState);
   overlayStateRef.current = overlayState;
   useEffect(() => { void native?.pushOverlayState?.(overlayState).catch(() => undefined); }, [native, overlayState]);
 
   async function endSession() {
+    setEndingAt(null);
     if (running) await stopCapture();
     try { if (roomId) await endMeeting.mutateAsync(); } catch (e) { setActionError({ code: errCode(e), message: errMsg(e) }); }
   }
+
+  // End of call: once this machine has seen the call window while capturing, the window going
+  // away (or the meeting app quitting) for two polls in a row starts a short countdown on the pill,
+  // because a switched browser tab looks the same. The call coming back cancels it.
+  const callSeen = useRef(false);
+  const callMissing = useRef(0);
+  useEffect(() => {
+    if (!running || roomTerminal) { callMissing.current = 0; return; }
+    const bundle = live.status.appBundleId ?? appId;
+    const app = apps.find((a) => a.bundleId === bundle);
+    if (app?.callOpen) { callSeen.current = true; callMissing.current = 0; setEndingAt(null); return; }
+    if (!callSeen.current || (app && app.callOpen === undefined)) return;
+    callMissing.current += 1;
+    if (callMissing.current >= 2) setEndingAt((t) => t ?? Date.now() + END_COUNTDOWN_MS);
+  }, [apps, running, roomTerminal, live.status.appBundleId, appId]);
+  useEffect(() => {
+    if (endingAt === null || roomTerminal) return;
+    const t = setTimeout(() => void endSession(), Math.max(0, endingAt - Date.now()));
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endingAt, roomTerminal]);
+
+  // However the meeting ended (here, on the pill, the end-of-call countdown or on the server),
+  // close the pill and open the meeting's page, where the transcript and summary are.
+  const wasLive = useRef(false);
+  useEffect(() => {
+    if (r && !roomTerminal) { wasLive.current = true; return; }
+    if (!roomTerminal || !wasLive.current || !roomId || !current) return;
+    wasLive.current = false;
+    void native?.closeOverlayWindow?.().catch(() => undefined);
+    window.location.assign(`/${current.slug}/rooms/${roomId}`);
+  }, [r, roomTerminal, roomId, current, native]);
   const openCopilot = useCallback(() => {
     if (!native?.openOverlayWindow) return;
     setOverlayClosed(false);
@@ -461,6 +501,7 @@ export function ExternalPage() {
       case 'ready': void native?.pushOverlayState?.(overlayStateRef.current).catch(() => undefined); break;
       case 'closed': setOverlayClosed(true); break;
       case 'end': void endSession(); break;
+      case 'keepGoing': callSeen.current = false; callMissing.current = 0; setEndingAt(null); break;
       case 'ask': {
         // Suggestion actions carry the hint's context and may run long: the server caps questions at ASK_MAX_CHARS.
         const q = value?.trim().slice(0, ASK_MAX_CHARS);
@@ -580,7 +621,7 @@ export function ExternalPage() {
             onAsk={(q) => void assistant.ask(q, 'meeting+docs')}
             onAskStop={() => assistant.stop()}
             onShowCopilot={openCopilot}
-            onEnd={() => void endSession().finally(() => window.location.assign('/'))}
+            onEnd={() => void endSession()}
             ending={busy === 'stop'}
             micOn={micOn}
             onCommand={(command, value) => cmdRef.current(command, value)}

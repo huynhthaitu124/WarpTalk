@@ -203,7 +203,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         return RunningMeetingApps.current().map { t in
             let ids = Set(DeviceManager.processObjects(for: t))
             let producing = processes.contains { ids.contains($0.objectID) && $0.isRunningOutput }
-            return ["bundleId": t.bundleID, "name": t.name, "pid": Int(t.pid), "producingAudio": producing]
+            var row: [String: Any] = ["bundleId": t.bundleID, "name": t.name, "pid": Int(t.pid), "producingAudio": producing]
+            if let open = CallWindows.isCallOpen(pid: t.pid, bundleID: t.bundleID) { row["callOpen"] = open }
+            return row
         }
     }
 
@@ -217,5 +219,33 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
               let data = try? JSONSerialization.data(withJSONObject: detail),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('warptalk-native',{detail:\(json)}))", completionHandler: nil)
+    }
+}
+
+/// Whether a meeting app shows a call window, from window titles ("Meet - abc-defg-hij",
+/// "Zoom Meeting", Teams' "Meeting ..."). `nil` when titles are unreadable (no Screen Recording
+/// permission) or the app is not one we know: the caller must then not infer anything.
+enum CallWindows {
+    static func isCallOpen(pid: pid_t, bundleID: String) -> Bool? {
+        guard let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] else { return nil }
+        let titles = info.compactMap { w -> String? in
+            guard (w[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid,
+                  (w[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            return w[kCGWindowName as String] as? String
+        }
+        guard titles.contains(where: { !$0.isEmpty }) else { return nil }
+        let id = bundleID.lowercased()
+        let matches: (String) -> Bool
+        if id.contains("zoom") {
+            matches = { $0.range(of: "zoom (meeting|webinar)", options: [.regularExpression, .caseInsensitive]) != nil }
+        } else if id.contains("teams") {
+            matches = { $0.range(of: "meeting|call|cuộc họp", options: [.regularExpression, .caseInsensitive]) != nil }
+        } else {
+            // Browsers: Google Meet titles its call tab "Meet - <code>" (only the active tab of each
+            // window is visible, so a switched tab reads as "no call": callers debounce).
+            matches = { $0.range(of: "^Meet [-–] [a-z]{3}-[a-z]{4}-[a-z]{3}", options: .regularExpression) != nil }
+        }
+        return titles.contains(where: matches)
     }
 }
